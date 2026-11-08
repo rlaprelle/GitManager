@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
-import AppHeader from './AppHeader.vue'
+import AppHeader from '../AppHeader.vue'
 
 function mountHeader(syncLabel: string | null = '↑2 vs origin') {
   return mount(AppHeader, { props: { repoName: 'inventory-service', currentBranch: 'main', syncLabel } })

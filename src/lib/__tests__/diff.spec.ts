@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Hunk } from '@/types/git'
-import { hunkHeader, invertHunks, toSideBySideRows, toUnifiedLines } from './diff'
+import { hunkHeader, invertHunks, toSideBySideRows, toUnifiedLines } from '../diff'
 
 const modifyHunk: Hunk = {
   oldStart: 27,

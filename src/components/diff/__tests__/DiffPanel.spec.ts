@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositories'
 import { sampleCompareDiff } from '@/data/sampleDiffs'
 import type { DiffMode } from '@/composables/useGitManager'
-import DiffPanel from './DiffPanel.vue'
+import DiffPanel from '../DiffPanel.vue'
 
 const expiryCommit = sampleRepositories[0]!.commits[0]!
 const skuCommit = sampleRepositories[0]!.commits[3]!

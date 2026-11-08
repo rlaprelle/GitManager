@@ -32,7 +32,7 @@ src/style.css                    @theme tokens (--color-gm-*), base styles
 e2e/git-manager.spec.ts          Playwright acceptance tests
 ```
 
-Tests are colocated: `foo.ts` ↔ `foo.test.ts`.
+Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<dir>/__tests__/X.spec.ts` (import the subject as `../X`). Playwright specs live in `e2e/`. `tsconfig.app.json` excludes `src/**/__tests__/*`; `tsconfig.vitest.json` includes only them.
 
 ## Architecture rules
 
@@ -52,7 +52,7 @@ Tests are colocated: `foo.ts` ↔ `foo.test.ts`.
 - Monospace (`font-mono`, JetBrains Mono) for hashes, paths, code; Inter for UI.
 - Responsive: `max-[860px]:` variant is the narrow breakpoint. Page must never scroll horizontally (e2e enforces at phone width); wide content scrolls inside its own pane.
 - Test selectors: role/label first, then `data-testid` (`header-repo`, `header-branch`, `unified-diff`, `side-by-side-diff`, `left-label`, `right-label`); diff rows expose `data-kind`, side-by-side cells `data-side`/`data-cell`.
-- Every new capability gets: lib/composable unit test, component test, `App.test.ts` wiring test if it crosses components, and a Playwright test that drives the UI.
+- Every new capability gets: lib/composable unit test, component test, `src/__tests__/App.spec.ts` wiring test if it crosses components, and a Playwright test that drives the UI.
 
 ## Constraints / quirks
 

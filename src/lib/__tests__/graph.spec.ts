@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { GraphRow } from '@/types/git'
-import { LANE_COLORS, graphGeometry, laneX } from './graph'
+import { LANE_COLORS, graphGeometry, laneX } from '../graph'
 
 const plain: GraphRow = {
   lane: 0,

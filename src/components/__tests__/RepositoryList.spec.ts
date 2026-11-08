@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { sampleRepositories } from '@/data/sampleRepositories'
-import RepositoryList from './RepositoryList.vue'
+import RepositoryList from '../RepositoryList.vue'
 
 function mountList(selectedId = 'inventory') {
   return mount(RepositoryList, { props: { repositories: sampleRepositories, selectedId } })

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { sampleRepositories } from '@/data/sampleRepositories'
-import BranchList from './BranchList.vue'
+import BranchList from '../BranchList.vue'
 
 const inventory = sampleRepositories[0]!
 
