@@ -1,0 +1,103 @@
+@import 'tailwindcss';
+
+/*
+  Every color here comes from the design (Git Manager — main window).
+  Override --color-gm-accent on any ancestor to re-theme the accent.
+*/
+@theme {
+  --font-sans: Inter, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  /* Surfaces, darkest to lightest */
+  --color-gm-window: #0e1015;
+  --color-gm-code: #0f1218;
+  --color-gm-sidebar: #12151c;
+  --color-gm-main: #151821;
+  --color-gm-raised: #171b24;
+  --color-gm-empty: #171a22;
+  --color-gm-hover: #232836;
+  --color-gm-selected: #1e2940;
+
+  /* Lines */
+  --color-gm-line: #232838;
+  --color-gm-line-strong: #2a3040;
+  --color-gm-line-input: #2e3546;
+  --color-gm-row-hover: #2c3344;
+
+  /* Text */
+  --color-gm-text: #e6e8ee;
+  --color-gm-code-text: #dce1ea;
+  --color-gm-chip-text: #d5dbe7;
+  --color-gm-soft: #c9cfdb;
+  --color-gm-subtle: #aeb6c6;
+  --color-gm-muted: #9aa3b5;
+  --color-gm-faint: #8e97aa;
+  --color-gm-disabled: #6b7385;
+  --color-gm-link: #9dbdff;
+  --color-gm-link-hover: #c4d7ff;
+
+  /* Accent and the text that sits on it */
+  --color-gm-accent: #5b9dff;
+  --color-gm-on-accent: #0b1220;
+
+  /* Badges and chips */
+  --color-gm-warn: #f0b86e;
+  --color-gm-warn-bg: #33281a;
+  --color-gm-chip: #1b2130;
+  --color-gm-chip-line: #2a3248;
+  --color-gm-ref-local: #1e2a44;
+  --color-gm-ref-local-line: #34466e;
+  --color-gm-ref-local-text: #b9ceff;
+  --color-gm-ref-remote-line: #3a4152;
+  --color-gm-checkout: #1b2232;
+  --color-gm-checkout-line: #3a4560;
+
+  /* Diff */
+  --color-gm-hunk: #172036;
+  --color-gm-del: #3a1d22;
+  --color-gm-del-text: #f2e4e6;
+  --color-gm-del-sign: #ff9a9a;
+  --color-gm-add: #15301f;
+  --color-gm-add-text: #e3f4e8;
+  --color-gm-add-sign: #7ee2a0;
+}
+
+@layer base {
+  /* Preflight sets 1.5; the design uses the browser default. */
+  html {
+    line-height: normal;
+    /* Dark native scrollbars and form controls to match the theme. */
+    color-scheme: dark;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-gm-window);
+  }
+
+  a {
+    color: var(--color-gm-link);
+  }
+
+  a:hover {
+    color: var(--color-gm-link-hover);
+  }
+
+  button:focus-visible,
+  input:focus-visible {
+    outline: 2px solid var(--color-gm-accent);
+    outline-offset: -2px;
+  }
+}
+
+@utility gm-row-hover {
+  &:hover {
+    box-shadow: inset 0 0 0 1px var(--color-gm-row-hover);
+  }
+}
+
+@utility gm-btn-hover {
+  &:hover {
+    background: var(--color-gm-hover);
+  }
+}

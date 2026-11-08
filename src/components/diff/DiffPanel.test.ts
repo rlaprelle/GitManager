@@ -1,0 +1,97 @@
+import { describe, expect, it } from 'vitest'
+import { mount } from '@vue/test-utils'
+import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositories'
+import { sampleCompareDiff } from '@/data/sampleDiffs'
+import type { DiffMode } from '@/composables/useGitManager'
+import DiffPanel from './DiffPanel.vue'
+
+const expiryCommit = sampleRepositories[0]!.commits[0]!
+const skuCommit = sampleRepositories[0]!.commits[3]!
+
+function mountPanel(overrides: Partial<{ compareOpen: boolean; diffMode: DiffMode; commitIndex: number }> = {}) {
+  const commit = overrides.commitIndex === 3 ? skuCommit : expiryCommit
+  const compareOpen = overrides.compareOpen ?? false
+  return mount(DiffPanel, {
+    props: {
+      commit,
+      selectedFileIndex: 0,
+      compareOpen,
+      diffMode: overrides.diffMode ?? (compareOpen ? 'simple' : 'git'),
+      hunks: compareOpen ? sampleCompareDiff : commit.files[0]!.hunks,
+      leftPath: SAMPLE_COMPARE_PATHS.left,
+      rightPath: SAMPLE_COMPARE_PATHS.right,
+    },
+  })
+}
+
+function buttonByText(wrapper: ReturnType<typeof mountPanel>, text: string) {
+  return wrapper.findAll('button').find((b) => b.text().includes(text))!
+}
+
+describe('DiffPanel in commit mode', () => {
+  it('titles the panel with the commit and lists its files', () => {
+    const wrapper = mountPanel()
+    expect(wrapper.text()).toContain('Changes in 9f3a1c2 · Add reservation expiry job')
+    expect(wrapper.text()).toContain('2 files changed')
+    expect(wrapper.text()).toContain('ReservationExpiryJob.java')
+  })
+
+  it('shows the git diff with a hunk header and added lines', () => {
+    const wrapper = mountPanel()
+    const diff = wrapper.get('[data-testid="unified-diff"]')
+    expect(diff.get('[data-kind="hunk"]').text()).toBe('@@ -0,0 +1,24 @@')
+    expect(diff.findAll('[data-kind="add"]')).toHaveLength(24)
+  })
+
+  it('labels the simple diff with the parent and the commit', () => {
+    const wrapper = mountPanel({ commitIndex: 3, diffMode: 'simple' })
+    expect(wrapper.get('[data-testid="left-label"]').text()).toBe('SkuLookup.java @ 2d6e914^')
+    expect(wrapper.get('[data-testid="right-label"]').text()).toBe('SkuLookup.java @ 2d6e914')
+  })
+
+  it('labels the left side of a newly added file as a new file', () => {
+    const wrapper = mountPanel({ diffMode: 'simple' })
+    expect(wrapper.get('[data-testid="left-label"]').text()).toBe('(new file)')
+  })
+
+  it('emits file selection, diff mode changes and compare', async () => {
+    const wrapper = mountPanel()
+    await buttonByText(wrapper, 'application.yml').trigger('click')
+    await buttonByText(wrapper, 'Simple diff').trigger('click')
+    await buttonByText(wrapper, 'Compare two files').trigger('click')
+    expect(wrapper.emitted('selectFile')).toEqual([[1]])
+    expect(wrapper.emitted('setDiffMode')).toEqual([['simple']])
+    expect(wrapper.emitted('openCompare')).toHaveLength(1)
+  })
+})
+
+describe('DiffPanel in compare mode', () => {
+  it('replaces the file list with left and right path inputs', () => {
+    const wrapper = mountPanel({ compareOpen: true })
+    expect(wrapper.text()).not.toContain('files changed')
+    expect(wrapper.get<HTMLInputElement>('#gm-left').element.value).toBe(SAMPLE_COMPARE_PATHS.left)
+    expect(wrapper.get<HTMLInputElement>('#gm-right').element.value).toBe(SAMPLE_COMPARE_PATHS.right)
+  })
+
+  it('disables the git diff and explains why', () => {
+    const wrapper = mountPanel({ compareOpen: true })
+    expect(buttonByText(wrapper, 'Git diff').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('isn’t available for two separate files')
+  })
+
+  it('labels the columns with the two file names', () => {
+    const wrapper = mountPanel({ compareOpen: true })
+    expect(wrapper.get('[data-testid="left-label"]').text()).toBe('application.yml')
+    expect(wrapper.get('[data-testid="right-label"]').text()).toBe('application-prod.yml')
+  })
+
+  it('emits path changes, swap and back', async () => {
+    const wrapper = mountPanel({ compareOpen: true })
+    await wrapper.get('#gm-left').setValue('C:\\other.yml')
+    await wrapper.get('button[aria-label="Swap left and right files"]').trigger('click')
+    await buttonByText(wrapper, 'Back to 9f3a1c2').trigger('click')
+    expect(wrapper.emitted('update:leftPath')).toEqual([['C:\\other.yml']])
+    expect(wrapper.emitted('swap')).toHaveLength(1)
+    expect(wrapper.emitted('closeCompare')).toHaveLength(1)
+  })
+})
