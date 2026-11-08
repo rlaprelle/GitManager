@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pluralize, splitPath, syncLabel } from './format'
+import { pluralize, splitPath, syncLabel } from '../format'
 
 describe('splitPath', () => {
   it('splits a forward-slash path into file name and directory', () => {

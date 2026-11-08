@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { SAMPLE_COMPARE_PATHS } from '@/data/sampleRepositories'
 import { MockGitDataSource } from '@/services/MockGitDataSource'
-import App from './App.vue'
+import App from '../App.vue'
 
 async function mountApp(source = new MockGitDataSource()) {
   const wrapper = mount(App, { props: { source, comparePaths: SAMPLE_COMPARE_PATHS } })

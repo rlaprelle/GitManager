@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { sampleRepositories } from '@/data/sampleRepositories'
-import CommitHistory from './CommitHistory.vue'
+import CommitHistory from '../CommitHistory.vue'
 
 const inventory = sampleRepositories[0]!
 

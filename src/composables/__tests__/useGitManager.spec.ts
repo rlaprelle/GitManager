@@ -3,7 +3,7 @@ import { SAMPLE_COMPARE_PATHS } from '@/data/sampleRepositories'
 import { sampleCompareDiff } from '@/data/sampleDiffs'
 import { invertHunks } from '@/lib/diff'
 import { MockGitDataSource } from '@/services/MockGitDataSource'
-import { useGitManager } from './useGitManager'
+import { useGitManager } from '../useGitManager'
 
 async function loadedManager(source = new MockGitDataSource()) {
   const gm = useGitManager(source, { comparePaths: { ...SAMPLE_COMPARE_PATHS } })
