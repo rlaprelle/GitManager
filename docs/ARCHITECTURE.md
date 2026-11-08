@@ -1,0 +1,197 @@
+# Architecture
+
+How Git Manager is built: the layers, the data model, the contract with git, and the rules the state layer enforces. For what the product is, see [`README.md`](../README.md). For working conventions, see [`CLAUDE.md`](../CLAUDE.md).
+
+## Layers
+
+```
+ main.ts ──► App.vue ──► components/          presentational: props in, events out
+                │
+                ▼
+     composables/useGitManager.ts             all UI state, derived state and actions
+                │
+                ▼
+     services/GitDataSource.ts  (interface)   the only boundary between the UI and git
+                │
+                ▼
+     services/MockGitDataSource.ts            today: serves data/sample*.ts in memory
+
+     lib/diff.ts, lib/graph.ts, lib/format.ts pure functions, used by components
+     types/git.ts                             shared data model
+```
+
+Each layer depends only on the layers below it.
+
+- **Components** never call the data source, and they don't keep state that matters to another component.
+- **The composable** never touches the DOM.
+- **The data source** knows nothing about selection or view modes.
+
+`App.vue` is the only place that connects the composable to the components. It destructures what `useGitManager` returns and passes each value to the component that needs it.
+
+There is no router and no store library. The app is a single screen, and one composable is enough state management for it. If a second screen ever needs the same state, that would be the time to lift it into Pinia.
+
+## Tech stack
+
+| Piece | Version | Notes |
+|---|---|---|
+| Vue | 3.5 | `<script setup lang="ts">` single-file components only. |
+| Vite | 8 | `@vitejs/plugin-vue` 6 and `@tailwindcss/vite` 4. The `@` alias points at `src/`. |
+| TypeScript | ~6.0 | Pinned below 7. TypeScript 7 is the native (Go) compiler, and `vue-tsc` 3 still depends on the JavaScript compiler API. `vue-tsc -b` type-checks through project references. |
+| Tailwind CSS | 4 | Configured in CSS (`@theme` in `src/style.css`). There is no `tailwind.config.js`. |
+| Vitest | 5 | Runs in jsdom, with `@vue/test-utils` 2 for component tests. |
+| Playwright | 1.65 | Chromium only, at a 1440×900 desktop viewport. One test resizes to phone width. |
+
+The TypeScript config is split into project references: `tsconfig.app.json` covers app code, `tsconfig.vitest.json` covers `*.test.ts`, and `tsconfig.node.json` covers the Vite, Vitest and Playwright configs and `e2e/`.
+
+## Directory layout
+
+```
+src/
+  main.ts                    creates App with a MockGitDataSource and the sample compare paths
+  App.vue                    page layout; wires useGitManager to the components
+  style.css                  Tailwind import, @theme colour/font tokens, base styles
+  types/git.ts               data model (see below)
+  services/
+    GitDataSource.ts         the backend contract
+    MockGitDataSource.ts     in-memory implementation over the sample data
+  data/
+    sampleRepositories.ts    five sample repos and SAMPLE_COMPARE_PATHS
+    sampleDiffs.ts           the hunks those repos' commits reference, plus sampleCompareDiff
+  composables/
+    useGitManager.ts         state, derived state and actions
+  lib/
+    diff.ts                  hunks → unified lines, side-by-side rows; invertHunks
+    graph.ts                 GraphRow → SVG segments, curves and dot
+    format.ts                splitPath, syncLabel ('↑2 ↓1'), pluralize
+  components/
+    AppHeader.vue            repo name, branch chip, Fetch / Pull / Push
+    RepositoryList.vue       repository list, "N changed" badge, Add repository
+    BranchList.vue           local and remote branches, HEAD badge, Checkout
+    CommitHistory.vue        commit table with the lane graph column
+    CommitGraphCell.vue      one row of the graph as inline SVG
+    RefBadge.vue             branch labels on a commit (head / local / remote)
+    StatusBar.vue            footer status line (role="status")
+    GmIcon.vue               the inline SVG icon set
+    diff/
+      DiffPanel.vue          the diff area: labels, mode toggle, file list, diff body
+      DiffModeToggle.vue     Git diff / Simple diff
+      ChangedFileList.vue    the commit's changed files
+      UnifiedDiff.vue        git-style diff
+      SideBySideDiff.vue     simple (two-column) diff
+      ComparePathInputs.vue  left/right path inputs and the swap button
+e2e/git-manager.spec.ts      Playwright acceptance tests
+```
+
+Unit and component tests sit next to the file they test (`foo.ts` has `foo.test.ts` beside it).
+
+## Data model
+
+All types are in `src/types/git.ts`.
+
+```
+Repository
+├── id, name, path, currentBranch, changedFileCount, lastFetch
+├── localBranches[]   LocalBranch  { name, ahead, behind, tipHash }
+├── remoteBranches[]  RemoteBranch { name, tipHash }        name like 'origin/main'
+└── commits[]         Commit (newest first)
+      ├── hash, message, author, date
+      ├── refs[]      branch names at this commit; remote ones start with 'origin/'
+      ├── graph       GraphRow { lane, top, bottom, curveInFrom, curveOutTo }
+      └── files[]     FileChange { path, status: 'A'|'M'|'D', hunks[] }
+                         Hunk { oldStart, newStart, context, lines[] }
+```
+
+Decisions that shape this model:
+
+- **Branches point at commits by hash, not by index.** To select a branch, the composable looks up the commit whose `hash` equals the branch's `tipHash`. If no commit matches, it falls back to the newest commit.
+- **The graph layout comes with the data.** Each commit carries a precomputed `GraphRow`, and the UI never assigns lanes itself. The graph has exactly three lanes (0–2). A row draws straight lines in its top half and bottom half separately, plus at most one curve into the dot and one curve out of it. This matches the design, but a real backend will have to compute the lane assignment, either itself or in a new `lib` function. Supporting more than three lanes means widening `LaneFlags`, `LANE_COLORS` and `GRAPH_WIDTH` together.
+- **Hunk lines keep git's prefixes.** Each line starts with `'+'`, `'-'` or `' '`, exactly as in `git diff` output. `oldStart` and `newStart` are 1-based. Line counts are not stored; `hunkHeader` derives them from the lines.
+- **`lastFetch` and `date` are display strings** (`'12 min ago'`), not timestamps. Formatting belongs to the backend.
+
+## The `GitDataSource` contract
+
+`src/services/GitDataSource.ts`:
+
+| Method | Returns | Mock behaviour |
+|---|---|---|
+| `listRepositories()` | `Repository[]` | A deep copy (`structuredClone`) of the sample repos. |
+| `compareFiles(left, right)` | `Hunk[]` | Always `sampleCompareDiff`, inverted when the two sample paths are swapped. |
+| `checkout(repoId, branch)` | `OperationResult` | `Switched to branch X` |
+| `fetch(repoId)` | `OperationResult` | `Fetched origin: no new commits` |
+| `pull(repoId, branch)` | `OperationResult` | `Pulled origin/X: already up to date` |
+| `push(repoId, branch)` | `OperationResult` | `Pushed X to origin/X` |
+
+Every method is async and reports failure by rejecting. `OperationResult.message` is shown in the status bar exactly as returned.
+
+To replace the mock, implement this interface (for example over HTTP to a local service, or through a Tauri or Electron bridge) and pass the implementation to `App` in `src/main.ts`. Nothing above the service layer needs to change.
+
+`App.vue` wraps the source in `toRaw` before handing it to the composable. The data source is a service, not state. If a parent passes it through reactive props, unwrapping it keeps calls such as `structuredClone` working on the raw object.
+
+## State: `useGitManager`
+
+`useGitManager(source, { comparePaths })` returns refs, computeds and action functions.
+
+**State:** `repositories`, `loading`, `status`, `selectedBranch`, `selectedCommitIndex`, `selectedFileIndex`, `compareOpen`, `leftPath`, `rightPath`. The selected repository id and the user's chosen diff mode are kept internally.
+
+**Derived:**
+
+| Value | What it is |
+|---|---|
+| `repository` | The selected repository, or the first one if nothing is selected. |
+| `commits`, `commit`, `file` | The selected commit and file. Indexes are clamped to the list length. |
+| `currentBranch` | The checked-out branch. |
+| `headerSyncLabel` | `'↑2 vs origin'` for the checked-out branch, or `null` when it's in sync. |
+| `diffMode` | `'simple'` whenever compare is open, otherwise the mode the user chose. |
+| `activeHunks` | The compare result while comparing, otherwise the selected file's hunks. |
+
+Behavioural rules the composable enforces. Tests cover each of them, so change them deliberately:
+
+1. **Selecting a repository, branch or commit resets the commit view.** File selection returns to 0 and compare closes. Selecting a branch jumps to its tip commit.
+2. **Compare mode forces the simple diff.** Two arbitrary files share no history, so there is no git diff to show. `setDiffMode` is ignored while compare is open. Closing compare restores the mode the user chose.
+3. **Compare requests can't arrive out of order.** Each `refreshCompare` increments a counter, and a response is applied only if it belongs to the latest request.
+4. **Remote operations report through `status`.** On success the status shows the source's message. On failure it shows `Failed: <reason>`, and no local state changes.
+5. **Local state changes only after the source succeeds.** `checkoutBranch` sets `currentBranch`, and `fetchRemote` sets `lastFetch` to `'just now'`. Both edit the repository object in place, which is the composable's own copy from `listRepositories`.
+6. **`addRepository` is a placeholder.** It only sets a status message. Choosing a folder needs a native file dialog, which belongs to whatever host replaces the mock.
+
+## Rendering
+
+### Diffs (`src/lib/diff.ts`)
+
+- `toUnifiedLines(hunks)` emits a `hunk` header row for each hunk, followed by `context`, `add` or `del` rows. Each row carries its old and new line numbers. Additions have no old number and deletions have no new number.
+- `toSideBySideRows(hunks)` pairs each run of deletions with the run of additions that follows it, row by row. When one side runs out, its cells are filled with `empty`. Context lines appear on both sides. Separator rows (`⋯ from line N · context`, using the hunk's new start line) come before every hunk when there is more than one hunk, or when any hunk starts after line 1 on either side.
+- `invertHunks(hunks)` swaps `+` and `-` and swaps the start lines. It returns new objects and never changes its input.
+
+`UnifiedDiff.vue` and `SideBySideDiff.vue` only render these rows. All the line logic lives in `lib/diff.ts` and is tested there.
+
+### Commit graph (`src/lib/graph.ts`)
+
+Each history row is 32px tall, and the graph column is 64px wide. Lane *n* is at x = 14 + 18·n. Lane colours are fixed by position (`#5b9dff`, `#f0a35e`, `#c792ea`) and don't follow the UI accent.
+
+`graphGeometry(row)` turns a `GraphRow` into vertical segments, cubic-Bézier curves and the dot (r=5). The dot has a ring the colour of the row background, so lines appear to stop at the dot. The ring switches to the selected-row colour when the row is selected.
+
+## Theming and layout
+
+- All colours are Tailwind theme tokens in `src/style.css` (`--color-gm-*`, used as `bg-gm-*`, `text-gm-*`, `border-gm-*`). Components use only these tokens, never raw hex values. The one exception is the lane colours in `lib/graph.ts`, which are drawn as SVG strokes.
+- `App` accepts an optional `accent` prop, which overrides `--color-gm-accent` on the root element.
+- Fonts: Inter for the interface and JetBrains Mono for code, hashes and paths, both loaded from Google Fonts in `index.html`.
+- Layout is a flex row that wraps. The sidebar has a flex basis of 260px and the main column 560px. Below that combined width the columns stack, and below 860px the page stops being a fixed full-height window (`max-[860px]:h-auto`) and scrolls normally. The commit table keeps a minimum width of 760px and scrolls sideways inside its own pane, so the page itself never scrolls horizontally.
+
+## Testing
+
+| Layer | Where | What it proves |
+|---|---|---|
+| Pure logic | `src/lib/*.test.ts` | Diff rows, inversion, graph geometry, formatting |
+| State | `src/composables/useGitManager.test.ts` | The behavioural rules above, run against a stub data source |
+| Components | `src/components/**/*.test.ts` | Each component renders its props and emits the right events |
+| Wiring | `src/App.test.ts` | `App` connects composable and components (clicks reach the source; results reach the screen) |
+| Acceptance | `e2e/git-manager.spec.ts` | Each capability driven through the real UI in Chromium, including the phone-width layout |
+
+Playwright starts its own Vite server on port 4317 with `--strictPort` and `reuseExistingServer: false`. That way it fails loudly instead of testing some other app that happens to be on the port.
+
+Stable selectors for the tests are roles and labels first, then `data-testid`: `header-repo`, `header-branch`, `unified-diff`, `side-by-side-diff`, `left-label`, `right-label`. Diff rows also expose `data-kind`, and side-by-side cells expose `data-side` and `data-cell`.
+
+## Known limitations
+
+- There is no real git yet. Every operation goes to `MockGitDataSource`, and compare returns the same diff for any two paths.
+- Only three graph lanes are supported.
+- The history isn't paginated or virtualized. `listRepositories` returns every commit up front.
