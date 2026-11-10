@@ -1,0 +1,13 @@
+{
+  // Main process and preload: Node + Electron APIs, no DOM. Shared types in
+  // src/types are pulled in through imports, so they're checked here too.
+  "extends": "@tsconfig/node24/tsconfig.json",
+  "include": ["electron/**/*.ts"],
+  "compilerOptions": {
+    "noEmit": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.electron.tsbuildinfo",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node"]
+  }
+}

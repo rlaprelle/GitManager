@@ -9,7 +9,7 @@ export default mergeConfig(
   defineConfig({
     test: {
       environment: 'jsdom',
-      exclude: [...configDefaults.exclude, 'e2e/**'],
+      exclude: [...configDefaults.exclude, 'e2e/**', 'e2e-electron/**'],
       root: fileURLToPath(new URL('./', import.meta.url)),
     },
   }),

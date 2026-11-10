@@ -1,0 +1,36 @@
+import { fileURLToPath } from 'node:url'
+import { defineConfig } from 'electron-vite'
+import viteConfig from './vite.config'
+
+const fromRoot = (path: string) => fileURLToPath(new URL(path, import.meta.url))
+
+// The Vue app keeps its browser-mode layout (index.html + src/ at the root), so
+// every entry is set explicitly instead of electron-vite's src/{main,preload,renderer}.
+export default defineConfig({
+  main: {
+    build: {
+      rolldownOptions: {
+        input: { index: fromRoot('electron/main/index.ts') },
+      },
+    },
+  },
+  preload: {
+    build: {
+      rolldownOptions: {
+        input: { index: fromRoot('electron/preload/index.ts') },
+        // Sandboxed preloads can't be ES modules; this emits out/preload/index.cjs.
+        output: { format: 'cjs' },
+      },
+    },
+  },
+  renderer: {
+    // Same plugins and @/ alias as browser mode, so both builds compile one app.
+    ...viteConfig,
+    root: '.',
+    build: {
+      rolldownOptions: {
+        input: { index: fromRoot('index.html') },
+      },
+    },
+  },
+})

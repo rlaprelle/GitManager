@@ -41,9 +41,9 @@ const columns = 'grid grid-cols-[64px_minmax(0,1fr)_130px_120px_76px] items-cent
           @click="$emit('select', index)"
         >
           <CommitGraphCell :row="commit.graph" :selected="index === selectedIndex" />
-          <span class="flex min-w-0 items-center gap-1.5">
+          <span data-testid="commit-description" class="flex min-w-0 items-center gap-1.5 overflow-hidden">
             <RefBadge v-for="ref in commit.refs" :key="ref" :name="ref" :current-branch="currentBranch" />
-            <span class="truncate">{{ commit.message }}</span>
+            <span class="min-w-[8ch] shrink-[1000] truncate">{{ commit.message }}</span>
           </span>
           <span class="truncate text-[12px] text-gm-muted">{{ commit.author }}</span>
           <span class="text-[12px] whitespace-nowrap text-gm-muted">{{ commit.date }}</span>
