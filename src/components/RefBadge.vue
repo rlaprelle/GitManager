@@ -9,22 +9,29 @@ const kind = computed<'head' | 'remote' | 'local'>(() => {
 })
 </script>
 
+<!--
+  Badges shrink (with an ellipsis) only once the commit message beside them has
+  given up its space; the full ref name stays available as a tooltip.
+-->
 <template>
   <span
     v-if="kind === 'head'"
-    class="inline-flex flex-none items-center gap-1 rounded bg-gm-accent px-[7px] py-px font-mono text-[11px] font-medium text-gm-on-accent"
+    :title="`HEAD → ${name}`"
+    class="min-w-0 truncate rounded bg-gm-accent px-[7px] py-px font-mono text-[11px] font-medium text-gm-on-accent"
   >
     HEAD → {{ name }}
   </span>
   <span
     v-else-if="kind === 'local'"
-    class="flex-none rounded border border-gm-ref-local-line bg-gm-ref-local px-[7px] py-px font-mono text-[11px] text-gm-ref-local-text"
+    :title="name"
+    class="min-w-0 truncate rounded border border-gm-ref-local-line bg-gm-ref-local px-[7px] py-px font-mono text-[11px] text-gm-ref-local-text"
   >
     {{ name }}
   </span>
   <span
     v-else
-    class="flex-none rounded border border-gm-ref-remote-line bg-transparent px-[7px] py-px font-mono text-[11px] text-gm-subtle"
+    :title="name"
+    class="min-w-0 truncate rounded border border-gm-ref-remote-line bg-transparent px-[7px] py-px font-mono text-[11px] text-gm-subtle"
   >
     {{ name }}
   </span>

@@ -2,7 +2,10 @@
   "name": "git-manager",
   "private": true,
   "version": "0.1.0",
+  "description": "Desktop git client: repositories, branches, history and diffs in one window",
+  "author": "rlaprelle",
   "type": "module",
+  "main": "./out/main/index.js",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
@@ -10,10 +13,11 @@
     "typecheck": "vue-tsc -b",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
-  },
-  "dependencies": {
-    "vue": "^3.5.45"
+    "test:e2e": "playwright test",
+    "dev:app": "electron-vite dev",
+    "build:app": "vue-tsc -b && electron-vite build",
+    "test:e2e:app": "electron-vite build && playwright test -c playwright.electron.config.ts",
+    "dist": "npm run build:app && electron-builder --win nsis"
   },
   "devDependencies": {
     "@playwright/test": "^1.65.0",
@@ -23,11 +27,15 @@
     "@vitejs/plugin-vue": "^6.0.10",
     "@vue/test-utils": "^2.5.1",
     "@vue/tsconfig": "^0.9.1",
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0",
+    "electron-vite": "^6.0.0",
     "jsdom": "^31.0.0",
     "tailwindcss": "^4.3.5",
     "typescript": "~6.0.3",
     "vite": "^8.3.6",
     "vitest": "^5.1.0",
+    "vue": "^3.5.45",
     "vue-tsc": "^3.3.14"
   }
 }

@@ -58,7 +58,7 @@ onMounted(load)
 
 <template>
   <div
-    class="flex h-screen min-h-[720px] flex-col overflow-hidden bg-gm-window font-sans text-[13px] text-gm-text max-[860px]:h-auto"
+    class="flex h-screen min-h-[640px] flex-col overflow-hidden bg-gm-window font-sans text-[13px] text-gm-text max-[860px]:h-auto"
     :style="accentStyle"
   >
     <template v-if="repository && commit">

@@ -100,3 +100,24 @@ test('at phone width the panes stack without horizontal page scroll', async ({ p
   const historyBox = await page.getByRole('region', { name: 'Commit graph' }).boundingBox()
   expect(historyBox!.y).toBeGreaterThan(navBox!.y + navBox!.height - 1)
 })
+
+// The desktop app's minimum window content size (electron/main/index.ts).
+const SMALLEST_DESKTOP = { width: 1024, height: 640 }
+
+test('at the smallest desktop size the whole window fits without page scroll', async ({ page }) => {
+  await page.setViewportSize(SMALLEST_DESKTOP)
+  const overflow = await page.evaluate(() => ({
+    x: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    y: document.documentElement.scrollHeight - document.documentElement.clientHeight,
+  }))
+  expect(overflow).toEqual({ x: 0, y: 0 })
+  await expect(status(page)).toBeInViewport()
+})
+
+test('at the smallest desktop size branch labels stay inside the description column', async ({ page }) => {
+  await page.setViewportSize(SMALLEST_DESKTOP)
+  const overflowing = await page
+    .getByTestId('commit-description')
+    .evaluateAll((cells) => cells.filter((cell) => cell.scrollWidth > cell.clientWidth).map((cell) => cell.textContent))
+  expect(overflowing).toEqual([])
+})

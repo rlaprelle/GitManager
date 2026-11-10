@@ -4,7 +4,7 @@ A calm, dark-themed git client that puts the questions you ask most often on one
 
 Git Manager is for developers who juggle several repositories and want a quick visual answer without reaching for the command line. That might be a service, its API client, a front end and a dotfiles repo all at once.
 
-> **Status:** the interface is complete and runs on built-in sample repositories. It doesn't connect to real git yet. Fetch, Pull, Push, Checkout and Add repository report what they would do in the status bar. See [Connecting real repositories](#connecting-real-repositories).
+> **Status:** the interface is complete and runs on built-in sample repositories, both in a browser and as a Windows desktop app. It doesn't connect to real git yet. Fetch, Pull, Push, Checkout and Add repository report what they would do in the status bar. See [Connecting real repositories](#connecting-real-repositories).
 
 ## What you can do
 
@@ -41,17 +41,27 @@ npm run dev
 
 Then open the address Vite prints (usually http://localhost:5173).
 
+To run it as the Windows desktop app instead:
+
+```powershell
+npm run dev:app        # opens an Electron window; edits to the UI reload live
+```
+
 ## Development
 
 ```powershell
 npm test               # unit and component tests (Vitest)
 npm run test:e2e       # acceptance tests that drive the UI in a real browser (Playwright)
-npm run typecheck      # vue-tsc across app, tests and config
-npm run build          # type-check, then a production build into dist/
+npm run test:e2e:app   # builds the desktop app, then drives it with Playwright's Electron support
+npm run typecheck      # vue-tsc across app, Electron code, tests and config
+npm run build          # type-check, then a browser build into dist/
+npm run build:app      # type-check, then a desktop build into out/
+npm run dist           # desktop build, then the Windows installer into release/
 ```
 
 - **Before your first e2e run:** run `npx playwright install chromium` once to download the test browser.
 - **Test server port:** the e2e tests start their own server on port 4317, so they don't interfere with a dev server you already have running.
+- **The installer is unsigned.** Windows SmartScreen warns about a downloaded copy ("Windows protected your PC" → **More info** → **Run anyway**). It installs for the current user only and needs no admin rights.
 
 For how the code is organised, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
@@ -59,11 +69,11 @@ For how the code is organised, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md
 
 The interface talks to git through a single TypeScript interface, `GitDataSource` (`src/services/GitDataSource.ts`). Today it's backed by `MockGitDataSource`, which serves sample data.
 
-To connect real repositories, implement that interface over a backend (a small local service, or a Tauri or Electron bridge) and pass the implementation to `App` in `src/main.ts`. The rest of the app doesn't need to change.
+Real repositories will come through the desktop app: its Electron main process will run your installed Git for Windows and pass results to the interface over the preload bridge. The browser version keeps the sample data, so the interface can be developed and tested without touching a real repository.
 
 ## Built with
 
-Vue 3, TypeScript, Vite and Tailwind CSS v4. Tested with Vitest and Playwright.
+Vue 3, TypeScript, Vite and Tailwind CSS v4. The desktop app is Electron, built with electron-vite and packaged with electron-builder. Tested with Vitest and Playwright.
 
 ## License
 

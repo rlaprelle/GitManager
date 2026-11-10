@@ -1,0 +1,26 @@
+# Windows-only installer for Git Manager. Run with `npm run dist`.
+# Unsigned for now: SmartScreen shows "Windows protected your PC" on downloaded
+# copies until we pay for a code-signing certificate.
+
+# Must match APP_USER_MODEL_ID in electron/main/index.ts.
+appId: com.echel.gitmanager
+productName: Git Manager
+directories:
+  output: release
+
+# electron-vite already bundles everything (Vue included) into out/, so ship
+# only that. package.json is always added; it supplies "main" and the version.
+files:
+  - out/**
+
+win:
+  target: nsis
+  executableName: GitManager
+
+nsis:
+  # Assisted installer, current user only: no admin rights, no UAC prompt.
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  artifactName: GitManager-Setup-${version}.${ext}

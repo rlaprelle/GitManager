@@ -37,6 +37,12 @@ describe('CommitHistory', () => {
     expect(rows(wrapper)[2]!.text()).toContain('origin/main')
   })
 
+  it('gives every ref badge its full name as a tooltip, since narrow rows truncate it', () => {
+    const titles = rows(mountHistory())[3]!.findAll('[title]').map((badge) => badge.attributes('title'))
+    expect(titles).toEqual(['bugfix/sku-null-check', 'origin/bugfix/sku-null-check'])
+    expect(rows(mountHistory())[0]!.find('[title]').attributes('title')).toBe('HEAD → feature/stock-reservations')
+  })
+
   it('draws a graph dot in every row', () => {
     expect(mountHistory().findAll('svg circle')).toHaveLength(10)
   })

@@ -6,3 +6,5 @@ playwright-report/
 .vite/
 *.log
 .playwright-mcp/
+out/
+release/
