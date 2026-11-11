@@ -57,10 +57,12 @@ npm run typecheck      # vue-tsc across app, Electron code, tests and config
 npm run build          # type-check, then a browser build into dist/
 npm run build:app      # type-check, then a desktop build into out/
 npm run dist           # desktop build, then the Windows installer into release/
+npm run icon           # regenerate build/icon.ico after editing build/icon.svg or icon-small.svg
 ```
 
 - **Before your first e2e run:** run `npx playwright install chromium` once to download the test browser.
 - **Test server port:** the e2e tests start their own server on port 4317, so they don't interfere with a dev server you already have running.
+- **Works offline.** Fonts (Inter and JetBrains Mono) ship with the app, and a Content-Security-Policy lets the page load only its own files. The installer includes the fonts' licences in `resources\licenses`.
 - **The installer is unsigned.** Windows SmartScreen warns about a downloaded copy ("Windows protected your PC" → **More info** → **Run anyway**). It installs for the current user only and needs no admin rights.
 
 For how the code is organised, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).

@@ -15,6 +15,7 @@ npm run dev:app        # electron-vite dev: Electron window, renderer from Vite 
 npm run build:app      # vue-tsc -b && electron-vite build → out/
 npm run test:e2e:app   # electron-vite build, then Playwright against out/ (playwright.electron.config.ts)
 npm run dist           # build:app, then electron-builder NSIS installer → release/
+npm run icon           # node scripts/build-icon.ts: build/icon*.svg → build/icon.ico (committed)
 ```
 
 - First e2e run on a machine: `npx playwright install chromium`.
@@ -40,7 +41,11 @@ electron/preload/index.ts        contextBridge → window.gitManager
 electron/shared/channels.ts      IPC channel names (main + preload)
 electron.vite.config.ts         desktop build; renderer spreads vite.config.ts
 electron-builder.yml             NSIS installer config
+config/contentSecurityPolicy.ts  Vite plugin: CSP <meta> (strict build policy; dev adds inline styles)
+build/icon.svg, icon-small.svg   app icon artwork (≥48 px / ≤32 px); icon.ico is generated from them
+scripts/{build-icon,ico}.ts      icon renderer (Playwright Chromium) + .ico packer; run under Node directly
 e2e/git-manager.spec.ts          Playwright acceptance tests (browser)
+e2e/support/pageChecks.ts        page checks shared by both e2e suites (origins, fonts, CSP)
 e2e-electron/app.spec.ts         Playwright acceptance tests (built Electron app)
 ```
 
@@ -63,7 +68,7 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - `<script setup lang="ts">` SFCs only; `@/` alias = `src/`.
 - Colours: use `gm-*` Tailwind tokens (`bg-gm-main`, `text-gm-muted`, …). No raw hex in components. Exception: lane colours in `lib/graph.ts` (SVG strokes, fixed by lane, independent of accent).
 - New colour → add `--color-gm-*` to `@theme` in `src/style.css`.
-- Monospace (`font-mono`, JetBrains Mono) for hashes, paths, code; Inter for UI.
+- Monospace (`font-mono`, JetBrains Mono) for hashes, paths, code; Inter for UI. Both are bundled Fontsource variable fonts (families `'Inter Variable'`, `'JetBrains Mono Variable'`) imported in `src/main.ts`. Never load anything from another host.
 - Responsive: `max-[860px]:` variant is the narrow breakpoint. Page must never scroll horizontally (e2e enforces at phone width); wide content scrolls inside its own pane.
 - Smallest desktop size is 1024×640 content (Electron `minWidth`/`minHeight` with `useContentSize`; root `min-h-[640px]`). Both e2e suites assert no page scroll there — change all three together.
 - Test selectors: role/label first, then `data-testid` (`header-repo`, `header-branch`, `unified-diff`, `side-by-side-diff`, `left-label`, `right-label`, `commit-description`); diff rows expose `data-kind`, side-by-side cells `data-side`/`data-cell`.
@@ -80,6 +85,11 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - **Window security is tested** (`e2e-electron`): `contextIsolation`, `sandbox`, no `nodeIntegration`, navigation and pop-ups denied. Don't relax these to make something work; add a bridge method instead.
 - **All npm packages are devDependencies**, Vue included: electron-vite bundles everything into `out/`, and electron-builder packages only `out/**` + `package.json`.
 - **appId `com.echel.gitmanager`** in `electron-builder.yml` must match `APP_USER_MODEL_ID` in `electron/main/index.ts`.
+- **Content-Security-Policy is a `<meta>` tag** (file:// has no headers), injected by `config/contentSecurityPolicy.ts`. Build: `default-src 'none'`, everything else `'self'`, no `unsafe-*`. Dev adds only `style-src 'unsafe-inline'` (Vite's injected CSS). Both e2e suites assert no violations; a new resource type or host means widening the policy deliberately.
+- **`assetsInlineLimit: 0`**: Vite would otherwise inline small assets as `data:` URLs, which the CSP blocks (one font subset silently fell back). `electron.vite.config.ts` must spread `viteConfig.build`, not replace it.
+- **Playwright can't test eval blocking**: its evaluations go through DevTools, which is exempt from the CSP's eval ban. Tests assert the `script-src` directive instead.
+- **`build/icon.ico` is generated and committed**: edit the SVGs, run `npm run icon`. Entries are PNG; .NET's old `System.Drawing.Icon` can't read them below 256 px, but Windows (WIC, Explorer) and electron-builder can.
+- `scripts/*.ts` run under Node's type stripping: explicit `.ts` import extensions (`allowImportingTsExtensions` in `tsconfig.node.json`) and erasable syntax only (no enums, no parameter properties).
 - `npm run dev` and `npm run dev:app` both use port 5173; run one at a time.
 - JetBrains Mono renders ligatures (`==`, `||`) in diffs — expected, matches the design.
 - `npm audit` moderate warnings come from `@vue/test-utils` (dev-only).

@@ -5,8 +5,8 @@
   Override --color-gm-accent on any ancestor to re-theme the accent.
 */
 @theme {
-  --font-sans: Inter, system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --font-sans: 'Inter Variable', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
 
   /* Surfaces, darkest to lightest */
   --color-gm-window: #0e1015;

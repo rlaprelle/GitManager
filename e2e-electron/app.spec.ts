@@ -1,5 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { type ElectronApplication, type Page, _electron as electron, expect, test } from '@playwright/test'
+import {
+  contentSecurityPolicy,
+  foreignResourceUrls,
+  injectionAttempts,
+  policyViolationsOnReload,
+  primaryFontsLoaded,
+} from '../e2e/support/pageChecks'
 import type { GitManagerBridge } from '../src/types/bridge'
 
 // Acceptance pass for the desktop shell: the built app opens the existing UI,
@@ -60,4 +67,31 @@ test('shrinking the window stops at a size where the whole UI fits', async () =>
     )
     .toEqual({ x: 0, y: 0 })
   await expect(window.locator('footer [role="status"]')).toBeInViewport()
+})
+
+test('works offline: loads only from disk and renders in the bundled fonts', async () => {
+  await expect(window.locator('footer [role="status"]')).toHaveText('Ready')
+  await expect
+    .poll(async () => {
+      const fonts = await primaryFontsLoaded(window)
+      return fonts.loaded.includes(fonts.sans) && fonts.loaded.includes(fonts.mono)
+    })
+    .toBe(true)
+  const fonts = await primaryFontsLoaded(window)
+  expect(fonts.sans).toMatch(/^Inter/)
+  expect(fonts.mono).toMatch(/^JetBrains Mono/)
+  expect(window.url()).toMatch(/^file:/)
+  expect(await foreignResourceUrls(window)).toEqual([])
+})
+
+test('the built app enforces the strict content security policy', async () => {
+  const status = window.locator('footer [role="status"]')
+  await expect(status).toHaveText('Ready')
+  const policy = await contentSecurityPolicy(window)
+  expect(policy).toContain("default-src 'none'")
+  expect(policy).toMatch(/(^|; )script-src 'self'(;|$)/)
+  expect(policy).not.toContain('unsafe')
+  expect(await injectionAttempts(window)).toEqual({ inlineScript: false, inlineStyle: false })
+  const violations = await policyViolationsOnReload(window, () => expect(status).toHaveText('Ready'))
+  expect(violations).toEqual([])
 })

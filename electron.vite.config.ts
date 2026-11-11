@@ -24,10 +24,11 @@ export default defineConfig({
     },
   },
   renderer: {
-    // Same plugins and @/ alias as browser mode, so both builds compile one app.
+    // Same plugins, build options and @/ alias as browser mode, so both builds compile one app.
     ...viteConfig,
     root: '.',
     build: {
+      ...viteConfig.build,
       rolldownOptions: {
         input: { index: fromRoot('index.html') },
       },

@@ -1,4 +1,11 @@
 import { type Page, expect, test } from '@playwright/test'
+import {
+  contentSecurityPolicy,
+  foreignResourceUrls,
+  injectionAttempts,
+  policyViolationsOnReload,
+  primaryFontsLoaded,
+} from './support/pageChecks'
 
 // Acceptance pass: drives each capability of the main window through the UI.
 
@@ -120,4 +127,35 @@ test('at the smallest desktop size branch labels stay inside the description col
     .getByTestId('commit-description')
     .evaluateAll((cells) => cells.filter((cell) => cell.scrollWidth > cell.clientWidth).map((cell) => cell.textContent))
   expect(overflowing).toEqual([])
+})
+
+test('loads nothing from other hosts and renders in the bundled fonts', async ({ page }) => {
+  await expect
+    .poll(async () => {
+      const fonts = await primaryFontsLoaded(page)
+      return fonts.loaded.includes(fonts.sans) && fonts.loaded.includes(fonts.mono)
+    })
+    .toBe(true)
+  const fonts = await primaryFontsLoaded(page)
+  expect(fonts.sans).toMatch(/^Inter/)
+  expect(fonts.mono).toMatch(/^JetBrains Mono/)
+  expect(await foreignResourceUrls(page)).toEqual([])
+})
+
+// The dev server gets the relaxed dev policy (inline styles and the HMR socket); scripts stay locked down.
+test('a content security policy blocks injected scripts without breaking the app', async ({ page }) => {
+  // Exactly 'self': no inline scripts, no eval.
+  expect(await contentSecurityPolicy(page)).toMatch(/(^|; )script-src 'self'(;|$)/)
+  expect((await injectionAttempts(page)).inlineScript).toBe(false)
+  const violations = await policyViolationsOnReload(page, () => expect(status(page)).toHaveText('Ready'))
+  expect(violations).toEqual([])
+})
+
+test('the browser tab shows the app icon', async ({ page }) => {
+  const href = await page.locator('link[rel="icon"]').getAttribute('href')
+  expect(href).toBeTruthy()
+  const response = await page.request.get(new URL(href!, page.url()).href)
+  expect(response.ok()).toBe(true)
+  expect(response.headers()['content-type']).toContain('image/svg+xml')
+  expect(await response.text()).toContain('<svg')
 })

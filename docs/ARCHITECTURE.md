@@ -46,7 +46,9 @@ There is no router and no store library. The app is a single screen, and one com
 | electron-vite | 6 | Builds main, preload and renderer from one config. Declares Vite 8 support. |
 | electron-builder | 26 | NSIS installer, current user only, unsigned. |
 
-The TypeScript config is split into project references: `tsconfig.app.json` covers app code, `tsconfig.vitest.json` covers `src/**/__tests__/*`, `tsconfig.node.json` covers the build and test configs, `e2e/` and `e2e-electron/`, and `tsconfig.electron.json` covers `electron/` (Node and Electron APIs, no DOM).
+Fonts are the Fontsource variable packages for Inter and JetBrains Mono (5.3), bundled into the build.
+
+The TypeScript config is split into project references: `tsconfig.app.json` covers app code, `tsconfig.vitest.json` covers `src/**/__tests__/*`, `tsconfig.node.json` covers the build and test configs, `config/`, `scripts/`, `e2e/` and `e2e-electron/`, and `tsconfig.electron.json` covers `electron/` (Node and Electron APIs, no DOM).
 
 ## Directory layout
 
@@ -57,6 +59,13 @@ electron/
   shared/channels.ts         IPC channel names used by main and preload
 electron.vite.config.ts      desktop build: main, preload, renderer (reuses vite.config.ts)
 electron-builder.yml         Windows installer
+config/
+  contentSecurityPolicy.ts   Vite plugin that adds the CSP <meta> tag to index.html
+build/
+  icon.svg, icon-small.svg   app icon artwork; icon.ico is generated from them
+scripts/
+  build-icon.ts              `npm run icon`: renders the SVGs at 16–256 px, writes build/icon.ico
+  ico.ts                     packs PNGs into an .ico (unit-tested in scripts/__tests__/)
 src/
   main.ts                    creates App with a MockGitDataSource and the sample compare paths
   App.vue                    page layout; wires useGitManager to the components
@@ -92,6 +101,7 @@ src/
       SideBySideDiff.vue     simple (two-column) diff
       ComparePathInputs.vue  left/right path inputs and the swap button
 e2e/git-manager.spec.ts      Playwright acceptance tests (browser)
+e2e/support/pageChecks.ts    checks shared by both suites: resource origins, fonts, CSP
 e2e-electron/app.spec.ts     Playwright acceptance tests (built desktop app)
 ```
 
@@ -205,13 +215,15 @@ Each history row is 32px tall, and the graph column is 64px wide. Lane *n* is at
 - **Dev vs packaged.** `npm run dev:app` serves the renderer from Vite on port 5173 (`ELECTRON_RENDERER_URL`) with hot reload. A packaged build always loads `out/renderer/index.html` from disk and ignores that variable.
 - **Window size.** Sizes are content sizes (`useContentSize`). The minimum is 1024×640, the smallest size at which the layout fits without page scroll; both e2e suites check it.
 - **Packaging.** `electron-builder.yml` packages only `out/**` and `package.json`. Vue is bundled into the renderer, so every npm package is a dev dependency and the installer ships no `node_modules`. The appId `com.echel.gitmanager` must match `APP_USER_MODEL_ID` in the main process.
+- **Offline and locked down.** Fonts are bundled, and the page carries a Content-Security-Policy as a `<meta>` tag (a `file://` page has no response headers). The built app's policy is `default-src 'none'` with scripts, styles, fonts, images and connections allowed only from the app's own files: no inline code, no `eval`, no other hosts. The dev server's policy also allows inline styles, because Vite injects imported CSS as `<style>` tags. Vite never inlines assets as `data:` URLs (`assetsInlineLimit: 0`), since the policy would block them. A feature that needs the network, such as auto-update, will have to widen the policy deliberately.
+- **Icon.** `build/icon.svg` is the artwork for 48 px and up. `build/icon-small.svg` is a full-bleed version with a larger glyph and heavier strokes for 32 px and below, where the large artwork loses legibility. `npm run icon` renders both with Playwright's Chromium at nine sizes from 16 to 256 px and packs them into `build/icon.ico` (PNG entries), which is committed. electron-builder embeds it in the exe and the installer. The main process also sets it as the window icon, which matters in dev mode, where the running exe is `electron.exe`. The browser tab uses `icon-small.svg` as its favicon.
 - **User data.** Electron keeps its data in `%APPDATA%\git-manager` (named after `package.json`). The installed app and `dev:app` share it, and uninstalling leaves it behind.
 
 ## Theming and layout
 
 - All colours are Tailwind theme tokens in `src/style.css` (`--color-gm-*`, used as `bg-gm-*`, `text-gm-*`, `border-gm-*`). Components use only these tokens, never raw hex values. The one exception is the lane colours in `lib/graph.ts`, which are drawn as SVG strokes.
 - `App` accepts an optional `accent` prop, which overrides `--color-gm-accent` on the root element.
-- Fonts: Inter for the interface and JetBrains Mono for code, hashes and paths, both loaded from Google Fonts in `index.html`. Offline, the desktop app falls back to system fonts.
+- Fonts: Inter for the interface and JetBrains Mono for code, hashes and paths. Both are bundled variable fonts imported in `src/main.ts` (families `'Inter Variable'` and `'JetBrains Mono Variable'` in the `@theme` tokens), so one file per script subset covers every weight and nothing loads from another host.
 - Layout is a flex row that wraps. The sidebar has a flex basis of 260px and the main column 560px. Below that combined width the columns stack, and below 860px the page stops being a fixed full-height window (`max-[860px]:h-auto`) and scrolls normally. The commit table keeps a minimum width of 760px and scrolls sideways inside its own pane, so the page itself never scrolls horizontally.
 - Above 860px the window is fixed-height with a minimum of 640px, matching the desktop app's minimum window size. In a history row, branch badges and the message share the description column: the message gives up space first (down to 8 characters), then the badges shrink with an ellipsis and show their full name as a tooltip.
 
@@ -224,7 +236,10 @@ Each history row is 32px tall, and the graph column is 64px wide. Lane *n* is at
 | Components | `src/components/**/__tests__/` | Each component renders its props and emits the right events |
 | Wiring | `src/__tests__/App.spec.ts` | `App` connects composable and components (clicks reach the source; results reach the screen) |
 | Acceptance | `e2e/git-manager.spec.ts` | Each capability driven through the real UI in Chromium, including the phone-width and smallest-desktop layouts |
-| Desktop acceptance | `e2e-electron/app.spec.ts` | The built app opens the UI, the preload bridge reaches the main process, the renderer has no Node globals, and the minimum window fits the layout |
+| Desktop acceptance | `e2e-electron/app.spec.ts` | The built app opens the UI, the preload bridge reaches the main process, the renderer has no Node globals, the minimum window fits the layout, it loads only from disk in the bundled fonts, and the strict CSP blocks injected scripts and styles with no violation at startup |
+| Icon packer | `scripts/__tests__/ico.spec.ts` | The .ico layout Windows reads, and that the committed `build/icon.ico` has every size as a PNG |
+
+The browser suite also checks that the page loads nothing from other hosts, renders in the bundled fonts, has the favicon, and that its dev policy blocks injected scripts with no violations. Playwright can't check that `eval` is blocked: its own evaluations go through DevTools, which the policy exempts, so the tests assert the `script-src` directive instead.
 
 The browser suite runs against Vite; the desktop suite runs against `out/`, so `npm run test:e2e:app` builds first. Playwright starts its own Vite server on port 4317 with `--strictPort` and `reuseExistingServer: false`. That way it fails loudly instead of testing some other app that happens to be on the port.
 
@@ -233,6 +248,6 @@ Stable selectors for the tests are roles and labels first, then `data-testid`: `
 ## Known limitations
 
 - There is no real git yet. Every operation goes to `MockGitDataSource` in both hosts, and compare returns the same diff for any two paths.
-- The installer is unsigned and uses Electron's default icon. There is no auto-update yet.
+- The installer is unsigned. There is no auto-update yet.
 - Only three graph lanes are supported.
 - The history isn't paginated or virtualized. `listRepositories` returns every commit up front.
