@@ -69,7 +69,7 @@ For how the code is organised, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md
 
 ### Connecting real repositories
 
-The interface talks to git through a single TypeScript interface, `GitDataSource` (`src/services/GitDataSource.ts`). Today it's backed by `MockGitDataSource`, which serves sample data.
+The interface talks to git through a single TypeScript interface, `GitDataSource` (`src/services/GitDataSource.ts`). It asks only for what the screen shows (a repository's branches, a page of history, one commit's files, one file's diff), so large repositories never have to be read in full. Today it's backed by `MockGitDataSource`, which serves sample data.
 
 Real repositories will come through the desktop app: its Electron main process will run your installed Git for Windows and pass results to the interface over the preload bridge. The browser version keeps the sample data, so the interface can be developed and tested without touching a real repository.
 

@@ -26,10 +26,12 @@ npm run icon           # node scripts/build-icon.ts: build/icon*.svg → build/i
 ## Structure
 
 ```
-src/types/git.ts                 data model (Repository → Commit → FileChange → Hunk; GraphRow)
-src/services/GitDataSource.ts    ONLY boundary to git (interface)
+src/types/git.ts                 contract types, one per call (Repository, Branches, HistoryPage, FileChange, Hunk; GraphRow)
+src/services/GitDataSource.ts    ONLY boundary to git (interface): one call per view area
 src/services/MockGitDataSource.ts  sample-data impl; ops return status messages only
-src/data/sample*.ts              sample repos, diffs, SAMPLE_COMPARE_PATHS
+src/services/__tests__/gitDataSourceContract.ts  rules every data source must pass (mock now, real git next)
+src/data/sample*.ts              sample repos stored whole (sampleTypes.ts), diffs, SAMPLE_COMPARE_PATHS
+src/composables/latestLoad.ts    one async area: value + loading, only the latest load applies
 src/composables/useGitManager.ts ALL state, derived state, actions
 src/lib/{diff,graph,format}.ts   pure functions (diff rows, graph geometry, labels)
 src/components/**                presentational: props in, emits out
@@ -60,7 +62,9 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - Browser mode keeps `MockGitDataSource`; the desktop data source is chosen at build time — an installed app must never fall back to sample data.
 - Graph layout (`GraphRow`) is supplied by the data source; UI doesn't assign lanes. Max 3 lanes — widening needs `LaneFlags`, `LANE_COLORS`, `GRAPH_WIDTH` together.
 - Branch → commit lookup is by `tipHash`, never index.
-- Composable invariants (tested; change deliberately): selection change resets file index + closes compare; compare forces `diffMode = 'simple'` and ignores `setDiffMode`; compare responses are race-guarded by a request counter; local state (`currentBranch`, `lastFetch`) changes only after the source resolves; failures → `status = "Failed: …"`.
+- Composable invariants (tested; change deliberately): selection change resets file index + closes compare; compare forces `diffMode = 'simple'` and ignores `setDiffMode`; every async area (branches, history, files, diff, compare) goes through `latestLoad`, so stale responses are dropped; a failed load → `status = "Couldn't load <area>: …"` and only that area empties; local state (`currentBranch`, `lastFetch`) changes only after the source resolves; operation failures → `status = "Failed: …"`.
+- Never load a whole repository: add a narrow `GitDataSource` call per new view area, add its rules to the contract suite, and load it through `latestLoad`. History is capped at `HISTORY_LIMIT`.
+- Composable tests that need slow or out-of-order responses use `heldSource()` (`src/composables/__tests__/heldSource.ts`).
 - No router, no Pinia — single screen. Revisit only if a second screen needs shared state.
 
 ## Conventions
