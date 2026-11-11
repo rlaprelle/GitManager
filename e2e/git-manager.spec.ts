@@ -1,5 +1,11 @@
 import { type Page, expect, test } from '@playwright/test'
-import { foreignResourceUrls, primaryFontsLoaded } from './support/pageChecks'
+import {
+  contentSecurityPolicy,
+  foreignResourceUrls,
+  injectionAttempts,
+  policyViolationsOnReload,
+  primaryFontsLoaded,
+} from './support/pageChecks'
 
 // Acceptance pass: drives each capability of the main window through the UI.
 
@@ -134,4 +140,13 @@ test('loads nothing from other hosts and renders in the bundled fonts', async ({
   expect(fonts.sans).toMatch(/^Inter/)
   expect(fonts.mono).toMatch(/^JetBrains Mono/)
   expect(await foreignResourceUrls(page)).toEqual([])
+})
+
+// The dev server gets the relaxed dev policy (inline styles and the HMR socket); scripts stay locked down.
+test('a content security policy blocks injected scripts without breaking the app', async ({ page }) => {
+  // Exactly 'self': no inline scripts, no eval.
+  expect(await contentSecurityPolicy(page)).toMatch(/(^|; )script-src 'self'(;|$)/)
+  expect((await injectionAttempts(page)).inlineScript).toBe(false)
+  const violations = await policyViolationsOnReload(page, () => expect(status(page)).toHaveText('Ready'))
+  expect(violations).toEqual([])
 })

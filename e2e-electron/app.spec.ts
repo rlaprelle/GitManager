@@ -1,6 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { type ElectronApplication, type Page, _electron as electron, expect, test } from '@playwright/test'
-import { foreignResourceUrls, primaryFontsLoaded } from '../e2e/support/pageChecks'
+import {
+  contentSecurityPolicy,
+  foreignResourceUrls,
+  injectionAttempts,
+  policyViolationsOnReload,
+  primaryFontsLoaded,
+} from '../e2e/support/pageChecks'
 import type { GitManagerBridge } from '../src/types/bridge'
 
 // Acceptance pass for the desktop shell: the built app opens the existing UI,
@@ -76,4 +82,16 @@ test('works offline: loads only from disk and renders in the bundled fonts', asy
   expect(fonts.mono).toMatch(/^JetBrains Mono/)
   expect(window.url()).toMatch(/^file:/)
   expect(await foreignResourceUrls(window)).toEqual([])
+})
+
+test('the built app enforces the strict content security policy', async () => {
+  const status = window.locator('footer [role="status"]')
+  await expect(status).toHaveText('Ready')
+  const policy = await contentSecurityPolicy(window)
+  expect(policy).toContain("default-src 'none'")
+  expect(policy).toMatch(/(^|; )script-src 'self'(;|$)/)
+  expect(policy).not.toContain('unsafe')
+  expect(await injectionAttempts(window)).toEqual({ inlineScript: false, inlineStyle: false })
+  const violations = await policyViolationsOnReload(window, () => expect(status).toHaveText('Ready'))
+  expect(violations).toEqual([])
 })

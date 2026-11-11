@@ -39,3 +39,45 @@ export function primaryFontsLoaded(page: Page): Promise<{ sans: string; mono: st
     }
   })
 }
+
+/** The policy from the page's Content-Security-Policy meta tag, or null when there is none. */
+export function contentSecurityPolicy(page: Page): Promise<string | null> {
+  return page.evaluate(
+    () => document.querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute('content') ?? null,
+  )
+}
+
+/**
+ * Injects an inline <script> and an inline <style> and reports which took effect.
+ * eval is deliberately not probed: Playwright evaluates through DevTools, which is exempt from
+ * the policy's eval ban, so a probe would always report that eval works. Tests check the
+ * script-src directive instead.
+ */
+export function injectionAttempts(page: Page): Promise<{ inlineScript: boolean; inlineStyle: boolean }> {
+  return page.evaluate(() => {
+    const probe = window as unknown as { injectedScriptRan?: boolean }
+    const script = document.createElement('script')
+    script.textContent = 'window.injectedScriptRan = true'
+    document.head.append(script)
+
+    const style = document.createElement('style')
+    style.textContent = 'body { outline: 7px solid red }'
+    document.head.append(style)
+    const inlineStyle = getComputedStyle(document.body).outlineWidth === '7px'
+
+    script.remove()
+    style.remove()
+    return { inlineScript: probe.injectedScriptRan === true, inlineStyle }
+  })
+}
+
+/** Reloads the page and returns every Content-Security-Policy violation the console reported. */
+export async function policyViolationsOnReload(page: Page, ready: () => Promise<void>): Promise<string[]> {
+  const violations: string[] = []
+  page.on('console', (message) => {
+    if (/Content Security Policy/i.test(message.text())) violations.push(message.text())
+  })
+  await page.reload()
+  await ready()
+  return violations
+}
