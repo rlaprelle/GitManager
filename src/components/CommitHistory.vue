@@ -6,6 +6,9 @@ import RefBadge from './RefBadge.vue'
 
 defineProps<{
   commits: Commit[]
+  /** The repository has older commits than `commits` holds. */
+  hasMore: boolean
+  loading: boolean
   selectedIndex: number
   currentBranch: string
 }>()
@@ -19,7 +22,9 @@ const columns = 'grid grid-cols-[64px_minmax(0,1fr)_130px_120px_76px] items-cent
   <section aria-label="Commit graph" class="flex min-h-[220px] flex-auto flex-col">
     <div class="flex flex-none items-center gap-3 border-b border-gm-line px-4 py-2.5">
       <h2 class="m-0 text-[13px] font-semibold">History</h2>
-      <span class="text-[12px] text-gm-muted">{{ pluralize(commits.length, 'commit', 'commits') }} · all branches</span>
+      <span v-if="!loading" class="text-[12px] text-gm-muted">
+        {{ hasMore ? 'Showing the latest ' : '' }}{{ pluralize(commits.length, 'commit', 'commits') }} · all branches
+      </span>
     </div>
 
     <div class="min-h-0 flex-auto overflow-auto max-[860px]:max-h-[440px]">
@@ -30,6 +35,8 @@ const columns = 'grid grid-cols-[64px_minmax(0,1fr)_130px_120px_76px] items-cent
         >
           <span>Graph</span><span>Description</span><span>Author</span><span>Date</span><span>Commit</span>
         </div>
+
+        <p v-if="loading" class="m-0 px-4 py-3 text-[12px] text-gm-muted">Loading history…</p>
 
         <button
           v-for="(commit, index) in commits"

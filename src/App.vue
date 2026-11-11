@@ -26,8 +26,15 @@ const {
   compareOpen,
   leftPath,
   rightPath,
+  historyLoading,
+  filesLoading,
+  diffLoading,
   repository,
+  branches,
+  commits,
+  historyHasMore,
   commit,
+  files,
   currentBranch,
   headerSyncLabel,
   diffMode,
@@ -61,7 +68,7 @@ onMounted(load)
     class="flex h-screen min-h-[640px] flex-col overflow-hidden bg-gm-window font-sans text-[13px] text-gm-text max-[860px]:h-auto"
     :style="accentStyle"
   >
-    <template v-if="repository && commit">
+    <template v-if="repository">
       <AppHeader
         :repo-name="repository.name"
         :current-branch="currentBranch"
@@ -83,8 +90,8 @@ onMounted(load)
             @add="addRepository"
           />
           <BranchList
-            :local-branches="repository.localBranches"
-            :remote-branches="repository.remoteBranches"
+            :local-branches="branches.local"
+            :remote-branches="branches.remote"
             :current-branch="currentBranch"
             :selected-branch="selectedBranch"
             @select="selectBranch"
@@ -94,13 +101,19 @@ onMounted(load)
 
         <main class="flex min-w-0 flex-[999_1_560px] flex-col bg-gm-main">
           <CommitHistory
-            :commits="repository.commits"
+            :commits="commits"
+            :has-more="historyHasMore"
+            :loading="historyLoading"
             :selected-index="selectedCommitIndex"
             :current-branch="currentBranch"
             @select="selectCommit"
           />
           <DiffPanel
+            v-if="commit"
             :commit="commit"
+            :files="files"
+            :files-loading="filesLoading"
+            :diff-loading="diffLoading"
             :selected-file-index="selectedFileIndex"
             :compare-open="compareOpen"
             :diff-mode="diffMode"

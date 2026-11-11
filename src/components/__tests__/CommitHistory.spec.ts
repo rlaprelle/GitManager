@@ -5,9 +5,16 @@ import CommitHistory from '../CommitHistory.vue'
 
 const inventory = sampleRepositories[0]!
 
-function mountHistory(selectedIndex = 0) {
+function mountHistory(selectedIndex = 0, overrides: { hasMore?: boolean; loading?: boolean } = {}) {
+  const loading = overrides.loading ?? false
   return mount(CommitHistory, {
-    props: { commits: inventory.commits, selectedIndex, currentBranch: inventory.currentBranch },
+    props: {
+      commits: loading ? [] : inventory.commits,
+      hasMore: overrides.hasMore ?? false,
+      loading,
+      selectedIndex,
+      currentBranch: inventory.currentBranch,
+    },
   })
 }
 
@@ -20,6 +27,17 @@ describe('CommitHistory', () => {
     const wrapper = mountHistory()
     expect(wrapper.text()).toContain('10 commits · all branches')
     expect(rows(wrapper)).toHaveLength(10)
+  })
+
+  it('says when only the newest commits are shown', () => {
+    expect(mountHistory(0, { hasMore: true }).text()).toContain('Showing the latest 10 commits · all branches')
+  })
+
+  it('shows a loading message instead of rows while the history loads', () => {
+    const wrapper = mountHistory(0, { loading: true })
+    expect(wrapper.text()).toContain('Loading history…')
+    expect(wrapper.text()).not.toContain('0 commits')
+    expect(rows(wrapper)).toHaveLength(0)
   })
 
   it('shows message, author, date and hash in each row', () => {
