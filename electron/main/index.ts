@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url'
 import { BrowserWindow, app, ipcMain } from 'electron'
+import windowIcon from '../../build/icon.ico?asset'
 import { IpcChannel } from '../shared/channels'
 
 // Must match appId in electron-builder.yml so taskbar pinning and the
@@ -25,6 +26,8 @@ function createMainWindow(): BrowserWindow {
     show: false,
     backgroundColor: WINDOW_BACKGROUND,
     autoHideMenuBar: true,
+    // The packaged exe embeds the same icon; this covers dev mode, where the exe is electron.exe.
+    icon: windowIcon,
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,

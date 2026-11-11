@@ -150,3 +150,12 @@ test('a content security policy blocks injected scripts without breaking the app
   const violations = await policyViolationsOnReload(page, () => expect(status(page)).toHaveText('Ready'))
   expect(violations).toEqual([])
 })
+
+test('the browser tab shows the app icon', async ({ page }) => {
+  const href = await page.locator('link[rel="icon"]').getAttribute('href')
+  expect(href).toBeTruthy()
+  const response = await page.request.get(new URL(href!, page.url()).href)
+  expect(response.ok()).toBe(true)
+  expect(response.headers()['content-type']).toContain('image/svg+xml')
+  expect(await response.text()).toContain('<svg')
+})

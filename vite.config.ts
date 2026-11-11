@@ -7,8 +7,8 @@ import { contentSecurityPolicy } from './config/contentSecurityPolicy'
 export default defineConfig({
   plugins: [vue(), tailwindcss(), contentSecurityPolicy()],
   build: {
-    // Keep fonts as files: an inlined data: font would be blocked by the policy's font-src 'self'.
-    assetsInlineLimit: (file) => (file.endsWith('.woff2') ? false : undefined),
+    // Never inline assets as data: URLs: the content security policy only allows the app's own files.
+    assetsInlineLimit: 0,
   },
   resolve: {
     alias: {
