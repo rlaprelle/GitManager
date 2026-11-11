@@ -2,7 +2,7 @@
 import type { FileChange, FileStatus } from '@/types/git'
 import { pluralize, splitPath } from '@/lib/format'
 
-defineProps<{ files: FileChange[]; selectedIndex: number }>()
+defineProps<{ files: FileChange[]; loading: boolean; selectedIndex: number }>()
 
 defineEmits<{ select: [index: number] }>()
 
@@ -17,7 +17,8 @@ const STATUS_COLOR: Record<FileStatus, string> = {
   <div
     class="box-border h-full max-w-full min-w-0 flex-[1_1_220px] overflow-auto border-r border-gm-line p-2 max-[860px]:max-h-[440px]"
   >
-    <h3 class="m-0 px-2 pt-0.5 pb-2 text-[11px] font-semibold tracking-[0.06em] text-gm-faint uppercase">
+    <p v-if="loading" class="m-0 px-2 py-1 text-[12px] text-gm-muted">Loading files…</p>
+    <h3 v-else class="m-0 px-2 pt-0.5 pb-2 text-[11px] font-semibold tracking-[0.06em] text-gm-faint uppercase">
       {{ pluralize(files.length, 'file changed', 'files changed') }}
     </h3>
     <div class="flex flex-col gap-0.5">

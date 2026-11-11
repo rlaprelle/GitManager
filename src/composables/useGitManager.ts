@@ -1,13 +1,20 @@
 import { computed, ref } from 'vue'
 import type { GitDataSource } from '@/services/GitDataSource'
-import type { Commit, FileChange, Hunk, OperationResult, Repository } from '@/types/git'
+import type { Branches, Commit, FileChange, HistoryPage, Hunk, OperationResult, Repository } from '@/types/git'
 import { syncLabel } from '@/lib/format'
+import { latestLoad } from './latestLoad'
 
 export type DiffMode = 'git' | 'simple'
+
+/** How many of a repository's newest commits the history shows. */
+export const HISTORY_LIMIT = 200
 
 export interface GitManagerOptions {
   comparePaths: { left: string; right: string }
 }
+
+const NO_BRANCHES: Branches = { local: [], remote: [] }
+const NO_HISTORY: HistoryPage = { commits: [], hasMore: false }
 
 export function useGitManager(source: GitDataSource, options: GitManagerOptions) {
   const repositories = ref<Repository[]>([])
@@ -20,11 +27,16 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   const selectedFileIndex = ref(0)
   const chosenDiffMode = ref<DiffMode>('git')
 
+  // Each area loads separately when its selection changes; see latestLoad.
+  const branchesLoad = latestLoad<Branches>(NO_BRANCHES)
+  const historyLoad = latestLoad<HistoryPage>(NO_HISTORY)
+  const filesLoad = latestLoad<FileChange[]>([])
+  const diffLoad = latestLoad<Hunk[]>([])
+  const compareLoad = latestLoad<Hunk[]>([])
+
   const compareOpen = ref(false)
   const leftPath = ref(options.comparePaths.left)
   const rightPath = ref(options.comparePaths.right)
-  const compareHunks = ref<Hunk[]>([])
-  let compareRequest = 0
 
   // ---- derived state ----
 
@@ -32,23 +44,27 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     () => repositories.value.find((r) => r.id === selectedRepoId.value) ?? repositories.value[0],
   )
 
-  const commits = computed<Commit[]>(() => repository.value?.commits ?? [])
+  const branches = computed(() => branchesLoad.value.value)
+  const commits = computed<Commit[]>(() => historyLoad.value.value.commits)
+  const historyHasMore = computed(() => historyLoad.value.value.hasMore)
 
   const commit = computed<Commit | undefined>(() => {
     const list = commits.value
     return list[Math.min(selectedCommitIndex.value, list.length - 1)]
   })
 
+  const files = computed(() => filesLoad.value.value)
+
   const file = computed<FileChange | undefined>(() => {
-    const files = commit.value?.files ?? []
-    return files[Math.min(selectedFileIndex.value, files.length - 1)]
+    const list = files.value
+    return list[Math.min(selectedFileIndex.value, list.length - 1)]
   })
 
   const currentBranch = computed(() => repository.value?.currentBranch ?? '')
 
   /** '↑2 vs origin' for the checked-out branch, or null when it's in sync. */
   const headerSyncLabel = computed<string | null>(() => {
-    const local = repository.value?.localBranches.find((b) => b.name === currentBranch.value)
+    const local = branches.value.local.find((b) => b.name === currentBranch.value)
     const label = local ? syncLabel(local) : ''
     return label ? `${label} vs origin` : null
   })
@@ -56,7 +72,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   /** Two arbitrary files have no shared history, so only the simple diff applies. */
   const diffMode = computed<DiffMode>(() => (compareOpen.value ? 'simple' : chosenDiffMode.value))
 
-  const activeHunks = computed<Hunk[]>(() => (compareOpen.value ? compareHunks.value : (file.value?.hunks ?? [])))
+  const activeHunks = computed<Hunk[]>(() => (compareOpen.value ? compareLoad.value.value : diffLoad.value.value))
 
   // ---- loading ----
 
@@ -64,14 +80,55 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     loading.value = true
     try {
       repositories.value = await source.listRepositories()
-      const first = repositories.value[0]
-      selectedRepoId.value = first?.id ?? null
-      selectedBranch.value = first?.currentBranch ?? null
     } catch (error) {
       status.value = `Couldn't load repositories: ${messageOf(error)}`
+      return
     } finally {
       loading.value = false
     }
+    const first = repositories.value[0]
+    if (first) await openRepository(first)
+  }
+
+  function reportFailure(what: string): (error: unknown) => void {
+    return (error) => {
+      status.value = `Couldn't load ${what}: ${messageOf(error)}`
+    }
+  }
+
+  /** Loads branches and history, then opens the newest commit. */
+  async function openRepository(repo: Repository): Promise<void> {
+    selectedRepoId.value = repo.id
+    selectedBranch.value = repo.currentBranch
+    resetCommitView()
+    filesLoad.clear()
+    diffLoad.clear()
+    const [, historyLoaded] = await Promise.all([
+      branchesLoad.run(() => source.getBranches(repo.id), reportFailure('branches')),
+      historyLoad.run(() => source.getHistory(repo.id, HISTORY_LIMIT), reportFailure('history')),
+    ])
+    if (historyLoaded) await openCommit()
+  }
+
+  /** Loads the selected commit's files, then the selected file's diff. */
+  async function openCommit(): Promise<void> {
+    const repo = repository.value
+    const target = commit.value
+    if (!repo || !target) return
+    diffLoad.clear()
+    const filesLoaded = await filesLoad.run(
+      () => source.getCommitFiles(repo.id, target.hash),
+      reportFailure('changed files'),
+    )
+    if (filesLoaded) await openFile()
+  }
+
+  async function openFile(): Promise<void> {
+    const repo = repository.value
+    const target = commit.value
+    const changed = file.value
+    if (!repo || !target || !changed) return
+    await diffLoad.run(() => source.getFileDiff(repo.id, target.hash, changed.path), reportFailure('diff'))
   }
 
   // ---- selection ----
@@ -82,34 +139,33 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     compareOpen.value = false
   }
 
-  function selectRepository(id: string): void {
+  async function selectRepository(id: string): Promise<void> {
     const repo = repositories.value.find((r) => r.id === id)
     if (!repo) return
-    selectedRepoId.value = id
-    selectedBranch.value = repo.currentBranch
-    resetCommitView()
     status.value = `Opened ${repo.name}`
+    await openRepository(repo)
   }
 
-  function selectBranch(name: string): void {
-    const repo = repository.value
-    if (!repo) return
-    const tipHash = [...repo.localBranches, ...repo.remoteBranches].find((b) => b.name === name)?.tipHash
-    const tipIndex = repo.commits.findIndex((c) => c.hash === tipHash)
+  async function selectBranch(name: string): Promise<void> {
+    const tipHash = [...branches.value.local, ...branches.value.remote].find((b) => b.name === name)?.tipHash
+    const tipIndex = commits.value.findIndex((c) => c.hash === tipHash)
     selectedBranch.value = name
     resetCommitView(Math.max(tipIndex, 0))
     status.value = `Selected ${name} (tip ${tipHash ?? 'unknown'})`
+    await openCommit()
   }
 
-  function selectCommit(index: number): void {
+  async function selectCommit(index: number): Promise<void> {
     const target = commits.value[index]
     if (!target) return
     resetCommitView(index)
     status.value = `Viewing commit ${target.hash}`
+    await openCommit()
   }
 
-  function selectFile(index: number): void {
+  async function selectFile(index: number): Promise<void> {
     selectedFileIndex.value = index
+    await openFile()
   }
 
   function setDiffMode(mode: DiffMode): void {
@@ -120,16 +176,14 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   // ---- compare two files ----
 
   async function refreshCompare(): Promise<void> {
-    const request = ++compareRequest
-    try {
-      const hunks = await source.compareFiles(leftPath.value, rightPath.value)
-      if (request === compareRequest) compareHunks.value = hunks
-    } catch (error) {
-      if (request === compareRequest) {
-        compareHunks.value = []
+    const repo = repository.value
+    if (!repo) return
+    await compareLoad.run(
+      () => source.compareFiles(repo.id, leftPath.value, rightPath.value),
+      (error) => {
         status.value = `Couldn't compare files: ${messageOf(error)}`
-      }
-    }
+      },
+    )
   }
 
   async function openCompare(): Promise<void> {
@@ -207,10 +261,16 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     compareOpen,
     leftPath,
     rightPath,
+    historyLoading: historyLoad.loading,
+    filesLoading: filesLoad.loading,
+    diffLoading: diffLoad.loading,
     // derived
     repository,
+    branches,
     commits,
+    historyHasMore,
     commit,
+    files,
     file,
     currentBranch,
     headerSyncLabel,

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { Commit, Hunk } from '@/types/git'
+import type { Commit, FileChange, Hunk } from '@/types/git'
 import type { DiffMode } from '@/composables/useGitManager'
 import { splitPath } from '@/lib/format'
 import GmIcon from '../GmIcon.vue'
@@ -12,6 +12,9 @@ import UnifiedDiff from './UnifiedDiff.vue'
 
 const props = defineProps<{
   commit: Commit
+  files: FileChange[]
+  filesLoading: boolean
+  diffLoading: boolean
   selectedFileIndex: number
   compareOpen: boolean
   diffMode: DiffMode
@@ -30,7 +33,9 @@ const emit = defineEmits<{
   swap: []
 }>()
 
-const file = computed(() => props.commit.files[Math.min(props.selectedFileIndex, props.commit.files.length - 1)])
+const file = computed<FileChange | undefined>(
+  () => props.files[Math.min(props.selectedFileIndex, props.files.length - 1)],
+)
 
 const leftLabel = computed(() => {
   if (props.compareOpen) return splitPath(props.leftPath).name
@@ -76,7 +81,8 @@ const toolbarButton =
     <div class="flex min-h-0 flex-auto flex-wrap">
       <ChangedFileList
         v-if="!compareOpen"
-        :files="commit.files"
+        :files="files"
+        :loading="filesLoading"
         :selected-index="selectedFileIndex"
         @select="emit('selectFile', $event)"
       />
@@ -103,7 +109,8 @@ const toolbarButton =
         <div
           class="min-h-0 flex-auto overflow-auto bg-gm-code font-mono text-[12px] leading-5 max-[860px]:max-h-[440px]"
         >
-          <UnifiedDiff v-if="diffMode === 'git'" :hunks="hunks" />
+          <p v-if="(filesLoading || diffLoading) && !compareOpen" class="m-0 px-4 py-3 font-sans text-gm-muted">Loading diff…</p>
+          <UnifiedDiff v-else-if="diffMode === 'git'" :hunks="hunks" />
           <SideBySideDiff v-else :hunks="hunks" :left-label="leftLabel" :right-label="rightLabel" />
         </div>
       </div>

@@ -1,4 +1,5 @@
-import type { Commit, GraphRow, LaneFlags, Repository } from '@/types/git'
+import type { GraphRow, LaneFlags } from '@/types/git'
+import type { SampleCommit, SampleFileChange, SampleRepository } from './sampleTypes'
 import {
   checkoutServiceDiff,
   ciCacheDiff,
@@ -37,10 +38,10 @@ function graph(
   }
 }
 
-type LinearCommit = Omit<Commit, 'graph'>
+type LinearCommit = Omit<SampleCommit, 'graph'>
 
 /** Single-lane history: every commit on lane 0, joined top to bottom. */
-function linearHistory(commits: LinearCommit[]): Commit[] {
+function linearHistory(commits: LinearCommit[]): SampleCommit[] {
   const last = commits.length - 1
   return commits.map((commit, index) => ({
     ...commit,
@@ -48,12 +49,12 @@ function linearHistory(commits: LinearCommit[]): Commit[] {
   }))
 }
 
-const SKU_FIX_FILES: Commit['files'] = [
+const SKU_FIX_FILES: SampleFileChange[] = [
   { path: 'src/main/java/com/example/inventory/catalog/SkuLookup.java', status: 'M', hunks: skuLookupDiff },
   { path: 'src/test/java/com/example/inventory/catalog/SkuLookupTest.java', status: 'M', hunks: skuLookupTestDiff },
 ]
 
-const inventoryService: Repository = {
+const inventoryService: SampleRepository = {
   id: 'inventory',
   name: 'inventory-service',
   path: 'C:\\dev\\inventory-service',
@@ -201,7 +202,7 @@ const inventoryService: Repository = {
   ],
 }
 
-const pricingApi: Repository = {
+const pricingApi: SampleRepository = {
   id: 'pricing',
   name: 'pricing-api',
   path: 'C:\\dev\\pricing-api',
@@ -257,7 +258,7 @@ const pricingApi: Repository = {
   ]),
 }
 
-const storefrontWeb: Repository = {
+const storefrontWeb: SampleRepository = {
   id: 'storefront',
   name: 'storefront-web',
   path: 'C:\\dev\\storefront-web',
@@ -300,7 +301,7 @@ const storefrontWeb: Repository = {
   ]),
 }
 
-const buildTools: Repository = {
+const buildTools: SampleRepository = {
   id: 'buildtools',
   name: 'build-tools',
   path: 'C:\\dev\\build-tools',
@@ -337,7 +338,7 @@ const buildTools: Repository = {
   ]),
 }
 
-const dotfiles: Repository = {
+const dotfiles: SampleRepository = {
   id: 'dotfiles',
   name: 'dotfiles',
   path: 'C:\\dev\\dotfiles',
@@ -366,7 +367,7 @@ const dotfiles: Repository = {
   ]),
 }
 
-export const sampleRepositories: Repository[] = [inventoryService, pricingApi, storefrontWeb, buildTools, dotfiles]
+export const sampleRepositories: SampleRepository[] = [inventoryService, pricingApi, storefrontWeb, buildTools, dotfiles]
 
 export const SAMPLE_COMPARE_PATHS = {
   left: 'C:\\dev\\inventory-service\\src\\main\\resources\\application.yml',

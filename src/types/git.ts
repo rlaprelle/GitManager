@@ -12,10 +12,10 @@ export interface Hunk {
   lines: string[]
 }
 
+/** A file a commit touched. Its hunks are loaded separately (`GitDataSource.getFileDiff`). */
 export interface FileChange {
   path: string
   status: FileStatus
-  hunks: Hunk[]
 }
 
 /** The graph has three lanes (0–2); each flag says whether that lane's line is drawn. */
@@ -43,7 +43,6 @@ export interface Commit {
   /** Branch names pointing at this commit; remote ones start with 'origin/'. */
   refs: string[]
   graph: GraphRow
-  files: FileChange[]
 }
 
 export interface LocalBranch {
@@ -58,6 +57,7 @@ export interface RemoteBranch {
   tipHash: string
 }
 
+/** What the repository list shows. Branches and history are loaded when the repository is opened. */
 export interface Repository {
   id: string
   name: string
@@ -65,10 +65,18 @@ export interface Repository {
   currentBranch: string
   changedFileCount: number
   lastFetch: string
-  localBranches: LocalBranch[]
-  remoteBranches: RemoteBranch[]
-  /** Newest first. */
+}
+
+export interface Branches {
+  local: LocalBranch[]
+  remote: RemoteBranch[]
+}
+
+/** The newest commits of a repository, newest first. */
+export interface HistoryPage {
   commits: Commit[]
+  /** True when the repository has older commits than the page holds. */
+  hasMore: boolean
 }
 
 export interface OperationResult {

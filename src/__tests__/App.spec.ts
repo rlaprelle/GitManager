@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { SAMPLE_COMPARE_PATHS } from '@/data/sampleRepositories'
+import type { GitDataSource } from '@/services/GitDataSource'
 import { MockGitDataSource } from '@/services/MockGitDataSource'
+import { heldSource } from '@/composables/__tests__/heldSource'
 import App from '../App.vue'
 
-async function mountApp(source = new MockGitDataSource()) {
+async function mountApp(source: GitDataSource = new MockGitDataSource()) {
   const wrapper = mount(App, { props: { source, comparePaths: SAMPLE_COMPARE_PATHS } })
   await flushPromises()
   return wrapper
@@ -44,6 +46,28 @@ describe('App', () => {
     await buttonByText(wrapper, 'Paginate GET /items').trigger('click')
     expect(wrapper.text()).toContain('Changes in 18c4b6f · Paginate GET /items')
     expect(statusText(wrapper)).toBe('Viewing commit 18c4b6f')
+  })
+
+  it('shows the repository while its history loads, then the history and diff', async () => {
+    const held = heldSource()
+    held.hold('getHistory')
+    const wrapper = await mountApp(held.source)
+    expect(wrapper.get('[data-testid="header-repo"]').text()).toBe('inventory-service')
+    expect(wrapper.text()).toContain('Loading history…')
+
+    await held.callsTo('getHistory')[0]!.release()
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Loading history…')
+    expect(wrapper.text()).toContain('Changes in 9f3a1c2 · Add reservation expiry job')
+    expect(wrapper.findAll('[data-testid="unified-diff"] [data-kind="add"]')).toHaveLength(24)
+  })
+
+  it('selecting a file shows that file’s diff', async () => {
+    const wrapper = await mountApp()
+    await buttonByText(wrapper, 'application.yml').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('src/main/resources/application.yml')
+    expect(wrapper.get('[data-testid="unified-diff"]').text()).toContain('hold-duration: 15m')
   })
 
   it('checks out a branch and moves HEAD to it', async () => {

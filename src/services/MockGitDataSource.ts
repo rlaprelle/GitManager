@@ -1,22 +1,55 @@
 import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositories'
 import { sampleCompareDiff } from '@/data/sampleDiffs'
+import type { SampleCommit, SampleRepository } from '@/data/sampleTypes'
 import { invertHunks } from '@/lib/diff'
-import type { Hunk, OperationResult, Repository } from '@/types/git'
+import type { Branches, FileChange, HistoryPage, Hunk, OperationResult, Repository } from '@/types/git'
 import type { GitDataSource } from './GitDataSource'
 
 /**
  * In-memory stand-in for a git backend, serving the design's sample repos.
  * Remote operations always succeed and report the design's messages.
+ * Every result is a copy, so callers can't change the sample data.
  */
 export class MockGitDataSource implements GitDataSource {
-  constructor(private readonly repositories: Repository[] = sampleRepositories) {}
+  constructor(private readonly repositories: SampleRepository[] = sampleRepositories) {}
 
   async listRepositories(): Promise<Repository[]> {
-    return structuredClone(this.repositories)
+    return this.repositories.map(({ id, name, path, currentBranch, changedFileCount, lastFetch }) => ({
+      id,
+      name,
+      path,
+      currentBranch,
+      changedFileCount,
+      lastFetch,
+    }))
+  }
+
+  async getBranches(repoId: string): Promise<Branches> {
+    const repo = this.repository(repoId)
+    return structuredClone({ local: repo.localBranches, remote: repo.remoteBranches })
+  }
+
+  async getHistory(repoId: string, limit: number): Promise<HistoryPage> {
+    const { commits } = this.repository(repoId)
+    return {
+      commits: commits.slice(0, limit).map(({ files: _files, ...commit }) => structuredClone(commit)),
+      hasMore: commits.length > limit,
+    }
+  }
+
+  async getCommitFiles(repoId: string, hash: string): Promise<FileChange[]> {
+    return this.commit(repoId, hash).files.map(({ path, status }) => ({ path, status }))
+  }
+
+  async getFileDiff(repoId: string, hash: string, path: string): Promise<Hunk[]> {
+    const file = this.commit(repoId, hash).files.find((candidate) => candidate.path === path)
+    if (!file) throw new Error(`${path} is not changed in ${hash}`)
+    return structuredClone(file.hunks)
   }
 
   /** Every pair of paths gets the sample diff; the sample pair reversed gets it inverted. */
-  async compareFiles(leftPath: string, rightPath: string): Promise<Hunk[]> {
+  async compareFiles(repoId: string, leftPath: string, rightPath: string): Promise<Hunk[]> {
+    this.repository(repoId)
     const isReversedSample = leftPath === SAMPLE_COMPARE_PATHS.right && rightPath === SAMPLE_COMPARE_PATHS.left
     return isReversedSample ? invertHunks(sampleCompareDiff) : structuredClone(sampleCompareDiff)
   }
@@ -35,5 +68,17 @@ export class MockGitDataSource implements GitDataSource {
 
   async push(_repoId: string, branch: string): Promise<OperationResult> {
     return { message: `Pushed ${branch} to origin/${branch}` }
+  }
+
+  private repository(repoId: string): SampleRepository {
+    const repo = this.repositories.find((candidate) => candidate.id === repoId)
+    if (!repo) throw new Error(`Unknown repository: ${repoId}`)
+    return repo
+  }
+
+  private commit(repoId: string, hash: string): SampleCommit {
+    const commit = this.repository(repoId).commits.find((candidate) => candidate.hash === hash)
+    if (!commit) throw new Error(`Unknown commit: ${hash}`)
+    return commit
   }
 }

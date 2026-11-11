@@ -8,16 +8,30 @@ import DiffPanel from '../DiffPanel.vue'
 const expiryCommit = sampleRepositories[0]!.commits[0]!
 const skuCommit = sampleRepositories[0]!.commits[3]!
 
-function mountPanel(overrides: Partial<{ compareOpen: boolean; diffMode: DiffMode; commitIndex: number }> = {}) {
+type PanelOverrides = Partial<{
+  compareOpen: boolean
+  diffMode: DiffMode
+  commitIndex: number
+  filesLoading: boolean
+  diffLoading: boolean
+}>
+
+function mountPanel(overrides: PanelOverrides = {}) {
   const commit = overrides.commitIndex === 3 ? skuCommit : expiryCommit
   const compareOpen = overrides.compareOpen ?? false
+  const filesLoading = overrides.filesLoading ?? false
+  // As in useGitManager: a diff starts loading only once the file list has arrived.
+  const diffLoading = overrides.diffLoading ?? false
   return mount(DiffPanel, {
     props: {
       commit,
+      files: filesLoading ? [] : commit.files.map(({ path, status }) => ({ path, status })),
+      filesLoading,
+      diffLoading,
       selectedFileIndex: 0,
       compareOpen,
       diffMode: overrides.diffMode ?? (compareOpen ? 'simple' : 'git'),
-      hunks: compareOpen ? sampleCompareDiff : commit.files[0]!.hunks,
+      hunks: compareOpen ? sampleCompareDiff : diffLoading || filesLoading ? [] : commit.files[0]!.hunks,
       leftPath: SAMPLE_COMPARE_PATHS.left,
       rightPath: SAMPLE_COMPARE_PATHS.right,
     },
@@ -47,6 +61,20 @@ describe('DiffPanel in commit mode', () => {
     const wrapper = mountPanel({ commitIndex: 3, diffMode: 'simple' })
     expect(wrapper.get('[data-testid="left-label"]').text()).toBe('SkuLookup.java @ 2d6e914^')
     expect(wrapper.get('[data-testid="right-label"]').text()).toBe('SkuLookup.java @ 2d6e914')
+  })
+
+  it('shows loading messages while the commit’s files load', () => {
+    const wrapper = mountPanel({ filesLoading: true })
+    expect(wrapper.text()).toContain('Changes in 9f3a1c2 · Add reservation expiry job')
+    expect(wrapper.text()).toContain('Loading files…')
+    expect(wrapper.text()).toContain('Loading diff…')
+  })
+
+  it('shows a loading message instead of the diff while it loads', () => {
+    const wrapper = mountPanel({ diffLoading: true })
+    expect(wrapper.text()).toContain('2 files changed')
+    expect(wrapper.text()).toContain('Loading diff…')
+    expect(wrapper.find('[data-testid="unified-diff"]').exists()).toBe(false)
   })
 
   it('labels the left side of a newly added file as a new file', () => {
