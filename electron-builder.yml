@@ -24,3 +24,9 @@ nsis:
   allowElevation: false
   allowToChangeInstallationDirectory: true
   artifactName: GitManager-Setup-${version}.${ext}
+# The bundled fonts are SIL OFL 1.1, which requires their license to travel with them.
+extraResources:
+  - from: node_modules/@fontsource-variable/inter/LICENSE
+    to: licenses/Inter-OFL.txt
+  - from: node_modules/@fontsource-variable/jetbrains-mono/LICENSE
+    to: licenses/JetBrains-Mono-OFL.txt

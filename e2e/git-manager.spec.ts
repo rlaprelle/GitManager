@@ -1,4 +1,5 @@
 import { type Page, expect, test } from '@playwright/test'
+import { foreignResourceUrls, primaryFontsLoaded } from './support/pageChecks'
 
 // Acceptance pass: drives each capability of the main window through the UI.
 
@@ -120,4 +121,17 @@ test('at the smallest desktop size branch labels stay inside the description col
     .getByTestId('commit-description')
     .evaluateAll((cells) => cells.filter((cell) => cell.scrollWidth > cell.clientWidth).map((cell) => cell.textContent))
   expect(overflowing).toEqual([])
+})
+
+test('loads nothing from other hosts and renders in the bundled fonts', async ({ page }) => {
+  await expect
+    .poll(async () => {
+      const fonts = await primaryFontsLoaded(page)
+      return fonts.loaded.includes(fonts.sans) && fonts.loaded.includes(fonts.mono)
+    })
+    .toBe(true)
+  const fonts = await primaryFontsLoaded(page)
+  expect(fonts.sans).toMatch(/^Inter/)
+  expect(fonts.mono).toMatch(/^JetBrains Mono/)
+  expect(await foreignResourceUrls(page)).toEqual([])
 })
