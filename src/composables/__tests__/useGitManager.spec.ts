@@ -3,6 +3,7 @@ import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositor
 import { expiryJobDiff, reservationConfigDiff, sampleCompareDiff, skuLookupDiff } from '@/data/sampleDiffs'
 import { invertHunks } from '@/lib/diff'
 import type { GitDataSource } from '@/services/GitDataSource'
+import type { SampleRepository } from '@/data/sampleTypes'
 import { MockGitDataSource } from '@/services/MockGitDataSource'
 import { HISTORY_LIMIT, useGitManager } from '../useGitManager'
 import { heldSource, settle } from './heldSource'
@@ -318,6 +319,70 @@ describe('useGitManager', () => {
       const source = new MockGitDataSource()
       source.getHistory = async () => ({ commits: [], hasMore: false })
       expect((await loadedManager(source)).historyMessage.value).toBe('No commits yet')
+    })
+  })
+
+  describe('showing more history', () => {
+    /** A repository with `count` commits in a line, newest first: c<count-1> … c0. */
+    function longRepository(id: string, count: number): SampleRepository {
+      const commits = Array.from({ length: count }, (_, i) => {
+        const n = count - 1 - i
+        return {
+          hash: `c${n}`,
+          parents: n > 0 ? [`c${n - 1}`] : [],
+          message: `Commit ${n}`,
+          author: 'You',
+          date: new Date(Date.UTC(2026, 0, 1) + n * 60_000).toISOString(),
+          refs: [],
+          files: [],
+        }
+      })
+      return {
+        ...structuredClone(sampleRepositories[0]!),
+        id,
+        name: id,
+        currentBranch: 'main',
+        localBranches: [{ name: 'main', ahead: 0, behind: 0, tipHash: commits[0]!.hash }],
+        remoteBranches: [],
+        commits,
+      }
+    }
+
+    it('shows the next page on request, keeping the selected commit', async () => {
+      const gm = await loadedManager(new MockGitDataSource([longRepository('long', 450)]))
+      expect(gm.commits.value).toHaveLength(HISTORY_LIMIT)
+      expect(gm.historyHasMore.value).toBe(true)
+      await gm.selectCommit(5)
+
+      await gm.showMoreHistory()
+      expect(gm.commits.value).toHaveLength(2 * HISTORY_LIMIT)
+      expect(gm.commit.value?.hash).toBe('c444')
+      await gm.showMoreHistory()
+      expect(gm.commits.value).toHaveLength(450)
+      expect(gm.historyHasMore.value).toBe(false)
+    })
+
+    it('keeps the rows on screen while the next page loads, and says it is loading', async () => {
+      const held = heldSource(new MockGitDataSource([longRepository('long', 450)]))
+      const gm = await loadedManager(held.source)
+      held.hold('getHistory')
+      const more = gm.showMoreHistory()
+      await settle()
+      expect(gm.loadingMoreHistory.value).toBe(true)
+      expect(gm.historyMessage.value).toBeNull()
+      expect(gm.commits.value).toHaveLength(HISTORY_LIMIT)
+      await held.callsTo('getHistory')[0]!.release()
+      await more
+      expect(gm.loadingMoreHistory.value).toBe(false)
+    })
+
+    it('keeps the longer history through a refresh, and starts again at one page for another repository', async () => {
+      const gm = await loadedManager(new MockGitDataSource([longRepository('long', 450), longRepository('other', 450)]))
+      await gm.showMoreHistory()
+      await gm.refresh()
+      expect(gm.commits.value).toHaveLength(2 * HISTORY_LIMIT)
+      await gm.selectRepository('other')
+      expect(gm.commits.value).toHaveLength(HISTORY_LIMIT)
     })
   })
 

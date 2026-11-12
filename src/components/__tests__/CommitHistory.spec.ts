@@ -10,13 +10,14 @@ const inventoryCommits = sampleHistoryPage(inventory, 200).commits
 
 function mountHistory(
   selectedIndex = 0,
-  overrides: { hasMore?: boolean; message?: string | null; commits?: Commit[] } = {},
+  overrides: { hasMore?: boolean; loadingMore?: boolean; message?: string | null; commits?: Commit[] } = {},
 ) {
   const message = overrides.message ?? null
   return mount(CommitHistory, {
     props: {
       commits: message ? [] : (overrides.commits ?? inventoryCommits),
       hasMore: overrides.hasMore ?? false,
+      loadingMore: overrides.loadingMore ?? false,
       message,
       selectedIndex,
       currentBranch: inventory.currentBranch!,
@@ -84,6 +85,19 @@ describe('CommitHistory', () => {
     const text = rows(mountHistory(0, { commits: full }))[0]!.text()
     expect(text).toContain('9f3a1c2')
     expect(text).not.toContain('9f3a1c20')
+  })
+
+  it('offers more commits at the end of the list when the repository has more', async () => {
+    const wrapper = mountHistory(0, { hasMore: true })
+    await wrapper.get('button[data-testid="show-more-history"]').trigger('click')
+    expect(wrapper.emitted('showMore')).toHaveLength(1)
+    expect(mountHistory().find('[data-testid="show-more-history"]').exists()).toBe(false)
+  })
+
+  it('says it is loading more, and can’t be clicked again meanwhile', () => {
+    const button = mountHistory(0, { hasMore: true, loadingMore: true }).get('button[data-testid="show-more-history"]')
+    expect(button.text()).toBe('Loading more commits…')
+    expect(button.attributes('disabled')).toBeDefined()
   })
 
   it('marks the selected commit and emits the clicked index', async () => {

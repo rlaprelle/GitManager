@@ -12,6 +12,8 @@ const STYLE: Record<UnifiedLine['kind'], { row: string; sign: string; text: stri
   del: { row: 'bg-gm-del', sign: 'text-gm-del-sign', text: 'text-gm-del-text', marker: '-' },
   add: { row: 'bg-gm-add', sign: 'text-gm-add-sign', text: 'text-gm-add-text', marker: '+' },
   context: { row: 'bg-transparent', sign: 'text-gm-soft', text: 'text-gm-soft', marker: '' },
+  // git's "\ No newline at end of file": a quiet remark about the line above, not a line.
+  note: { row: 'bg-transparent', sign: 'text-gm-faint', text: 'text-gm-faint italic font-sans text-[11px]', marker: '' },
 }
 </script>
 

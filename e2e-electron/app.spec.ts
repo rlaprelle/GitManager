@@ -7,6 +7,7 @@ import {
   type Fixtures,
   commitInFixture,
   createFixtures,
+  createLongRepository,
   createScratchRepository,
   removeFixtures,
   switchToNewBranchInFixture,
@@ -123,6 +124,9 @@ test.describe('with git installed', () => {
     await expect(diffViewer()).toContainText('3 files changed')
     await diffViewer().getByRole('button', { name: /no-newline\.txt/ }).click()
     await expect(window.getByTestId('unified-diff')).toContainText('last line')
+    // git's "\ No newline at end of file" is a note, not a numbered line of the file.
+    await expect(window.locator('[data-kind="note"]')).toHaveText(/^\s*No newline at end of file\s*$/)
+    await expect(window.locator('[data-kind="hunk"]')).toHaveText('@@ -0,0 +1,1 @@')
 
     await sidebar().getByRole('button', { name: 'feature/search', exact: true }).click()
     await expect(diffViewer()).toContainText('Add search')
@@ -225,6 +229,20 @@ test('shows commits and branch switches made outside the app, on F5 and when the
   await switchToNewBranchInFixture(fixtures, repo, 'feature/elsewhere')
   await window.evaluate(() => globalThis.dispatchEvent(new Event('focus')))
   await expect(window.getByTestId('header-branch')).toHaveText('feature/elsewhere')
+})
+
+test('shows the newest 200 commits of a long history, and the rest on request', async () => {
+  const repo = await createLongRepository(fixtures, 'long-history', 230)
+  await launch([{ id: 'long', path: repo }])
+  const history = window.getByRole('region', { name: 'Commit graph' })
+  await expect(history).toContainText('Showing the latest 200 commits · all branches')
+  await expect(history.locator('button[aria-pressed]')).toHaveCount(200)
+
+  await history.getByRole('button', { name: 'Show more commits' }).click()
+  await expect(history.locator('button[aria-pressed]')).toHaveCount(230)
+  await expect(history).toContainText('230 commits · all branches')
+  await expect(history.getByRole('button', { name: 'Show more commits' })).toHaveCount(0)
+  await expect(diffViewer()).toContainText('Commit 230')
 })
 
 test('the built desktop app contains none of the browser version’s sample data', async () => {

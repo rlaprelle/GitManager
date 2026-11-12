@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -151,6 +151,35 @@ export async function commitInFixture(fixtures: Fixtures, repo: string, path: st
   await writeFile(join(repo, path), content)
   await userGit(fixtures, repo, 'add', '--all')
   await userGit(fixtures, repo, 'commit', '--quiet', '-m', message)
+}
+
+/**
+ * A repository with `count` commits in a line on main ('Commit 1' … 'Commit <count>'), made in
+ * one `git fast-import` run: a few hundred commits one by one would take a minute on Windows.
+ */
+export async function createLongRepository(fixtures: Fixtures, name: string, count: number): Promise<string> {
+  const repo = join(fixtures.root, name)
+  await mkdir(repo)
+  await userGit(fixtures, repo, 'init', '--quiet', '-b', 'main')
+  const data = (text: string) => `data ${Buffer.byteLength(text)}\n${text}\n`
+  const start = Math.floor(Date.UTC(2026, 0, 1) / 1000)
+  let stream = ''
+  for (let n = 1; n <= count; n++) {
+    stream += 'commit refs/heads/main\n'
+    stream += `mark :${n}\n`
+    stream += `committer Ada Lovelace <ada@example.com> ${start + n * 60} +0000\n`
+    stream += data(`Commit ${n}`)
+    if (n > 1) stream += `from :${n - 1}\n`
+    stream += `M 644 inline counter.txt\n${data(String(n))}\n`
+  }
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn('git', ['fast-import', '--quiet'], { cwd: repo })
+    child.on('error', reject)
+    child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`git fast-import exited ${code}`))))
+    child.stdin.end(stream)
+  })
+  await userGit(fixtures, repo, 'reset', '--quiet', '--hard')
+  return repo
 }
 
 /** Creates and checks out a branch, as the user would. */

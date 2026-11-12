@@ -70,7 +70,7 @@ For how the code is organised, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md
 
 ### Real repositories
 
-The interface talks to git through a single TypeScript interface, `GitDataSource` (`src/services/GitDataSource.ts`). It asks only for what the screen shows (a repository's branches, a page of history, one commit's files, one file's diff), so large repositories never have to be read in full; the history shows the newest 200 commits.
+The interface talks to git through a single TypeScript interface, `GitDataSource` (`src/services/GitDataSource.ts`). It asks only for what the screen shows (a repository's branches, a page of history, one commit's files, one file's diff), so large repositories never have to be read in full: the history shows the newest 200 commits, and **Show more commits** at the end of the list adds 200 at a time.
 
 - **Desktop app:** its Electron main process runs your installed Git for Windows, so it uses your own git settings, and passes results to the interface over the preload bridge. It only reads: it never takes git's locks, so it can't get in the way of your own git commands. If git is missing or older than 2.30, the app says so instead of starting. Your repository list is kept in `%APPDATA%\git-manager\repositories.json`.
 - **Browser version:** keeps the sample data (`MockGitDataSource`), so the interface can be developed and tested without touching a real repository.
