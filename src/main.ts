@@ -1,13 +1,6 @@
-import { createApp } from 'vue'
-// Fonts ship with the app (the desktop build must work offline); one variable file covers every weight.
-import '@fontsource-variable/inter'
-import '@fontsource-variable/jetbrains-mono'
-import './style.css'
-import App from './App.vue'
+// Browser entry (index.html): the app on the built-in sample repositories.
 import { SAMPLE_COMPARE_PATHS } from './data/sampleRepositories'
+import { mountApp } from './mountApp'
 import { MockGitDataSource } from './services/MockGitDataSource'
 
-createApp(App, {
-  source: new MockGitDataSource(),
-  comparePaths: SAMPLE_COMPARE_PATHS,
-}).mount('#app')
+mountApp({ source: new MockGitDataSource(), comparePaths: SAMPLE_COMPARE_PATHS })

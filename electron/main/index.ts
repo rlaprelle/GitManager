@@ -1,7 +1,11 @@
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BrowserWindow, app, ipcMain } from 'electron'
 import windowIcon from '../../build/icon.ico?asset'
-import { IpcChannel } from '../shared/channels'
+import { GitCliDataSource } from './git/GitCliDataSource'
+import { checkGit } from './git/gitVersion'
+import { registerIpcHandlers } from './ipc'
+import { RepositoryStore } from './repositoryStore'
 
 // Must match appId in electron-builder.yml so taskbar pinning and the
 // installer's shortcuts refer to the same app.
@@ -11,7 +15,7 @@ const APP_USER_MODEL_ID = 'com.echel.gitmanager'
 const WINDOW_BACKGROUND = '#0e1015'
 
 const preloadPath = fileURLToPath(new URL('../preload/index.cjs', import.meta.url))
-const rendererHtmlPath = fileURLToPath(new URL('../renderer/index.html', import.meta.url))
+const rendererHtmlPath = fileURLToPath(new URL('../renderer/desktop.html', import.meta.url))
 
 function createMainWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -51,20 +55,27 @@ function loadRenderer(window: BrowserWindow): void {
   // Set by `electron-vite dev`; never trusted in a packaged build.
   const devServerUrl = process.env['ELECTRON_RENDERER_URL']
   if (!app.isPackaged && devServerUrl) {
-    void window.loadURL(devServerUrl)
+    void window.loadURL(new URL('desktop.html', devServerUrl).href)
     return
   }
   void window.loadFile(rendererHtmlPath)
 }
 
-function registerIpcHandlers(): void {
-  ipcMain.handle(IpcChannel.GetAppVersion, () => app.getVersion())
+/**
+ * Dev and test runs (unpackaged) keep their own data folder, so they never touch the installed
+ * app's repository list. Tests point it at a temporary folder with GIT_MANAGER_USER_DATA.
+ */
+function separateUnpackagedData(): void {
+  if (app.isPackaged) return
+  app.setPath('userData', process.env['GIT_MANAGER_USER_DATA'] ?? join(app.getPath('appData'), 'git-manager-dev'))
 }
 
+separateUnpackagedData()
 app.setAppUserModelId(APP_USER_MODEL_ID)
 
 void app.whenReady().then(() => {
-  registerIpcHandlers()
+  const repositories = new RepositoryStore(join(app.getPath('userData'), 'repositories.json'))
+  registerIpcHandlers(ipcMain, { source: new GitCliDataSource(repositories), appVersion: app.getVersion(), checkGit })
   createMainWindow()
 })
 

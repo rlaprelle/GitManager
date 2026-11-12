@@ -35,7 +35,8 @@ export default defineConfig({
     build: {
       ...viteConfig.build,
       rolldownOptions: {
-        input: { index: fromRoot('index.html') },
+        // desktop.html loads src/desktop.ts: installed git, never the sample data.
+        input: { desktop: fromRoot('desktop.html') },
       },
     },
   },
