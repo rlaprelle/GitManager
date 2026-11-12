@@ -3,7 +3,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type ElectronApplication, type Page, _electron as electron, expect, test } from '@playwright/test'
 import type { StoredRepository } from '../electron/main/git/GitCliDataSource'
-import { type Fixtures, createFixtures, removeFixtures } from '../electron/main/git/__tests__/fixtures'
+import {
+  type Fixtures,
+  commitInFixture,
+  createFixtures,
+  createScratchRepository,
+  removeFixtures,
+  switchToNewBranchInFixture,
+} from '../electron/main/git/__tests__/fixtures'
 import {
   contentSecurityPolicy,
   foreignResourceUrls,
@@ -200,6 +207,24 @@ test('lists a repository whose folder is gone, says so, and lets the user remove
   await expect(sidebar().getByRole('button', { name: /^moved-away/ })).toContainText('Folder not found')
   await sidebar().getByRole('button', { name: 'Remove moved-away from the list' }).click()
   await expect(sidebar().getByRole('button', { name: /^moved-away/ })).toHaveCount(0)
+})
+
+test('shows commits and branch switches made outside the app, on F5 and when the window regains focus', async () => {
+  const repo = await createScratchRepository(fixtures, 'refreshed')
+  await launch([{ id: 'refreshed', path: repo }])
+  await expect(status()).toHaveText('Ready')
+  await window.getByRole('button', { name: /Start/ }).click()
+
+  await commitInFixture(fixtures, repo, 'notes.md', 'outside\n', 'Committed in a terminal')
+  await window.keyboard.press('F5')
+  await expect(status()).toHaveText('Refreshed refreshed')
+  await expect(window.getByRole('button', { name: /Committed in a terminal/ })).toBeVisible()
+  // The commit the user was looking at stays selected.
+  await expect(diffViewer()).toContainText('Start')
+
+  await switchToNewBranchInFixture(fixtures, repo, 'feature/elsewhere')
+  await window.evaluate(() => globalThis.dispatchEvent(new Event('focus')))
+  await expect(window.getByTestId('header-branch')).toHaveText('feature/elsewhere')
 })
 
 test('the built desktop app contains none of the browser version’s sample data', async () => {

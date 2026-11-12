@@ -154,6 +154,35 @@ describe('App', () => {
     expect(wrapper.get('section[aria-label="Diff viewer"]').text()).toContain('No commits yet')
   })
 
+  it('F5 refreshes the open repository and says so', async () => {
+    const wrapper = await mountApp()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F5', cancelable: true }))
+    await flushPromises()
+    expect(statusText(wrapper)).toBe('Refreshed inventory-service')
+    wrapper.unmount()
+  })
+
+  it('refreshes quietly when the window regains focus, and stops listening once unmounted', async () => {
+    const source = new MockGitDataSource()
+    let listed = 0
+    const listRepositories = source.listRepositories.bind(source)
+    source.listRepositories = () => {
+      listed++
+      return listRepositories()
+    }
+    const wrapper = await mountApp(source)
+    expect(listed).toBe(1)
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+    expect(listed).toBe(2)
+    expect(statusText(wrapper)).toBe('Ready')
+
+    wrapper.unmount()
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+    expect(listed).toBe(2)
+  })
+
   it('applies a custom accent colour', async () => {
     const wrapper = mount(App, {
       props: { source: new MockGitDataSource(), comparePaths: SAMPLE_COMPARE_PATHS, accent: '#F0A35E' },

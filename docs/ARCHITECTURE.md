@@ -221,7 +221,8 @@ Behavioural rules the composable enforces. Tests cover each of them, so change t
 5. **Remote operations report through `status`.** On success the status shows the source's message. On failure it shows `Failed: <reason>`, and no local state changes.
 6. **Local state changes only after the source succeeds.** `checkoutBranch` sets `currentBranch`, and `fetchRemote` sets `lastFetch` to now. Both edit the repository summary in place, which is the composable's own copy from `listRepositories`.
 7. **Adding opens the repository; removing opens the next.** `addRepository` shows the source's message, appends a new repository (or finds the listed one) and opens it; a cancelled picker changes nothing. `removeRepository` takes it off the list and, if it was open, opens the first one left, or closes everything when none is left.
-8. **Compare waits for both paths.** The desktop app starts with both inputs empty; nothing is asked of the source until both are filled in.
+8. **Refresh never disturbs the view.** `refresh()` re-reads the repository list, then reloads the open repository's branches and history with `latestLoad.refresh`, which keeps the current value on screen (no "Loading history…") until the new one arrives. The selected commit stays selected by hash, its files and diff untouched (a commit never changes); if it's gone (amended, rebased) the newest commit opens. One refresh runs at a time. `App` calls it silently when the window regains focus and with `{ announce: true }` on F5 ("Refreshed *name*").
+9. **Compare waits for both paths.** The desktop app starts with both inputs empty; nothing is asked of the source until both are filled in.
 
 ## Rendering
 
@@ -292,14 +293,14 @@ Each history row is 32px tall. Lane *n* is at x = 14 + 18·n, and the graph colu
 | Layer | Where | What it proves |
 |---|---|---|
 | Pure logic | `src/lib/__tests__/` | Diff rows, inversion, diff parsing, lane layout (including the design's graph), graph geometry, formatting |
-| State | `src/composables/__tests__/` | The behavioural rules above, including out-of-order responses (`heldSource.ts` holds chosen calls back and releases them in any order) and a failure in each area |
+| State | `src/composables/__tests__/` | The behavioural rules above, including refresh after outside changes, out-of-order responses (`heldSource.ts` holds chosen calls back and releases them in any order) and a failure in each area |
 | Contract | `src/services/__tests__/`, `electron/main/git/__tests__/` | The rules every `GitDataSource` must follow, run against the mock and against real git on fixture repositories (merge, deletion, binary, no trailing newline, accented path, remote one behind, empty repository, detached HEAD), plus exact checks of what git returns for each |
 | Main process | `electron/main/**/__tests__/` | Output parsers, the git version check, the repository store, and the IPC handlers' argument checks and answers (with a stand-in for `ipcMain`) |
 | Renderer source | `src/services/__tests__/IpcGitDataSource.spec.ts` | Every call reaches the bridge with its arguments; writes reject without calling it |
 | Components | `src/components/**/__tests__/` | Each component renders its props and emits the right events |
 | Wiring | `src/__tests__/App.spec.ts` | `App` connects composable and components (clicks reach the source; results reach the screen) |
 | Acceptance | `e2e/git-manager.spec.ts` | Each capability driven through the real UI in Chromium, including the phone-width and smallest-desktop layouts |
-| Desktop acceptance | `e2e-electron/app.spec.ts` | The built app on a fixture repository: browsing a merge, a binary file, a diff and a branch through the UI; adding (with Electron's folder dialog stubbed in main), removing, first run and a missing folder, with the saved list checked; read-only (no write buttons); the git-required screen with no git on the PATH; no sample data in the bundle; plus the bridge, no Node globals, the minimum window, offline fonts and the strict CSP |
+| Desktop acceptance | `e2e-electron/app.spec.ts` | The built app on a fixture repository: browsing a merge, a binary file, a diff and a branch through the UI; a commit and a branch switch made outside the app appearing on F5 and on focus; adding (with Electron's folder dialog stubbed in main), removing, first run and a missing folder, with the saved list checked; read-only (no write buttons); the git-required screen with no git on the PATH; no sample data in the bundle; plus the bridge, no Node globals, the minimum window, offline fonts and the strict CSP |
 | Icon packer | `scripts/__tests__/ico.spec.ts` | The .ico layout Windows reads, and that the committed `build/icon.ico` has every size as a PNG |
 
 The browser suite also checks that the page loads nothing from other hosts, renders in the bundled fonts, has the favicon, and that its dev policy blocks injected scripts with no violations. Playwright can't check that `eval` is blocked: its own evaluations go through DevTools, which the policy exempts, so the tests assert the `script-src` directive instead.

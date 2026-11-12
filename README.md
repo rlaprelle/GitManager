@@ -15,6 +15,7 @@ Git Manager is for developers who juggle several repositories and want a quick v
   - **Git diff:** the familiar unified view with `+` and `-` lines and hunk headers.
   - **Simple diff:** old and new side by side, with removed lines on the left lined up against the added lines that replaced them.
 - **Compare any two files.** Enter two paths to see them side by side, even when they don't share any history (for example, `application.yml` against `application-prod.yml`). Swap them with one click.
+- **See changes made elsewhere.** Commit, switch branches or edit files in your terminal or editor, and Git Manager catches up when you come back to its window, without losing the commit you were looking at. Press **F5** to refresh on demand.
 - **Fetch, pull and push** the current branch from the header (browser version only, on sample data, for now).
 
 ## Core concepts

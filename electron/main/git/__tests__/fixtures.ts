@@ -115,3 +115,45 @@ export async function fixtureGit(cwd: string, ...args: string[]): Promise<string
   const { stdout } = await run('git', args, { cwd })
   return stdout
 }
+
+/**
+ * Runs git the way the user would outside the app, at the current time, but with the fixtures'
+ * empty global config so their own settings can't interfere.
+ */
+async function userGit(fixtures: Fixtures, cwd: string, ...args: string[]): Promise<string> {
+  const { stdout } = await run('git', args, {
+    cwd,
+    env: {
+      ...process.env,
+      GIT_CONFIG_GLOBAL: join(fixtures.root, 'empty.gitconfig'),
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_AUTHOR_NAME: 'Grace Hopper',
+      GIT_AUTHOR_EMAIL: 'grace@example.com',
+      GIT_COMMITTER_NAME: 'Grace Hopper',
+      GIT_COMMITTER_EMAIL: 'grace@example.com',
+    },
+  })
+  return stdout
+}
+
+/** A small repository of a test's own (one commit on main), which it may change freely. */
+export async function createScratchRepository(fixtures: Fixtures, name: string): Promise<string> {
+  const repo = join(fixtures.root, name)
+  await mkdir(repo)
+  await userGit(fixtures, repo, 'init', '--quiet', '-b', 'main')
+  await commitInFixture(fixtures, repo, 'README.md', `# ${name}\n`, 'Start')
+  return repo
+}
+
+/** Writes a file and commits it, as the user would in their own terminal. */
+export async function commitInFixture(fixtures: Fixtures, repo: string, path: string, content: string, message: string) {
+  await mkdir(join(repo, path, '..'), { recursive: true })
+  await writeFile(join(repo, path), content)
+  await userGit(fixtures, repo, 'add', '--all')
+  await userGit(fixtures, repo, 'commit', '--quiet', '-m', message)
+}
+
+/** Creates and checks out a branch, as the user would. */
+export async function switchToNewBranchInFixture(fixtures: Fixtures, repo: string, branch: string): Promise<void> {
+  await userGit(fixtures, repo, 'switch', '--quiet', '-c', branch)
+}

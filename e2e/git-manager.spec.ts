@@ -106,6 +106,13 @@ test('removing a repository takes it off the sidebar, keeping the open one', asy
   await expect(header(page).getByTestId('header-repo')).toHaveText('inventory-service')
 })
 
+test('F5 refreshes the open repository without leaving the selected commit', async ({ page }) => {
+  await page.getByRole('button', { name: /Bump Spring Boot to 3\.3\.4/ }).click()
+  await page.keyboard.press('F5')
+  await expect(status(page)).toHaveText('Refreshed inventory-service')
+  await expect(diffViewer(page)).toContainText('Bump Spring Boot to 3.3.4')
+})
+
 test('at phone width the panes stack without horizontal page scroll', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
