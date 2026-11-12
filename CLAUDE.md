@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Vue 3 + TypeScript + Vite + Tailwind v4 single-screen git client UI, hosted two ways: in a browser and as a Windows-only Electron app (electron-vite + electron-builder). Both run on in-memory sample data via `MockGitDataSource`; no real git yet. Planned: Electron main process runs the user's installed git CLI behind `GitDataSource` (no JGit/Java backend). Deep dive: `docs/ARCHITECTURE.md`.
+Vue 3 + TypeScript + Vite + Tailwind v4 single-screen git client UI, hosted two ways: in a browser on in-memory sample data (`MockGitDataSource`), and as a Windows-only Electron app (electron-vite + electron-builder) that reads real repositories with the user's installed git CLI in the main process (`GitCliDataSource`, no JGit/Java backend). The desktop app is read-only for now. Deep dive: `docs/ARCHITECTURE.md`.
 
 ## Commands (PowerShell)
 
@@ -28,17 +28,25 @@ npm run icon           # node scripts/build-icon.ts: build/icon*.svg → build/i
 ```
 src/types/git.ts                 contract types, one per call (Repository, Branches, HistoryPage, FileChange, Hunk; GraphRow)
 src/services/GitDataSource.ts    ONLY boundary to git (interface): one call per view area
-src/services/MockGitDataSource.ts  sample-data impl; ops return status messages only
-src/services/__tests__/gitDataSourceContract.ts  rules every data source must pass (mock now, real git next)
+src/services/MockGitDataSource.ts  browser: sample-data impl; ops return status messages only
+src/services/IpcGitDataSource.ts desktop: forwards to window.gitManager.git; writes reject
+src/services/__tests__/gitDataSourceContract.ts  rules every data source must pass (run on mock AND real git)
+src/main.ts / src/desktop.ts     entries: browser (index.html, mock) / desktop (desktop.html, git check + IPC, read-only)
+src/mountApp.ts                  mounts App or GitRequired; fonts + styles
 src/data/sample*.ts              sample repos stored whole (sampleTypes.ts), diffs, SAMPLE_COMPARE_PATHS
 src/composables/latestLoad.ts    one async area: value + loading, only the latest load applies
 src/composables/useGitManager.ts ALL state, derived state, actions
 src/lib/{diff,graph,format}.ts   pure functions (diff rows, graph geometry, labels)
+src/lib/laneLayout.ts            parents → GraphRow (lane 0 = primary branch line; ≤ 8 lanes)
+src/lib/parseDiff.ts             git diff output → Hunk[]
 src/components/**                presentational: props in, emits out
 src/App.vue                      wires composable ↔ components; layout
 src/style.css                    @theme tokens (--color-gm-*), base styles
 src/types/bridge.ts              GitManagerBridge: window.gitManager (preload ↔ renderer contract)
-electron/main/index.ts           Electron main: window, IPC handlers
+electron/main/index.ts           Electron main: window, data folder, folder picker, wiring
+electron/main/ipc.ts             handler per channel: type checks, IpcResult envelopes (testable without Electron)
+electron/main/repositoryStore.ts repositories.json in userData
+electron/main/git/               GitCliDataSource, runGit, parsers, git version check; __tests__/fixtures.ts
 electron/preload/index.ts        contextBridge → window.gitManager
 electron/shared/channels.ts      IPC channel names (main + preload)
 electron.vite.config.ts         desktop build; renderer spreads vite.config.ts
@@ -58,13 +66,16 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - Components never call `GitDataSource` and hold no shared state. New behaviour → action/computed in `useGitManager`, wired in `App.vue`.
 - Line/geometry logic lives in `src/lib/` (pure, unit-tested); components only render rows.
 - Real git = new `GitDataSource` impl passed to `App` in `src/main.ts`. Don't leak backend concerns above the service layer.
-- Renderer reaches Electron only through `window.gitManager` (`GitManagerBridge`). New main-process capability → channel in `channels.ts`, handler in main, method on the bridge type + preload. Every bridge method is async.
-- Browser mode keeps `MockGitDataSource`; the desktop data source is chosen at build time — an installed app must never fall back to sample data.
-- Graph layout (`GraphRow`) is supplied by the data source; UI doesn't assign lanes. Max 3 lanes — widening needs `LaneFlags`, `LANE_COLORS`, `GRAPH_WIDTH` together.
+- Renderer reaches Electron only through `window.gitManager` (`GitManagerBridge`). New main-process capability → channel in `channels.ts`, handler in `ipc.ts` (check every argument's type; answer `IpcResult`), method on the bridge type + preload (`call()` unwraps), test in `electron/main/__tests__/ipc.spec.ts` (it asserts every channel has a handler). Every bridge method is async.
+- Nothing from the renderer reaches git unchecked: repositories by id only (never a folder), hashes match `COMMIT_HASH`, paths after `--`, compare paths inside the repo. Run git only through `runGit` (execFile, no shell).
+- Browser mode keeps `MockGitDataSource`; the desktop entry (`src/desktop.ts`) must never import sample data — e2e-electron greps the built bundle.
+- Desktop is read-only: `App`'s `writable` prop (false from `desktop.ts`) hides Fetch/Pull/Push/Checkout. Don't show a write button before its operation exists in `GitCliDataSource`.
+- Graph layout (`GraphRow`) is supplied by the data source via `layoutLanes`; the UI never assigns lanes. Up to `MAX_LANES` (8); `LANE_COLORS` has one colour per lane. Layout depends on the page, so compare commits without `graph` across pages.
 - Branch → commit lookup is by `tipHash`, never index.
 - Composable invariants (tested; change deliberately): selection change resets file index + closes compare; compare forces `diffMode = 'simple'` and ignores `setDiffMode`; every async area (branches, history, files, diff, compare) goes through `latestLoad`, so stale responses are dropped; a failed load → `status = "Couldn't load <area>: …"` and only that area empties; local state (`currentBranch`, `lastFetch`) changes only after the source resolves; operation failures → `status = "Failed: …"`.
 - Never load a whole repository: add a narrow `GitDataSource` call per new view area, add its rules to the contract suite, and load it through `latestLoad`. History is capped at `HISTORY_LIMIT`.
 - Composable tests that need slow or out-of-order responses use `heldSource()` (`src/composables/__tests__/heldSource.ts`).
+- Data sources send full hashes and ISO timestamps; the UI formats (`shortHash`, `commitDateLabel`, `lastFetchLabel` against `useNow`). `currentBranch` is null for a detached HEAD; `problem` marks an unreadable repository instead of failing the list.
 - No router, no Pinia — single screen. Revisit only if a second screen needs shared state.
 
 ## Conventions
@@ -75,7 +86,7 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - Monospace (`font-mono`, JetBrains Mono) for hashes, paths, code; Inter for UI. Both are bundled Fontsource variable fonts (families `'Inter Variable'`, `'JetBrains Mono Variable'`) imported in `src/main.ts`. Never load anything from another host.
 - Responsive: `max-[860px]:` variant is the narrow breakpoint. Page must never scroll horizontally (e2e enforces at phone width); wide content scrolls inside its own pane.
 - Smallest desktop size is 1024×640 content (Electron `minWidth`/`minHeight` with `useContentSize`; root `min-h-[640px]`). Both e2e suites assert no page scroll there — change all three together.
-- Test selectors: role/label first, then `data-testid` (`header-repo`, `header-branch`, `unified-diff`, `side-by-side-diff`, `left-label`, `right-label`, `commit-description`); diff rows expose `data-kind`, side-by-side cells `data-side`/`data-cell`.
+- Test selectors: role/label first; repository buttons by anchored name (`/^name/`), since each row's Remove button is named "Remove name from the list"; then `data-testid` (`header-repo`, `header-branch`, `unified-diff`, `side-by-side-diff`, `left-label`, `right-label`, `commit-description`); diff rows expose `data-kind`, side-by-side cells `data-side`/`data-cell`.
 - Every new capability gets: lib/composable unit test, component test, `src/__tests__/App.spec.ts` wiring test if it crosses components, and a Playwright test that drives the UI.
 
 ## Constraints / quirks
@@ -94,6 +105,11 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - **Playwright can't test eval blocking**: its evaluations go through DevTools, which is exempt from the CSP's eval ban. Tests assert the `script-src` directive instead.
 - **`build/icon.ico` is generated and committed**: edit the SVGs, run `npm run icon`. Entries are PNG; .NET's old `System.Drawing.Icon` can't read them below 256 px, but Windows (WIC, Explorer) and electron-builder can.
 - `scripts/*.ts` run under Node's type stripping: explicit `.ts` import extensions (`allowImportingTsExtensions` in `tsconfig.node.json`) and erasable syntax only (no enums, no parameter properties).
+- **Unpackaged runs use a separate data folder** (`%APPDATA%\git-manager-dev`, or `GIT_MANAGER_USER_DATA`), never the installed app's `repositories.json`. e2e-electron gives each test its own temp folder; stub the folder picker with `app.evaluate(({ dialog }) => { dialog.showOpenDialog = ... })`.
+- **Git test fixtures** (`electron/main/git/__tests__/fixtures.ts`) build throwaway repos with an empty global config (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`) so the developer's git settings can't change them. Each `git` call is a process: give real-git specs long timeouts.
+- **On Windows a missing working folder fails like missing git** (`spawn git ENOENT`): check the folder exists before running git in it.
+- **Git's diff lists a change's removals before its additions**; `invertHunks` keeps that order, so a swapped compare matches real git.
+- **Desktop renderer entry is `desktop.html`** (`out/renderer/desktop.html`; dev URL + `/desktop.html`), not `index.html`.
 - `npm run dev` and `npm run dev:app` both use port 5173; run one at a time.
 - JetBrains Mono renders ligatures (`==`, `||`) in diffs — expected, matches the design.
 - `npm audit` moderate warnings come from `@vue/test-utils` (dev-only).

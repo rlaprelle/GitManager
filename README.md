@@ -4,18 +4,18 @@ A calm, dark-themed git client that puts the questions you ask most often on one
 
 Git Manager is for developers who juggle several repositories and want a quick visual answer without reaching for the command line. That might be a service, its API client, a front end and a dotfiles repo all at once.
 
-> **Status:** the interface is complete and runs on built-in sample repositories, both in a browser and as a Windows desktop app. It doesn't connect to real git yet. Fetch, Pull, Push, Checkout and Add repository report what they would do in the status bar. See [Connecting real repositories](#connecting-real-repositories).
+> **Status:** the Windows desktop app reads your real repositories with your installed Git for Windows, **read-only**: add repositories and browse their branches, history and diffs. Fetch, Pull, Push and Checkout come later and are hidden until then. The browser version runs on built-in sample repositories, where every button works against sample data. See [Real repositories](#real-repositories).
 
 ## What you can do
 
-- **Switch between repositories.** The sidebar lists every repository you've added and how many files have uncommitted changes in each.
+- **Add and switch between repositories.** Add a repository by choosing its folder (or any folder inside it); remove one from the list with its × button, which never touches the folder. The sidebar lists every repository you've added, how many files have uncommitted changes in each, and says so if a folder has been moved or deleted.
 - **See your branches.** Local branches show how far they are ahead of or behind their remote (`↑2 ↓1`), and the checked-out branch is marked `HEAD`. Click a branch to jump to its newest commit. Click **Checkout** to switch to it.
-- **Read the history as a graph.** Commits are listed newest first beside a coloured lane graph that shows where branches split off and merge back. Branch labels sit on the commits they point to.
+- **Read the history as a graph.** Commits are listed newest first beside a coloured lane graph that shows where branches split off and merge back. `main` keeps the left-most lane, and the graph widens for busy histories (up to eight lanes). Branch labels sit on the commits they point to.
 - **See what a commit changed.** Pick a commit, then a file, and read the change in one of two views:
   - **Git diff:** the familiar unified view with `+` and `-` lines and hunk headers.
   - **Simple diff:** old and new side by side, with removed lines on the left lined up against the added lines that replaced them.
 - **Compare any two files.** Enter two paths to see them side by side, even when they don't share any history (for example, `application.yml` against `application-prod.yml`). Swap them with one click.
-- **Fetch, pull and push** the current branch from the header.
+- **Fetch, pull and push** the current branch from the header (browser version only, on sample data, for now).
 
 ## Core concepts
 
@@ -32,7 +32,7 @@ Git Manager is for developers who juggle several repositories and want a quick v
 
 ## Quick start
 
-You need [Node.js](https://nodejs.org/). The project is developed and tested on Node 24. In PowerShell:
+You need [Node.js](https://nodejs.org/) (developed and tested on Node 24), and for the desktop app [Git for Windows](https://git-scm.com/download/win) 2.30 or newer. In PowerShell:
 
 ```powershell
 npm install
@@ -67,11 +67,14 @@ npm run icon           # regenerate build/icon.ico after editing build/icon.svg 
 
 For how the code is organised, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-### Connecting real repositories
+### Real repositories
 
-The interface talks to git through a single TypeScript interface, `GitDataSource` (`src/services/GitDataSource.ts`). It asks only for what the screen shows (a repository's branches, a page of history, one commit's files, one file's diff), so large repositories never have to be read in full. Today it's backed by `MockGitDataSource`, which serves sample data.
+The interface talks to git through a single TypeScript interface, `GitDataSource` (`src/services/GitDataSource.ts`). It asks only for what the screen shows (a repository's branches, a page of history, one commit's files, one file's diff), so large repositories never have to be read in full; the history shows the newest 200 commits.
 
-Real repositories will come through the desktop app: its Electron main process will run your installed Git for Windows and pass results to the interface over the preload bridge. The browser version keeps the sample data, so the interface can be developed and tested without touching a real repository.
+- **Desktop app:** its Electron main process runs your installed Git for Windows, so it uses your own git settings, and passes results to the interface over the preload bridge. It only reads: it never takes git's locks, so it can't get in the way of your own git commands. If git is missing or older than 2.30, the app says so instead of starting. Your repository list is kept in `%APPDATA%\git-manager\repositories.json`.
+- **Browser version:** keeps the sample data (`MockGitDataSource`), so the interface can be developed and tested without touching a real repository.
+
+Not handled yet: renames show as a deletion plus an addition, and submodules, Git LFS and worktrees haven't been tried.
 
 ## Built with
 
