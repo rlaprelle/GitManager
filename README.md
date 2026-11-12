@@ -75,7 +75,7 @@ The interface talks to git through a single TypeScript interface, `GitDataSource
 - **Desktop app:** its Electron main process runs your installed Git for Windows, so it uses your own git settings, and passes results to the interface over the preload bridge. It only reads: it never takes git's locks, so it can't get in the way of your own git commands. If git is missing or older than 2.30, the app says so instead of starting. Your repository list is kept in `%APPDATA%\git-manager\repositories.json`.
 - **Browser version:** keeps the sample data (`MockGitDataSource`), so the interface can be developed and tested without touching a real repository.
 
-Not handled yet: renames show as a deletion plus an addition, and submodules, Git LFS and worktrees haven't been tried.
+Renamed files show as one change ("renamed from …", or "moved from …" when only the folder changed), diffed against their old version. Not tried yet: submodules, Git LFS and worktrees.
 
 ## Built with
 

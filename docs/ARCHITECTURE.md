@@ -149,7 +149,7 @@ HistoryPage   { commits: Commit[] (newest first), hasMore }                     
                 Commit { hash, message, author, date,
                          refs[]  branch names at this commit; remote ones start with 'origin/'
                          graph   GraphRow { lane, top[], bottom[], curvesIn[], curvesOut[] } }
-FileChange[]  { path, status: 'A'|'M'|'D' }                                       getCommitFiles(repo, hash)
+FileChange[]  { path, status: 'A'|'M'|'D'|'R', oldPath? }                         getCommitFiles(repo, hash)
 Hunk[]        { oldStart, newStart, context, lines[] }                            getFileDiff(repo, hash, path)
 ```
 
@@ -174,8 +174,8 @@ Decisions that shape this model:
 | `listRepositories()` | `Repository[]` | Summaries of the sample repos. | Per stored repository: `symbolic-ref` (branch), `status --porcelain` (changed files), `FETCH_HEAD`'s time (last fetch). A missing folder or a git error becomes `problem`. |
 | `getBranches(repoId)` | `Branches` | The sample repo's branches. | `for-each-ref` over `refs/heads` and `refs/remotes`, ahead/behind from the upstream; `origin/HEAD` left out. |
 | `getHistory(repoId, limit)` | `HistoryPage` | The newest `limit` sample commits, without files. | `log HEAD --branches --remotes --date-order`, `limit + 1` commits to know `hasMore`; labels are branches only (no tags), local first; laid out with `layoutLanes`. |
-| `getCommitFiles(repoId, hash)` | `FileChange[]` | The commit's paths and statuses. | `diff-tree --name-status --no-renames` against the first parent (`--root` for a root commit). A type change counts as M. |
-| `getFileDiff(repoId, hash, path)` | `Hunk[]` | That file's sample hunks. | `diff-tree -p` the same way, parsed by `parseUnifiedDiff`. A binary file has no hunks. |
+| `getCommitFiles(repoId, hash)` | `FileChange[]` | The commit's paths and statuses. | `diff-tree --name-status -M` against the first parent (`--root` for a root commit): a moved file is one R entry with its `oldPath` (git's default 50% similarity). A type change counts as M. |
+| `getFileDiff(repoId, hash, path)` | `Hunk[]` | That file's sample hunks. | `diff-tree -p -M` the same way, with both paths of a renamed file in the pathspec so git pairs them; parsed by `parseUnifiedDiff`. A binary file, or a rename without edits, has no hunks. |
 | `compareFiles(repoId, left, right)` | `Hunk[]` | Always `sampleCompareDiff`, inverted when the sample paths are swapped. | `diff --no-index` on two paths relative to the repository, refused outside its folder. |
 | `addRepository()` | `AddRepositoryResult` | Explains what the desktop app would ask for. | Native folder picker; the chosen folder's top folder (`rev-parse --show-toplevel`) is added, or the listed entry returned. |
 | `removeRepository(repoId)` | `OperationResult` | Hides it for the session. | Removes it from `repositories.json`; the folder is never touched. |
@@ -313,7 +313,7 @@ Stable selectors for the tests are roles and labels first, then `data-testid`. A
 
 - The desktop app is read-only: Fetch, Pull, Push and Checkout are hidden until they're built (credentials, a dirty working tree and conflicts need handling first).
 - The history loads 200 commits at a time ("Show more commits"), and the list isn't virtualized, so thousands of rows get slow. Each page re-reads the whole history from the top, since the lane layout depends on everything above. `git status` on a very large working tree can still be slow.
-- Renames show as a deletion plus an addition. A merge shows only what it brought into its first parent.
+- A merge shows only what it brought into its first parent. Copies aren't detected (only renames).
 - Branches beyond 8 lanes share the last lane.
 - Not covered by tests: submodules, Git LFS, a worktree opened directly, a damaged `.git`.
 - The installer is unsigned. There is no auto-update yet.

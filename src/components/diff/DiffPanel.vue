@@ -43,7 +43,9 @@ const file = computed<FileChange | undefined>(
 const leftLabel = computed(() => {
   if (props.compareOpen) return splitPath(props.leftPath).name
   if (!file.value || file.value.status === 'A') return '(new file)'
-  return `${splitPath(file.value.path).name} @ ${shortHash(props.commit?.hash ?? '')}^`
+  // A renamed file's earlier version had its old name.
+  const before = file.value.oldPath ?? file.value.path
+  return `${splitPath(before).name} @ ${shortHash(props.commit?.hash ?? '')}^`
 })
 
 const rightLabel = computed(() => {

@@ -1,4 +1,5 @@
-export type FileStatus = 'A' | 'M' | 'D'
+/** Added, modified, deleted, or renamed (moved, perhaps edited too). */
+export type FileStatus = 'A' | 'M' | 'D' | 'R'
 
 /**
  * One hunk of a diff. Each line starts with '+', '-' or ' ' (context),
@@ -16,6 +17,8 @@ export interface Hunk {
 export interface FileChange {
   path: string
   status: FileStatus
+  /** Where a renamed file ('R') was before; absent for every other status. */
+  oldPath?: string
 }
 
 /**

@@ -116,15 +116,25 @@ export class GitCliDataSource implements GitDataSource {
   async getCommitFiles(repoId: string, hash: string): Promise<FileChange[]> {
     const folder = await this.folderOf(repoId)
     const range = await comparedRange(folder, hash)
-    // --no-commit-id: with one commit (a root), diff-tree otherwise prints its hash first.
-    const listing = await git(folder, ['diff-tree', '-r', '-z', '--no-commit-id', '--name-status', '--no-renames', ...range])
-    return parseNameStatus(listing)
+    return this.changedFiles(folder, range)
+  }
+
+  /**
+   * Renames are detected (-M, git's default 50% similarity) so a moved file is one change, not
+   * a deletion plus an addition. --no-commit-id: with one commit (a root), diff-tree otherwise
+   * prints its hash first.
+   */
+  private async changedFiles(folder: string, range: string[]): Promise<FileChange[]> {
+    return parseNameStatus(await git(folder, ['diff-tree', '-r', '-z', '--no-commit-id', '--name-status', '-M', ...range]))
   }
 
   async getFileDiff(repoId: string, hash: string, path: string): Promise<Hunk[]> {
     const folder = await this.folderOf(repoId)
     const range = await comparedRange(folder, hash)
-    const diff = await git(folder, ['diff-tree', '-p', '--no-ext-diff', '--no-renames', ...range, '--', checkedPath(path)])
+    // A renamed file needs both paths in the pathspec, or git sees a deletion and an addition.
+    const renamedFrom = (await this.changedFiles(folder, range)).find((file) => file.path === path)?.oldPath
+    const paths = renamedFrom ? [renamedFrom, checkedPath(path)] : [checkedPath(path)]
+    const diff = await git(folder, ['diff-tree', '-p', '--no-ext-diff', '-M', ...range, '--', ...paths])
     if (!diff.trim()) throw new GitError(`${path} is not changed in ${hash.slice(0, 7)}`)
     return parseUnifiedDiff(diff)
   }
