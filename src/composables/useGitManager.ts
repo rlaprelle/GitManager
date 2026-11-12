@@ -235,7 +235,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   async function fetchRemote(): Promise<void> {
     const repo = repository.value
     const succeeded = await runOperation((r) => source.fetch(r.id))
-    if (succeeded && repo) repo.lastFetch = 'just now'
+    if (succeeded && repo) repo.lastFetch = new Date().toISOString()
   }
 
   async function pull(): Promise<void> {

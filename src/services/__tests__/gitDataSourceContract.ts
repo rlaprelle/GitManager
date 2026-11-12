@@ -63,6 +63,14 @@ export function describeGitDataSourceContract(name: string, createSubject: () =>
       })
     })
 
+    it('dates every commit, and the last fetch if there was one, with an ISO 8601 timestamp', async () => {
+      await eachRepository(async (source, repo) => {
+        if (repo.lastFetch !== null) expect(isIsoTimestamp(repo.lastFetch), repo.name).toBe(true)
+        const { commits } = await source.getHistory(repo.id, COMMITS_CHECKED_PER_REPOSITORY)
+        for (const commit of commits) expect(isIsoTimestamp(commit.date), `${commit.hash} ${commit.date}`).toBe(true)
+      })
+    })
+
     it('labels commits only with branches the repository has', async () => {
       await eachRepository(async (source, repo) => {
         const { local, remote } = await source.getBranches(repo.id)
@@ -110,6 +118,11 @@ export function describeGitDataSourceContract(name: string, createSubject: () =>
       expect(backward).toEqual(invertHunks(forward))
     })
   })
+}
+
+function isIsoTimestamp(value: string): boolean {
+  const iso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/
+  return iso.test(value) && !Number.isNaN(Date.parse(value))
 }
 
 /** '\' marks git's "No newline at end of file" note, which belongs to the line before it. */

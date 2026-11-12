@@ -2,6 +2,7 @@
 import { computed, onMounted, toRaw } from 'vue'
 import type { GitDataSource } from '@/services/GitDataSource'
 import { useGitManager } from '@/composables/useGitManager'
+import { useNow } from '@/composables/useNow'
 import AppHeader from '@/components/AppHeader.vue'
 import BranchList from '@/components/BranchList.vue'
 import CommitHistory from '@/components/CommitHistory.vue'
@@ -58,6 +59,9 @@ const {
   // The data source is a service, not state: unwrap it in case a parent passed it in reactive props.
 } = useGitManager(toRaw(props.source), { comparePaths: props.comparePaths })
 
+/** Date labels ('Today 11:42', '12 min ago') are formatted against this, so they stay right while the app is open. */
+const now = useNow()
+
 const accentStyle = computed(() => (props.accent ? { '--color-gm-accent': props.accent } : {}))
 
 onMounted(load)
@@ -106,6 +110,7 @@ onMounted(load)
             :loading="historyLoading"
             :selected-index="selectedCommitIndex"
             :current-branch="currentBranch"
+            :now="now"
             @select="selectCommit"
           />
           <DiffPanel
@@ -136,6 +141,7 @@ onMounted(load)
         :repo-name="repository.name"
         :current-branch="currentBranch"
         :last-fetch="repository.lastFetch"
+        :now="now"
       />
     </template>
 

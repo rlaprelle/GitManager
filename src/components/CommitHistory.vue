@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Commit } from '@/types/git'
 import { computed } from 'vue'
-import { pluralize } from '@/lib/format'
+import { commitDateLabel, pluralize } from '@/lib/format'
 import { graphWidth, laneCount } from '@/lib/graph'
 import CommitGraphCell from './CommitGraphCell.vue'
 import RefBadge from './RefBadge.vue'
@@ -13,6 +13,8 @@ const props = defineProps<{
   loading: boolean
   selectedIndex: number
   currentBranch: string
+  /** The clock dates are labelled against ('Today', 'Yesterday'). */
+  now: Date
 }>()
 
 defineEmits<{ select: [index: number] }>()
@@ -65,7 +67,7 @@ const columnTemplate = computed(() => ({
             <span class="min-w-[8ch] shrink-[1000] truncate">{{ commit.message }}</span>
           </span>
           <span class="truncate text-[12px] text-gm-muted">{{ commit.author }}</span>
-          <span class="text-[12px] whitespace-nowrap text-gm-muted">{{ commit.date }}</span>
+          <span class="text-[12px] whitespace-nowrap text-gm-muted">{{ commitDateLabel(commit.date, now) }}</span>
           <span class="font-mono text-[12px] text-gm-subtle">{{ commit.hash }}</span>
         </button>
       </div>

@@ -20,6 +20,7 @@ function mountHistory(
       loading,
       selectedIndex,
       currentBranch: inventory.currentBranch,
+      now: new Date(),
     },
   })
 }

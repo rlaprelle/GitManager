@@ -277,8 +277,9 @@ describe('useGitManager', () => {
     })
 
     it('fetching updates the last-fetch time', async () => {
+      const before = Date.now()
       await gm.fetchRemote()
-      expect(gm.repository.value?.lastFetch).toBe('just now')
+      expect(Date.parse(gm.repository.value!.lastFetch!)).toBeGreaterThanOrEqual(before)
       expect(gm.status.value).toBe('Fetched origin: no new commits')
     })
 

@@ -39,6 +39,7 @@ export interface Commit {
   hash: string
   message: string
   author: string
+  /** Author date, ISO 8601. The UI formats it ('Today 11:42'). */
   date: string
   /** Branch names pointing at this commit; remote ones start with 'origin/'. */
   refs: string[]
@@ -64,7 +65,8 @@ export interface Repository {
   path: string
   currentBranch: string
   changedFileCount: number
-  lastFetch: string
+  /** When the repository was last fetched, ISO 8601, or null if never. */
+  lastFetch: string | null
 }
 
 export interface Branches {
