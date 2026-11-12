@@ -3,7 +3,8 @@ import type { Hunk } from '@/types/git'
 export type LineKind = 'context' | 'add' | 'del'
 
 export interface UnifiedLine {
-  kind: LineKind | 'hunk'
+  /** 'note' is git's "\ No newline at end of file": about the line before it, not a line of the file. */
+  kind: LineKind | 'hunk' | 'note'
   oldNo: number | null
   newNo: number | null
   text: string
@@ -31,9 +32,15 @@ function body(line: string): string {
   return line.slice(1)
 }
 
+/** git's "\ No newline at end of file", which belongs to the line before it. */
+function isNote(line: string): boolean {
+  return marker(line) === '\\'
+}
+
 export function hunkHeader(hunk: Hunk): string {
-  const oldCount = hunk.lines.filter((l) => marker(l) !== '+').length
-  const newCount = hunk.lines.filter((l) => marker(l) !== '-').length
+  const fileLines = hunk.lines.filter((l) => !isNote(l))
+  const oldCount = fileLines.filter((l) => marker(l) !== '+').length
+  const newCount = fileLines.filter((l) => marker(l) !== '-').length
   const suffix = hunk.context ? ` ${hunk.context}` : ''
   return `@@ -${hunk.oldStart},${oldCount} +${hunk.newStart},${newCount} @@${suffix}`
 }
@@ -50,7 +57,9 @@ function unifiedLinesOfHunk(hunk: Hunk): UnifiedLine[] {
 
   for (const line of hunk.lines) {
     const text = body(line)
-    if (marker(line) === '-') {
+    if (isNote(line)) {
+      out.push({ kind: 'note', oldNo: null, newNo: null, text: text.trim() })
+    } else if (marker(line) === '-') {
       out.push({ kind: 'del', oldNo: oldNo++, newNo: null, text })
     } else if (marker(line) === '+') {
       out.push({ kind: 'add', oldNo: null, newNo: newNo++, text })
@@ -83,9 +92,11 @@ function sideBySideRowsOfHunk(hunk: Hunk): SideBySideRow[] {
   let oldNo = hunk.oldStart
   let newNo = hunk.newStart
   let i = 0
+  // Notes describe a line ending, not a line; two columns of text have nowhere to put them.
+  const lines = hunk.lines.filter((line) => !isNote(line))
 
-  while (i < hunk.lines.length) {
-    const line = hunk.lines[i]!
+  while (i < lines.length) {
+    const line = lines[i]!
     if (marker(line) === ' ') {
       const text = body(line)
       rows.push({
@@ -99,8 +110,8 @@ function sideBySideRowsOfHunk(hunk: Hunk): SideBySideRow[] {
 
     const deletions: string[] = []
     const additions: string[] = []
-    while (i < hunk.lines.length && marker(hunk.lines[i]!) !== ' ') {
-      const changed = hunk.lines[i]!
+    while (i < lines.length && marker(lines[i]!) !== ' ') {
+      const changed = lines[i]!
       ;(marker(changed) === '-' ? deletions : additions).push(body(changed))
       i++
     }

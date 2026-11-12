@@ -87,6 +87,44 @@ describe('toSideBySideRows', () => {
   })
 })
 
+describe('git’s "No newline at end of file" note', () => {
+  // As git prints a one-line file whose last line lost its newline on both sides.
+  const noNewline: Hunk = {
+    oldStart: 1,
+    newStart: 1,
+    context: '',
+    lines: ['-229', '\\ No newline at end of file', '+230', '\\ No newline at end of file'],
+  }
+
+  it('is not counted in the hunk header', () => {
+    expect(hunkHeader(noNewline)).toBe('@@ -1,1 +1,1 @@')
+  })
+
+  it('is its own unnumbered note row in the unified view, and doesn’t shift the line numbers', () => {
+    expect(toUnifiedLines([noNewline]).slice(1)).toEqual([
+      { kind: 'del', oldNo: 1, newNo: null, text: '229' },
+      { kind: 'note', oldNo: null, newNo: null, text: 'No newline at end of file' },
+      { kind: 'add', oldNo: null, newNo: 1, text: '230' },
+      { kind: 'note', oldNo: null, newNo: null, text: 'No newline at end of file' },
+    ])
+  })
+
+  it('is left out of the side-by-side view instead of showing as an added line', () => {
+    expect(toSideBySideRows([noNewline])).toEqual([
+      { kind: 'line', left: { no: 1, text: '229', kind: 'del' }, right: { no: 1, text: '230', kind: 'add' } },
+    ])
+  })
+
+  it('after a context line is still a note, and the next line keeps its number', () => {
+    const hunk: Hunk = { oldStart: 4, newStart: 4, context: '', lines: [' same', '\\ No newline at end of file', '+more'] }
+    expect(toUnifiedLines([hunk]).slice(1).map((line) => [line.kind, line.oldNo, line.newNo])).toEqual([
+      ['context', 4, 4],
+      ['note', null, null],
+      ['add', null, 5],
+    ])
+  })
+})
+
 describe('invertHunks', () => {
   it('swaps additions with deletions and the two start lines, listing removals first as git does', () => {
     const hunk: Hunk = { oldStart: 3, newStart: 5, context: 'x', lines: [' a', '-b', '+c', ' d'] }
