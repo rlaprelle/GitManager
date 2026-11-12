@@ -63,7 +63,8 @@ export interface Repository {
   id: string
   name: string
   path: string
-  currentBranch: string
+  /** The checked-out branch, or null when HEAD is detached (a commit is checked out directly). */
+  currentBranch: string | null
   changedFileCount: number
   /** When the repository was last fetched, ISO 8601, or null if never. */
   lastFetch: string | null

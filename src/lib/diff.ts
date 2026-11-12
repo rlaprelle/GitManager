@@ -121,8 +121,38 @@ export function invertHunks(hunks: Hunk[]): Hunk[] {
     oldStart: hunk.newStart,
     newStart: hunk.oldStart,
     context: hunk.context,
-    lines: hunk.lines.map(invertLine),
+    lines: removalsFirst(hunk.lines.map(invertLine)),
   }))
+}
+
+/**
+ * Git lists a change's removed lines before its added ones; after inverting, the additions
+ * come first. Reorders each run of changed lines back to git's order, keeping every
+ * "\ No newline at end of file" note after the line it describes.
+ */
+function removalsFirst(lines: string[]): string[] {
+  const result: string[] = []
+  const removed: string[] = []
+  const added: string[] = []
+  /** The side the previous changed line went to, which a "\" note follows. */
+  let previous: string[] | undefined
+  const flush = () => {
+    result.push(...removed.splice(0), ...added.splice(0))
+    previous = undefined
+  }
+  for (const line of lines) {
+    const kind = marker(line)
+    const side = kind === '-' ? removed : kind === '+' ? added : kind === '\\' ? previous : undefined
+    if (side) {
+      side.push(line)
+      previous = side
+      continue
+    }
+    flush()
+    result.push(line)
+  }
+  flush()
+  return result
 }
 
 function invertLine(line: string): string {

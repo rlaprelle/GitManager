@@ -37,6 +37,7 @@ const {
   commit,
   files,
   currentBranch,
+  headLabel,
   headerSyncLabel,
   diffMode,
   activeHunks,
@@ -75,7 +76,7 @@ onMounted(load)
     <template v-if="repository">
       <AppHeader
         :repo-name="repository.name"
-        :current-branch="currentBranch"
+        :current-branch="headLabel"
         :sync-label="headerSyncLabel"
         @fetch="fetchRemote"
         @pull="pull"
@@ -139,7 +140,7 @@ onMounted(load)
       <StatusBar
         :status="status"
         :repo-name="repository.name"
-        :current-branch="currentBranch"
+        :current-branch="headLabel"
         :last-fetch="repository.lastFetch"
         :now="now"
       />

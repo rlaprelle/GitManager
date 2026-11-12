@@ -44,7 +44,11 @@ export function describeGitDataSourceContract(name: string, createSubject: () =>
         const { local, remote } = await source.getBranches(repo.id)
         const names = [...local, ...remote].map((branch) => branch.name)
         expect(new Set(names).size, repo.name).toBe(names.length)
-        expect(local.map((branch) => branch.name), repo.name).toContain(repo.currentBranch)
+        // A detached HEAD has no current branch, and a new repository's branch has no commit to exist on yet.
+        const { commits } = await source.getHistory(repo.id, 1)
+        if (repo.currentBranch !== null && commits.length > 0) {
+          expect(local.map((branch) => branch.name), repo.name).toContain(repo.currentBranch)
+        }
       })
     })
 
@@ -100,6 +104,7 @@ export function describeGitDataSourceContract(name: string, createSubject: () =>
 
     it('rejects a repository, commit or file it doesn’t know', async () => {
       const { source } = await createSubject()
+      // The first repository must have commits.
       const repo = (await source.listRepositories())[0]!
       const newest = (await source.getHistory(repo.id, 1)).commits[0]!
 
@@ -115,7 +120,9 @@ export function describeGitDataSourceContract(name: string, createSubject: () =>
       const forward = await source.compareFiles(repo.id, comparePaths.left, comparePaths.right)
       const backward = await source.compareFiles(repo.id, comparePaths.right, comparePaths.left)
       expect(forward.length).toBeGreaterThan(0)
-      expect(backward).toEqual(invertHunks(forward))
+      // Git labels a hunk with a function name taken from the left file, so the label may change on a swap.
+      const withoutContext = (hunks: Hunk[]) => hunks.map(({ context: _context, ...hunk }) => hunk)
+      expect(withoutContext(backward)).toEqual(withoutContext(invertHunks(forward)))
     })
   })
 }

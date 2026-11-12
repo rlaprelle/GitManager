@@ -19,7 +19,7 @@ function mountHistory(
       hasMore: overrides.hasMore ?? false,
       loading,
       selectedIndex,
-      currentBranch: inventory.currentBranch,
+      currentBranch: inventory.currentBranch!,
       now: new Date(),
     },
   })

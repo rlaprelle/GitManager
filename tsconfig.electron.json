@@ -8,6 +8,8 @@
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.electron.tsbuildinfo",
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "types": ["node", "electron-vite/node"]
+    "types": ["node", "electron-vite/node"],
+    // Shared code in src/ uses the @/ alias; the build resolves it the same way (electron.vite.config.ts).
+    "paths": { "@/*": ["./src/*"] }
   }
 }

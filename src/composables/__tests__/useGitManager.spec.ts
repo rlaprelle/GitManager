@@ -290,6 +290,18 @@ describe('useGitManager', () => {
       expect(gm.status.value).toBe('Pushed feature/stock-reservations to origin/feature/stock-reservations')
     })
 
+    it('shows a detached HEAD as such, and refuses to pull or push without a branch', async () => {
+      const source = new MockGitDataSource()
+      const listRepositories = source.listRepositories.bind(source)
+      source.listRepositories = async () => (await listRepositories()).map((repo) => ({ ...repo, currentBranch: null }))
+      const detached = await loadedManager(source)
+      expect(detached.headLabel.value).toBe('detached HEAD')
+      await detached.pull()
+      expect(detached.status.value).toBe('Failed: no branch is checked out')
+      await detached.push()
+      expect(detached.status.value).toBe('Failed: no branch is checked out')
+    })
+
     it('a failed checkout leaves the current branch alone', async () => {
       const source = new MockGitDataSource()
       source.checkout = async () => {

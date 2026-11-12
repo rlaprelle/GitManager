@@ -20,6 +20,12 @@ describe('RepositoryList', () => {
     expect(first!.text()).toContain('on feature/stock-reservations')
   })
 
+  it('says "on detached HEAD" when a commit is checked out instead of a branch', () => {
+    const detached = [{ ...sampleRepositories[0]!, currentBranch: null }]
+    const wrapper = mount(RepositoryList, { props: { repositories: detached, selectedId: 'inventory' } })
+    expect(rows(wrapper)[0]!.text()).toContain('on detached HEAD')
+  })
+
   it('shows a changed-files badge only for repositories with local changes', () => {
     const texts = rows(mountList()).map((r) => r.text())
     expect(texts[0]).toContain('3 changed')

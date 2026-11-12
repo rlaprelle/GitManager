@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import type { GitDataSource } from '@/services/GitDataSource'
 import type { Branches, Commit, FileChange, HistoryPage, Hunk, OperationResult, Repository } from '@/types/git'
-import { syncLabel } from '@/lib/format'
+import { headLabel as describeHead, syncLabel } from '@/lib/format'
 import { latestLoad } from './latestLoad'
 
 export type DiffMode = 'git' | 'simple'
@@ -60,7 +60,10 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     return list[Math.min(selectedFileIndex.value, list.length - 1)]
   })
 
+  /** The checked-out branch's name, or '' when HEAD is detached. */
   const currentBranch = computed(() => repository.value?.currentBranch ?? '')
+  /** What the header and status bar call HEAD: the branch, or 'detached HEAD'. */
+  const headLabel = computed(() => describeHead(repository.value?.currentBranch ?? null))
 
   /** '↑2 vs origin' for the checked-out branch, or null when it's in sync. */
   const headerSyncLabel = computed<string | null>(() => {
@@ -239,11 +242,11 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   }
 
   async function pull(): Promise<void> {
-    await runOperation((r) => source.pull(r.id, r.currentBranch))
+    await runOperation((r) => source.pull(r.id, checkedOutBranch(r)))
   }
 
   async function push(): Promise<void> {
-    await runOperation((r) => source.push(r.id, r.currentBranch))
+    await runOperation((r) => source.push(r.id, checkedOutBranch(r)))
   }
 
   function addRepository(): void {
@@ -273,6 +276,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     files,
     file,
     currentBranch,
+    headLabel,
     headerSyncLabel,
     diffMode,
     activeHunks,
@@ -294,6 +298,11 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     push,
     addRepository,
   }
+}
+
+function checkedOutBranch(repo: Repository): string {
+  if (repo.currentBranch === null) throw new Error('no branch is checked out')
+  return repo.currentBranch
 }
 
 function messageOf(error: unknown): string {

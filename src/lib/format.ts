@@ -15,6 +15,11 @@ export function syncLabel(branch: Pick<LocalBranch, 'ahead' | 'behind'>): string
   return parts.join(' ')
 }
 
+/** The checked-out branch, or 'detached HEAD' when a commit is checked out directly. */
+export function headLabel(branch: string | null): string {
+  return branch ?? 'detached HEAD'
+}
+
 export function pluralize(count: number, singular: string, plural: string): string {
   return `${count} ${count === 1 ? singular : plural}`
 }

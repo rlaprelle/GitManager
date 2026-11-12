@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Repository } from '@/types/git'
+import { headLabel } from '@/lib/format'
 import GmIcon from './GmIcon.vue'
 
 defineProps<{
@@ -46,7 +47,7 @@ defineEmits<{ select: [id: string]; add: [] }>()
             </span>
           </span>
           <span class="truncate font-mono text-[11px] text-gm-faint">{{ repo.path }}</span>
-          <span class="truncate text-[12px] text-gm-muted">on {{ repo.currentBranch }}</span>
+          <span class="truncate text-[12px] text-gm-muted">on {{ headLabel(repo.currentBranch) }}</span>
         </span>
       </button>
     </div>
