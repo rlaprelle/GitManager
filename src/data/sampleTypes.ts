@@ -7,7 +7,9 @@ export interface SampleFileChange extends FileChange {
   hunks: Hunk[]
 }
 
-export interface SampleCommit extends Commit {
+/** Stores parents instead of a graph row: the mock lays out the graph the way real git's source does. */
+export interface SampleCommit extends Omit<Commit, 'graph'> {
+  parents: string[]
   files: SampleFileChange[]
 }
 

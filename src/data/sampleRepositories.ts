@@ -1,4 +1,3 @@
-import type { GraphRow, LaneFlags } from '@/types/git'
 import type { SampleCommit, SampleFileChange, SampleRepository } from './sampleTypes'
 import {
   checkoutServiceDiff,
@@ -18,35 +17,11 @@ import {
   skuLookupTestDiff,
 } from './sampleDiffs'
 
-/** '010' → [false, true, false]: which of the three lanes draw a line. */
-function lanes(pattern: string): LaneFlags {
-  return [pattern[0] === '1', pattern[1] === '1', pattern[2] === '1']
-}
+type LinearCommit = Omit<SampleCommit, 'parents'>
 
-function graph(
-  lane: number,
-  top: string,
-  bottom: string,
-  curves: { inFrom?: number; outTo?: number } = {},
-): GraphRow {
-  return {
-    lane,
-    top: lanes(top),
-    bottom: lanes(bottom),
-    curveInFrom: curves.inFrom ?? null,
-    curveOutTo: curves.outTo ?? null,
-  }
-}
-
-type LinearCommit = Omit<SampleCommit, 'graph'>
-
-/** Single-lane history: every commit on lane 0, joined top to bottom. */
+/** Single-line history: each commit's parent is the next one, and the last is the root. */
 function linearHistory(commits: LinearCommit[]): SampleCommit[] {
-  const last = commits.length - 1
-  return commits.map((commit, index) => ({
-    ...commit,
-    graph: graph(0, index > 0 ? '100' : '000', index < last ? '100' : '000'),
-  }))
+  return commits.map((commit, index) => ({ ...commit, parents: index + 1 < commits.length ? [commits[index + 1]!.hash] : [] }))
 }
 
 const SKU_FIX_FILES: SampleFileChange[] = [
@@ -79,7 +54,7 @@ const inventoryService: SampleRepository = {
       author: 'You',
       date: 'Today 11:42',
       refs: ['feature/stock-reservations'],
-      graph: graph(1, '000', '010'),
+      parents: ['4e7b0d9'],
       files: [
         {
           path: 'src/main/java/com/example/inventory/reservation/ReservationExpiryJob.java',
@@ -95,7 +70,7 @@ const inventoryService: SampleRepository = {
       author: 'You',
       date: 'Today 09:15',
       refs: [],
-      graph: graph(1, '010', '010'),
+      parents: ['a07c3be'],
       files: [
         {
           path: 'src/main/java/com/example/inventory/checkout/CheckoutService.java',
@@ -110,7 +85,7 @@ const inventoryService: SampleRepository = {
       author: 'M. Okafor',
       date: 'Yesterday 16:20',
       refs: ['main', 'origin/main'],
-      graph: graph(0, '010', '110', { outTo: 2 }),
+      parents: ['6b2f0e1', '2d6e914'],
       files: SKU_FIX_FILES,
     },
     {
@@ -119,7 +94,7 @@ const inventoryService: SampleRepository = {
       author: 'M. Okafor',
       date: 'Yesterday 14:03',
       refs: ['bugfix/sku-null-check', 'origin/bugfix/sku-null-check'],
-      graph: graph(2, '111', '111'),
+      parents: ['e5d9a72'],
       files: SKU_FIX_FILES,
     },
     {
@@ -128,7 +103,7 @@ const inventoryService: SampleRepository = {
       author: 'You',
       date: 'Nov 5 17:48',
       refs: ['origin/feature/stock-reservations'],
-      graph: graph(1, '111', '111'),
+      parents: ['6b2f0e1'],
       files: [
         {
           path: 'src/main/java/com/example/inventory/reservation/Reservation.java',
@@ -148,7 +123,7 @@ const inventoryService: SampleRepository = {
       author: 'J. Lindqvist',
       date: 'Nov 5 10:12',
       refs: [],
-      graph: graph(0, '101', '101', { inFrom: 1 }),
+      parents: ['e5d9a72'],
       files: [{ path: 'pom.xml', status: 'M', hunks: pomBumpDiff }],
     },
     {
@@ -157,7 +132,7 @@ const inventoryService: SampleRepository = {
       author: 'J. Lindqvist',
       date: 'Nov 4 15:30',
       refs: ['origin/release/2.4'],
-      graph: graph(0, '100', '100', { inFrom: 2 }),
+      parents: ['18c4b6f'],
       files: [
         {
           path: 'src/main/java/com/example/inventory/pricing/PricingClient.java',
@@ -172,7 +147,7 @@ const inventoryService: SampleRepository = {
       author: 'You',
       date: 'Nov 3 13:05',
       refs: [],
-      graph: graph(0, '100', '100'),
+      parents: ['f3a0d28'],
       files: [
         {
           path: 'src/main/java/com/example/inventory/catalog/ItemController.java',
@@ -187,7 +162,7 @@ const inventoryService: SampleRepository = {
       author: 'M. Okafor',
       date: 'Nov 1 09:40',
       refs: [],
-      graph: graph(0, '100', '100'),
+      parents: ['b91e6c4'],
       files: [{ path: '.github/workflows/build.yml', status: 'M', hunks: ciCacheDiff }],
     },
     {
@@ -196,7 +171,8 @@ const inventoryService: SampleRepository = {
       author: 'J. Lindqvist',
       date: 'Oct 30 11:22',
       refs: [],
-      graph: graph(0, '100', '100'),
+      // Older than the sample shows, so the line runs on past the last row.
+      parents: ['0d4c2aa'],
       files: [{ path: 'src/main/resources/application.yml', status: 'M', hunks: healthEndpointsDiff }],
     },
   ],

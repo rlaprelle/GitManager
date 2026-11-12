@@ -18,21 +18,21 @@ export interface FileChange {
   status: FileStatus
 }
 
-/** The graph has three lanes (0–2); each flag says whether that lane's line is drawn. */
-export type LaneFlags = [boolean, boolean, boolean]
-
-/** How one commit's row of the history graph is drawn. */
+/**
+ * How one commit's row of the history graph is drawn. Lanes are numbered from 0 at the left.
+ * Every list holds lane numbers.
+ */
 export interface GraphRow {
   /** Lane the commit dot sits in. */
   lane: number
-  /** Straight lines in the top half of the row (above the dot's centre). */
-  top: LaneFlags
-  /** Straight lines in the bottom half of the row. */
-  bottom: LaneFlags
-  /** A curve entering the dot from this lane at the top edge, or null. */
-  curveInFrom: number | null
-  /** A curve leaving the dot towards this lane at the bottom edge, or null. */
-  curveOutTo: number | null
+  /** Lanes with a straight line in the top half of the row (above the dot's centre). */
+  top: number[]
+  /** Lanes with a straight line in the bottom half of the row. */
+  bottom: number[]
+  /** Lanes whose line curves into the dot from the row's top edge (a branch joining its parent). */
+  curvesIn: number[]
+  /** Lanes the dot curves out to at the row's bottom edge (a merge's second and later parents). */
+  curvesOut: number[]
 }
 
 export interface Commit {

@@ -3,10 +3,13 @@ import { mount } from '@vue/test-utils'
 import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositories'
 import { sampleCompareDiff } from '@/data/sampleDiffs'
 import type { DiffMode } from '@/composables/useGitManager'
+import { sampleHistoryPage } from '@/services/MockGitDataSource'
 import DiffPanel from '../DiffPanel.vue'
 
-const expiryCommit = sampleRepositories[0]!.commits[0]!
-const skuCommit = sampleRepositories[0]!.commits[3]!
+const inventory = sampleRepositories[0]!
+const history = sampleHistoryPage(inventory, 200).commits
+const expiryCommit = { ...history[0]!, files: inventory.commits[0]!.files }
+const skuCommit = { ...history[3]!, files: inventory.commits[3]!.files }
 
 type PanelOverrides = Partial<{
   compareOpen: boolean

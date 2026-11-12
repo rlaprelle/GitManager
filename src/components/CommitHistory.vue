@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import type { Commit } from '@/types/git'
+import { computed } from 'vue'
 import { pluralize } from '@/lib/format'
+import { graphWidth, laneCount } from '@/lib/graph'
 import CommitGraphCell from './CommitGraphCell.vue'
 import RefBadge from './RefBadge.vue'
 
-defineProps<{
+const props = defineProps<{
   commits: Commit[]
   /** The repository has older commits than `commits` holds. */
   hasMore: boolean
@@ -15,7 +17,15 @@ defineProps<{
 
 defineEmits<{ select: [index: number] }>()
 
-const columns = 'grid grid-cols-[64px_minmax(0,1fr)_130px_120px_76px] items-center gap-3 pr-4 pl-2'
+const columns = 'grid items-center gap-3 pr-4 pl-2'
+
+/** Every row's graph is as wide as the busiest row needs, so lanes line up down the column. */
+const graphColumnWidth = computed(() => graphWidth(laneCount(props.commits.map((commit) => commit.graph))))
+
+// A CSSOM style binding, which the content security policy allows (unlike a style attribute in markup).
+const columnTemplate = computed(() => ({
+  gridTemplateColumns: `${graphColumnWidth.value}px minmax(0,1fr) 130px 120px 76px`,
+}))
 </script>
 
 <template>
@@ -31,6 +41,7 @@ const columns = 'grid grid-cols-[64px_minmax(0,1fr)_130px_120px_76px] items-cent
       <div class="min-w-[760px]">
         <div
           :class="columns"
+          :style="columnTemplate"
           class="sticky top-0 z-[1] h-[30px] border-b border-gm-line bg-gm-main text-[11px] font-semibold tracking-[0.06em] text-gm-faint uppercase"
         >
           <span>Graph</span><span>Description</span><span>Author</span><span>Date</span><span>Commit</span>
@@ -43,11 +54,12 @@ const columns = 'grid grid-cols-[64px_minmax(0,1fr)_130px_120px_76px] items-cent
           :key="commit.hash"
           type="button"
           :class="[columns, index === selectedIndex ? 'bg-gm-selected' : 'bg-transparent']"
+          :style="columnTemplate"
           class="gm-row-hover h-8 w-full cursor-pointer border-0 text-left text-gm-text"
           :aria-pressed="index === selectedIndex"
           @click="$emit('select', index)"
         >
-          <CommitGraphCell :row="commit.graph" :selected="index === selectedIndex" />
+          <CommitGraphCell :row="commit.graph" :selected="index === selectedIndex" :width="graphColumnWidth" />
           <span data-testid="commit-description" class="flex min-w-0 items-center gap-1.5 overflow-hidden">
             <RefBadge v-for="ref in commit.refs" :key="ref" :name="ref" :current-branch="currentBranch" />
             <span class="min-w-[8ch] shrink-[1000] truncate">{{ commit.message }}</span>

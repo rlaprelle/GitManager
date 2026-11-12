@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { GraphRow } from '@/types/git'
-import { GRAPH_WIDTH, ROW_HEIGHT, graphGeometry } from '@/lib/graph'
+import { ROW_HEIGHT, graphGeometry } from '@/lib/graph'
 
-const props = defineProps<{ row: GraphRow; selected: boolean }>()
+/** `width` is the whole column's, so every row's lanes line up. */
+const props = defineProps<{ row: GraphRow; selected: boolean; width: number }>()
 
 const geometry = computed(() => graphGeometry(props.row))
 
@@ -15,9 +16,9 @@ const ringColor = computed(() =>
 
 <template>
   <svg
-    :width="GRAPH_WIDTH"
+    :width="width"
     :height="ROW_HEIGHT"
-    :viewBox="`0 0 ${GRAPH_WIDTH} ${ROW_HEIGHT}`"
+    :viewBox="`0 0 ${width} ${ROW_HEIGHT}`"
     aria-hidden="true"
     class="block"
   >

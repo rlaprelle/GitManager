@@ -2,6 +2,7 @@ import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositor
 import { sampleCompareDiff } from '@/data/sampleDiffs'
 import type { SampleCommit, SampleRepository } from '@/data/sampleTypes'
 import { invertHunks } from '@/lib/diff'
+import { layoutLanes, primaryBranchTip } from '@/lib/laneLayout'
 import type { Branches, FileChange, HistoryPage, Hunk, OperationResult, Repository } from '@/types/git'
 import type { GitDataSource } from './GitDataSource'
 
@@ -30,11 +31,7 @@ export class MockGitDataSource implements GitDataSource {
   }
 
   async getHistory(repoId: string, limit: number): Promise<HistoryPage> {
-    const { commits } = this.repository(repoId)
-    return {
-      commits: commits.slice(0, limit).map(({ files: _files, ...commit }) => structuredClone(commit)),
-      hasMore: commits.length > limit,
-    }
+    return sampleHistoryPage(this.repository(repoId), limit)
   }
 
   async getCommitFiles(repoId: string, hash: string): Promise<FileChange[]> {
@@ -80,5 +77,18 @@ export class MockGitDataSource implements GitDataSource {
     const commit = this.repository(repoId).commits.find((candidate) => candidate.hash === hash)
     if (!commit) throw new Error(`Unknown commit: ${hash}`)
     return commit
+  }
+}
+
+/** A sample repository's newest `limit` commits, laid out with the same function the real git source uses. */
+export function sampleHistoryPage(repo: SampleRepository, limit: number): HistoryPage {
+  const page = repo.commits.slice(0, limit)
+  const rows = layoutLanes(page, primaryBranchTip({ local: repo.localBranches, remote: repo.remoteBranches }))
+  return {
+    commits: page.map(({ files: _files, parents: _parents, ...commit }, index) => ({
+      ...structuredClone(commit),
+      graph: rows[index]!,
+    })),
+    hasMore: repo.commits.length > limit,
   }
 }

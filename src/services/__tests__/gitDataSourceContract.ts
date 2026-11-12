@@ -55,8 +55,10 @@ export function describeGitDataSourceContract(name: string, createSubject: () =>
         expect(new Set(hashes).size, repo.name).toBe(hashes.length)
         expect(whole.hasMore, repo.name).toBe(false)
 
+        // Graph rows depend on what the page holds (whether main is in view), so compare without them.
+        const withoutGraph = ({ graph: _graph, ...commit }: Commit) => commit
         const page = await source.getHistory(repo.id, 2)
-        expect(page.commits, repo.name).toEqual(whole.commits.slice(0, 2))
+        expect(page.commits.map(withoutGraph), repo.name).toEqual(whole.commits.slice(0, 2).map(withoutGraph))
         expect(page.hasMore, repo.name).toBe(whole.commits.length > 2)
       })
     })

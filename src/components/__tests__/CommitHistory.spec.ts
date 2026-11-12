@@ -1,15 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { sampleRepositories } from '@/data/sampleRepositories'
+import { sampleHistoryPage } from '@/services/MockGitDataSource'
+import type { Commit } from '@/types/git'
 import CommitHistory from '../CommitHistory.vue'
 
 const inventory = sampleRepositories[0]!
+const inventoryCommits = sampleHistoryPage(inventory, 200).commits
 
-function mountHistory(selectedIndex = 0, overrides: { hasMore?: boolean; loading?: boolean } = {}) {
+function mountHistory(
+  selectedIndex = 0,
+  overrides: { hasMore?: boolean; loading?: boolean; commits?: Commit[] } = {},
+) {
   const loading = overrides.loading ?? false
   return mount(CommitHistory, {
     props: {
-      commits: loading ? [] : inventory.commits,
+      commits: loading ? [] : (overrides.commits ?? inventoryCommits),
       hasMore: overrides.hasMore ?? false,
       loading,
       selectedIndex,
@@ -63,6 +69,13 @@ describe('CommitHistory', () => {
 
   it('draws a graph dot in every row', () => {
     expect(mountHistory().findAll('svg circle')).toHaveLength(10)
+  })
+
+  it('keeps the design’s 64px graph column for three lanes and widens it for more', () => {
+    const graphWidth = (wrapper: ReturnType<typeof mountHistory>) => wrapper.get('svg').attributes('width')
+    expect(graphWidth(mountHistory())).toBe('64')
+    const wide = inventoryCommits.map((commit, index) => (index === 0 ? { ...commit, graph: { ...commit.graph, lane: 5 } } : commit))
+    expect(graphWidth(mountHistory(0, { commits: wide }))).toBe('118')
   })
 
   it('marks the selected commit and emits the clicked index', async () => {
