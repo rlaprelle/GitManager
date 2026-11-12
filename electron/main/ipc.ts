@@ -38,6 +38,8 @@ export function registerIpcHandlers(ipc: IpcRegistrar, { source, appVersion, che
   handle(IpcChannel.GetCommitFiles, (repoId, hash) => source.getCommitFiles(text(repoId), text(hash)))
   handle(IpcChannel.GetFileDiff, (repoId, hash, path) => source.getFileDiff(text(repoId), text(hash), text(path)))
   handle(IpcChannel.CompareFiles, (repoId, left, right) => source.compareFiles(text(repoId), text(left), text(right)))
+  handle(IpcChannel.AddRepository, () => source.addRepository())
+  handle(IpcChannel.RemoveRepository, (repoId) => source.removeRepository(text(repoId)))
 }
 
 function text(value: unknown): string {

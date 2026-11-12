@@ -1,5 +1,13 @@
-import type { GitReadBridge } from '@/types/bridge'
-import type { Branches, FileChange, HistoryPage, Hunk, OperationResult, Repository } from '@/types/git'
+import type { GitBridge } from '@/types/bridge'
+import type {
+  AddRepositoryResult,
+  Branches,
+  FileChange,
+  HistoryPage,
+  Hunk,
+  OperationResult,
+  Repository,
+} from '@/types/git'
 import type { GitDataSource } from './GitDataSource'
 
 /**
@@ -7,7 +15,7 @@ import type { GitDataSource } from './GitDataSource'
  * which runs the installed git. Read-only for now; the UI hides the write operations.
  */
 export class IpcGitDataSource implements GitDataSource {
-  constructor(private readonly git: GitReadBridge) {}
+  constructor(private readonly git: GitBridge) {}
 
   listRepositories(): Promise<Repository[]> {
     return this.git.listRepositories()
@@ -31,6 +39,15 @@ export class IpcGitDataSource implements GitDataSource {
 
   compareFiles(repoId: string, leftPath: string, rightPath: string): Promise<Hunk[]> {
     return this.git.compareFiles(repoId, leftPath, rightPath)
+  }
+
+  /** Main shows the folder picker. */
+  addRepository(): Promise<AddRepositoryResult> {
+    return this.git.addRepository()
+  }
+
+  removeRepository(repoId: string): Promise<OperationResult> {
+    return this.git.removeRepository(repoId)
   }
 
   checkout(_repoId: string, _branch: string): Promise<OperationResult> {

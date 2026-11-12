@@ -1,9 +1,17 @@
 import { stat } from 'node:fs/promises'
-import { basename, isAbsolute, relative, resolve } from 'node:path'
+import { basename, isAbsolute, normalize, relative, resolve } from 'node:path'
 import { layoutLanes, primaryBranchTip } from '../../../src/lib/laneLayout'
 import { parseUnifiedDiff } from '../../../src/lib/parseDiff'
 import type { GitDataSource } from '../../../src/services/GitDataSource'
-import type { Branches, FileChange, HistoryPage, Hunk, OperationResult, Repository } from '../../../src/types/git'
+import type {
+  AddRepositoryResult,
+  Branches,
+  FileChange,
+  HistoryPage,
+  Hunk,
+  OperationResult,
+  Repository,
+} from '../../../src/types/git'
 import {
   BRANCH_FORMAT,
   LOG_FORMAT,
@@ -20,9 +28,18 @@ export interface StoredRepository {
   path: string
 }
 
-export interface RepositoryList {
+/** The user's list of repositories (RepositoryStore keeps it in repositories.json). */
+export interface RepositoryCatalog {
   list(): Promise<StoredRepository[]>
+  /** Adds a folder, or returns the existing entry for it. */
+  add(path: string): Promise<StoredRepository>
+  remove(id: string): Promise<void>
 }
+
+/** Asks the user for a folder; null when they cancel. */
+export type ChooseFolder = () => Promise<string | null>
+
+const FOLDER_NOT_FOUND = 'Folder not found'
 
 /** Full or abbreviated commit hash. Checked so a "hash" can never be read as a git option. */
 const COMMIT_HASH = /^[0-9a-f]{4,64}$/i
@@ -36,11 +53,33 @@ const COMMIT_HASH = /^[0-9a-f]{4,64}$/i
  * and paths always follow `--`.
  */
 export class GitCliDataSource implements GitDataSource {
-  constructor(private readonly repositories: RepositoryList) {}
+  constructor(
+    private readonly repositories: RepositoryCatalog,
+    private readonly chooseFolder: ChooseFolder,
+  ) {}
 
   async listRepositories(): Promise<Repository[]> {
     const stored = await this.repositories.list()
     return Promise.all(stored.map((repo) => this.summarize(repo)))
+  }
+
+  /** Adds the repository the chosen folder belongs to, by its top folder, so a subfolder works too. */
+  async addRepository(): Promise<AddRepositoryResult> {
+    const chosen = await this.chooseFolder()
+    if (chosen === null) return { repository: null, message: '' }
+    const topFolder = await git(chosen, ['rev-parse', '--show-toplevel']).catch(() => {
+      throw new GitError(`${chosen} isn’t inside a git repository`)
+    })
+    const path = normalize(topFolder.trim())
+    const alreadyListed = (await this.repositories.list()).some((repo) => repo.path.toLowerCase() === path.toLowerCase())
+    const repository = await this.summarize(await this.repositories.add(path))
+    return { repository, message: alreadyListed ? `${repository.name} is already in the list` : `Added ${repository.name}` }
+  }
+
+  async removeRepository(repoId: string): Promise<OperationResult> {
+    const repo = await this.stored(repoId)
+    await this.repositories.remove(repoId)
+    return { message: `Removed ${basename(repo.path)} from the list` }
   }
 
   async getBranches(repoId: string): Promise<Branches> {
@@ -115,26 +154,54 @@ export class GitCliDataSource implements GitDataSource {
     throw notYetAvailable('Push')
   }
 
+  /** One repository's list entry. A repository git can't read is still listed, with the problem. */
   private async summarize({ id, path }: StoredRepository): Promise<Repository> {
-    const [currentBranch, changes, lastFetch] = await Promise.all([
-      checkedOutBranch(path),
-      git(path, ['status', '--porcelain=v1', '-z', '--no-renames', '--untracked-files=normal']),
-      lastFetchTime(path),
-    ])
-    return { id, name: basename(path), path, currentBranch, changedFileCount: countStatusEntries(changes), lastFetch }
+    const unreadable = (problem: string): Repository => ({
+      id,
+      name: basename(path),
+      path,
+      currentBranch: null,
+      changedFileCount: 0,
+      lastFetch: null,
+      problem,
+    })
+    if (!(await isFolder(path))) return unreadable(FOLDER_NOT_FOUND)
+    try {
+      const [currentBranch, changes, lastFetch] = await Promise.all([
+        checkedOutBranch(path),
+        git(path, ['status', '--porcelain=v1', '-z', '--no-renames', '--untracked-files=normal']),
+        lastFetchTime(path),
+      ])
+      return { ...unreadable(''), currentBranch, changedFileCount: countStatusEntries(changes), lastFetch, problem: null }
+    } catch (error) {
+      return unreadable(error instanceof Error ? error.message : String(error))
+    }
   }
 
   private async branchesAt(folder: string): Promise<Branches> {
     return parseBranches(await git(folder, ['for-each-ref', `--format=${BRANCH_FORMAT}`, 'refs/heads', 'refs/remotes']))
   }
 
-  private async folderOf(repoId: string): Promise<string> {
+  private async stored(repoId: string): Promise<StoredRepository> {
     const repo = (await this.repositories.list()).find((candidate) => candidate.id === repoId)
     if (!repo) throw new GitError(`Unknown repository: ${repoId}`)
-    const found = await stat(repo.path).catch(() => null)
-    if (!found?.isDirectory()) throw new GitError(`Folder not found: ${repo.path}`)
+    return repo
+  }
+
+  /**
+   * The repository's folder, checked to exist: on Windows a missing working folder makes
+   * starting git fail exactly as if git weren't installed.
+   */
+  private async folderOf(repoId: string): Promise<string> {
+    const repo = await this.stored(repoId)
+    if (!(await isFolder(repo.path))) throw new GitError(`${FOLDER_NOT_FOUND}: ${repo.path}`)
     return repo.path
   }
+}
+
+async function isFolder(path: string): Promise<boolean> {
+  const found = await stat(path).catch(() => null)
+  return found?.isDirectory() ?? false
 }
 
 /** Local branches before remote ones, as the design shows them; git's own order otherwise. */

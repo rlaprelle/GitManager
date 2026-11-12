@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { sampleRepositories } from '@/data/sampleRepositories'
+import type { Repository } from '@/types/git'
 import RepositoryList from '../RepositoryList.vue'
 
-function mountList(selectedId = 'inventory') {
-  return mount(RepositoryList, { props: { repositories: sampleRepositories, selectedId } })
+const listed: Repository[] = sampleRepositories.map((repo) => ({ ...repo, problem: null }))
+
+function mountList(selectedId = 'inventory', repositories = listed) {
+  return mount(RepositoryList, { props: { repositories, selectedId } })
 }
 
 function rows(wrapper: ReturnType<typeof mountList>) {
@@ -21,9 +24,21 @@ describe('RepositoryList', () => {
   })
 
   it('says "on detached HEAD" when a commit is checked out instead of a branch', () => {
-    const detached = [{ ...sampleRepositories[0]!, currentBranch: null }]
-    const wrapper = mount(RepositoryList, { props: { repositories: detached, selectedId: 'inventory' } })
+    const wrapper = mountList('inventory', [{ ...listed[0]!, currentBranch: null }])
     expect(rows(wrapper)[0]!.text()).toContain('on detached HEAD')
+  })
+
+  it('shows why a repository can’t be read in place of its branch', () => {
+    const wrapper = mountList('inventory', [{ ...listed[0]!, currentBranch: null, problem: 'Folder not found' }])
+    expect(rows(wrapper)[0]!.text()).toContain('Folder not found')
+    expect(rows(wrapper)[0]!.text()).not.toContain('on detached HEAD')
+  })
+
+  it('removes a repository from the list with its own button, without selecting it', async () => {
+    const wrapper = mountList()
+    await wrapper.get('button[aria-label="Remove pricing-api from the list"]').trigger('click')
+    expect(wrapper.emitted('remove')).toEqual([['pricing']])
+    expect(wrapper.emitted('select')).toBeUndefined()
   })
 
   it('shows a changed-files badge only for repositories with local changes', () => {

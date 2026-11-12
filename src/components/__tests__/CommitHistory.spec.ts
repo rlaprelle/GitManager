@@ -10,14 +10,14 @@ const inventoryCommits = sampleHistoryPage(inventory, 200).commits
 
 function mountHistory(
   selectedIndex = 0,
-  overrides: { hasMore?: boolean; loading?: boolean; commits?: Commit[] } = {},
+  overrides: { hasMore?: boolean; message?: string | null; commits?: Commit[] } = {},
 ) {
-  const loading = overrides.loading ?? false
+  const message = overrides.message ?? null
   return mount(CommitHistory, {
     props: {
-      commits: loading ? [] : (overrides.commits ?? inventoryCommits),
+      commits: message ? [] : (overrides.commits ?? inventoryCommits),
       hasMore: overrides.hasMore ?? false,
-      loading,
+      message,
       selectedIndex,
       currentBranch: inventory.currentBranch!,
       now: new Date(),
@@ -40,9 +40,9 @@ describe('CommitHistory', () => {
     expect(mountHistory(0, { hasMore: true }).text()).toContain('Showing the latest 10 commits · all branches')
   })
 
-  it('shows a loading message instead of rows while the history loads', () => {
-    const wrapper = mountHistory(0, { loading: true })
-    expect(wrapper.text()).toContain('Loading history…')
+  it.each(['Loading history…', 'No commits yet', 'Couldn’t load history'])('shows "%s" instead of rows and a count', (message) => {
+    const wrapper = mountHistory(0, { message })
+    expect(wrapper.text()).toContain(message)
     expect(wrapper.text()).not.toContain('0 commits')
     expect(rows(wrapper)).toHaveLength(0)
   })
@@ -77,6 +77,13 @@ describe('CommitHistory', () => {
     expect(graphWidth(mountHistory())).toBe('64')
     const wide = inventoryCommits.map((commit, index) => (index === 0 ? { ...commit, graph: { ...commit.graph, lane: 5 } } : commit))
     expect(graphWidth(mountHistory(0, { commits: wide }))).toBe('118')
+  })
+
+  it('shows a full hash as its first seven characters', () => {
+    const full = inventoryCommits.map((commit) => ({ ...commit, hash: commit.hash.padEnd(40, '0') }))
+    const text = rows(mountHistory(0, { commits: full }))[0]!.text()
+    expect(text).toContain('9f3a1c2')
+    expect(text).not.toContain('9f3a1c20')
   })
 
   it('marks the selected commit and emits the clicked index', async () => {

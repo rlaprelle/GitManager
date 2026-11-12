@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { commitDateLabel, lastFetchLabel, pluralize, splitPath, syncLabel } from '../format'
+import { commitDateLabel, lastFetchLabel, pluralize, shortHash, splitPath, syncLabel } from '../format'
 
 describe('splitPath', () => {
   it('splits a forward-slash path into file name and directory', () => {
@@ -77,5 +77,12 @@ describe('lastFetchLabel', () => {
 
   it('switches to a date after a week', () => {
     expect(lastFetchLabel(local(2026, 10, 30, 11, 22).toISOString(), now)).toBe('Oct 30')
+  })
+})
+
+describe('shortHash', () => {
+  it('shows the first seven characters, as git does', () => {
+    expect(shortHash('9f3a1c2e4b5d6f708192a3b4c5d6e7f809102030')).toBe('9f3a1c2')
+    expect(shortHash('9f3a1c2')).toBe('9f3a1c2')
   })
 })

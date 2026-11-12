@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { BrowserWindow, app, ipcMain } from 'electron'
+import { BrowserWindow, app, dialog, ipcMain } from 'electron'
 import windowIcon from '../../build/icon.ico?asset'
 import { GitCliDataSource } from './git/GitCliDataSource'
 import { checkGit } from './git/gitVersion'
@@ -61,6 +61,14 @@ function loadRenderer(window: BrowserWindow): void {
   void window.loadFile(rendererHtmlPath)
 }
 
+/** The native folder picker, over the app window. Tests replace dialog.showOpenDialog. */
+async function chooseRepositoryFolder(): Promise<string | null> {
+  const options = { title: 'Add repository', properties: ['openDirectory' as const] }
+  const window = BrowserWindow.getAllWindows()[0]
+  const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
+  return result.canceled ? null : (result.filePaths[0] ?? null)
+}
+
 /**
  * Dev and test runs (unpackaged) keep their own data folder, so they never touch the installed
  * app's repository list. Tests point it at a temporary folder with GIT_MANAGER_USER_DATA.
@@ -75,7 +83,8 @@ app.setAppUserModelId(APP_USER_MODEL_ID)
 
 void app.whenReady().then(() => {
   const repositories = new RepositoryStore(join(app.getPath('userData'), 'repositories.json'))
-  registerIpcHandlers(ipcMain, { source: new GitCliDataSource(repositories), appVersion: app.getVersion(), checkGit })
+  const source = new GitCliDataSource(repositories, chooseRepositoryFolder)
+  registerIpcHandlers(ipcMain, { source, appVersion: app.getVersion(), checkGit })
   createMainWindow()
 })
 

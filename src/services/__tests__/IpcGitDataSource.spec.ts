@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { GitReadBridge } from '@/types/bridge'
+import type { GitBridge } from '@/types/bridge'
 import { IpcGitDataSource } from '../IpcGitDataSource'
 import { MockGitDataSource } from '../MockGitDataSource'
 
@@ -7,13 +7,15 @@ import { MockGitDataSource } from '../MockGitDataSource'
 function recordingBridge() {
   const calls: unknown[][] = []
   const mock = new MockGitDataSource()
-  const bridge: GitReadBridge = {
+  const bridge: GitBridge = {
     listRepositories: (...args) => (calls.push(['listRepositories', ...args]), mock.listRepositories()),
     getBranches: (...args) => (calls.push(['getBranches', ...args]), mock.getBranches(...args)),
     getHistory: (...args) => (calls.push(['getHistory', ...args]), mock.getHistory(...args)),
     getCommitFiles: (...args) => (calls.push(['getCommitFiles', ...args]), mock.getCommitFiles(...args)),
     getFileDiff: (...args) => (calls.push(['getFileDiff', ...args]), mock.getFileDiff(...args)),
     compareFiles: (...args) => (calls.push(['compareFiles', ...args]), mock.compareFiles(...args)),
+    addRepository: (...args) => (calls.push(['addRepository', ...args]), mock.addRepository()),
+    removeRepository: (...args) => (calls.push(['removeRepository', ...args]), mock.removeRepository(...args)),
   }
   return { bridge, calls }
 }
@@ -28,6 +30,8 @@ describe('IpcGitDataSource', () => {
     await source.getCommitFiles('inventory', '9f3a1c2')
     await source.getFileDiff('inventory', '9f3a1c2', 'src/main/resources/application.yml')
     await source.compareFiles('inventory', 'a.yml', 'b.yml')
+    await source.addRepository()
+    await source.removeRepository('pricing')
     expect(calls).toEqual([
       ['listRepositories'],
       ['getBranches', 'inventory'],
@@ -35,6 +39,8 @@ describe('IpcGitDataSource', () => {
       ['getCommitFiles', 'inventory', '9f3a1c2'],
       ['getFileDiff', 'inventory', '9f3a1c2', 'src/main/resources/application.yml'],
       ['compareFiles', 'inventory', 'a.yml', 'b.yml'],
+      ['addRepository'],
+      ['removeRepository', 'pricing'],
     ])
   })
 

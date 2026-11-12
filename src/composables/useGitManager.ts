@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import type { GitDataSource } from '@/services/GitDataSource'
 import type { Branches, Commit, FileChange, HistoryPage, Hunk, OperationResult, Repository } from '@/types/git'
-import { headLabel as describeHead, syncLabel } from '@/lib/format'
+import { headLabel as describeHead, shortHash, syncLabel } from '@/lib/format'
 import { latestLoad } from './latestLoad'
 
 export type DiffMode = 'git' | 'simple'
@@ -70,6 +70,14 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     const local = branches.value.local.find((b) => b.name === currentBranch.value)
     const label = local ? syncLabel(local) : ''
     return label ? `${label} vs origin` : null
+  })
+
+  /** What the history pane says instead of rows: loading, couldn't load, or no commits; null when it has rows. */
+  const historyMessage = computed<string | null>(() => {
+    if (historyLoad.loading.value) return 'Loading history…'
+    if (historyLoad.failed.value) return 'Couldn’t load history'
+    if (repository.value && commits.value.length === 0) return 'No commits yet'
+    return null
   })
 
   /** Two arbitrary files have no shared history, so only the simple diff applies. */
@@ -154,7 +162,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     const tipIndex = commits.value.findIndex((c) => c.hash === tipHash)
     selectedBranch.value = name
     resetCommitView(Math.max(tipIndex, 0))
-    status.value = `Selected ${name} (tip ${tipHash ?? 'unknown'})`
+    status.value = `Selected ${name} (tip ${tipHash ? shortHash(tipHash) : 'unknown'})`
     await openCommit()
   }
 
@@ -162,7 +170,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     const target = commits.value[index]
     if (!target) return
     resetCommitView(index)
-    status.value = `Viewing commit ${target.hash}`
+    status.value = `Viewing commit ${shortHash(target.hash)}`
     await openCommit()
   }
 
@@ -181,6 +189,11 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   async function refreshCompare(): Promise<void> {
     const repo = repository.value
     if (!repo) return
+    // Desktop starts with both inputs empty; there's nothing to compare until both are filled in.
+    if (!leftPath.value.trim() || !rightPath.value.trim()) {
+      compareLoad.clear()
+      return
+    }
     await compareLoad.run(
       () => source.compareFiles(repo.id, leftPath.value, rightPath.value),
       (error) => {
@@ -197,7 +210,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
 
   function closeCompare(): void {
     compareOpen.value = false
-    if (commit.value) status.value = `Viewing commit ${commit.value.hash}`
+    if (commit.value) status.value = `Viewing commit ${shortHash(commit.value.hash)}`
   }
 
   async function setLeftPath(path: string): Promise<void> {
@@ -249,8 +262,42 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     await runOperation((r) => source.push(r.id, checkedOutBranch(r)))
   }
 
-  function addRepository(): void {
-    status.value = 'Add repository: choose a folder that contains a .git directory'
+  // ---- the repository list ----
+
+  /** Adds the repository the user picks (or explains, in the browser) and opens it. */
+  async function addRepository(): Promise<void> {
+    try {
+      const { repository: added, message } = await source.addRepository()
+      if (message) status.value = message
+      if (!added) return
+      if (!repositories.value.some((repo) => repo.id === added.id)) repositories.value.push(added)
+      await openRepository(repositories.value.find((repo) => repo.id === added.id)!)
+    } catch (error) {
+      status.value = `Failed: ${messageOf(error)}`
+    }
+  }
+
+  /** Takes a repository off the list; if it was open, opens the first one left. */
+  async function removeRepository(id: string): Promise<void> {
+    const wasOpen = repository.value?.id === id
+    try {
+      status.value = (await source.removeRepository(id)).message
+    } catch (error) {
+      status.value = `Failed: ${messageOf(error)}`
+      return
+    }
+    repositories.value = repositories.value.filter((repo) => repo.id !== id)
+    if (!wasOpen) return
+    const next = repositories.value[0]
+    if (next) await openRepository(next)
+    else closeRepository()
+  }
+
+  function closeRepository(): void {
+    selectedRepoId.value = null
+    selectedBranch.value = null
+    resetCommitView()
+    for (const area of [branchesLoad, historyLoad, filesLoad, diffLoad, compareLoad]) area.clear()
   }
 
   return {
@@ -278,6 +325,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     currentBranch,
     headLabel,
     headerSyncLabel,
+    historyMessage,
     diffMode,
     activeHunks,
     // actions
@@ -297,6 +345,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     pull,
     push,
     addRepository,
+    removeRepository,
   }
 }
 

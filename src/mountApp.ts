@@ -13,6 +13,8 @@ import type { GitStatus } from './types/bridge'
 export interface AppOptions {
   source: GitDataSource
   comparePaths: { left: string; right: string }
+  /** False hides the write operations. */
+  writable: boolean
 }
 
 export function mountApp(options: AppOptions): void {

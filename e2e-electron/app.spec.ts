@@ -2,6 +2,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type ElectronApplication, type Page, _electron as electron, expect, test } from '@playwright/test'
+import type { StoredRepository } from '../electron/main/git/GitCliDataSource'
 import { type Fixtures, createFixtures, removeFixtures } from '../electron/main/git/__tests__/fixtures'
 import {
   contentSecurityPolicy,
@@ -30,13 +31,28 @@ test.afterAll(async () => {
   if (fixtures) await removeFixtures(fixtures)
 })
 
-/** Launches the built app ('.' = package.json "main", what the installer packages) with a fresh data folder. */
-async function launch(environment: Record<string, string> = {}): Promise<void> {
+/**
+ * Launches the built app ('.' = package.json "main", what the installer packages) with a fresh
+ * data folder listing these repositories (the sample fixture unless told otherwise).
+ */
+async function launch(repositories?: StoredRepository[]): Promise<void> {
   userData = await mkdtemp(join(tmpdir(), 'git-manager-userdata-'))
-  const repositories = { version: 1, repositories: [{ id: 'sample', path: fixtures.sample }] }
-  await writeFile(join(userData, 'repositories.json'), JSON.stringify(repositories))
-  app = await electron.launch({ args: ['.'], env: { ...process.env, GIT_MANAGER_USER_DATA: userData, ...environment } })
+  const listed = repositories ?? [{ id: 'sample', path: fixtures.sample }]
+  await writeFile(join(userData, 'repositories.json'), JSON.stringify({ version: 1, repositories: listed }))
+  app = await electron.launch({ args: ['.'], env: { ...process.env, GIT_MANAGER_USER_DATA: userData } })
   window = await app.firstWindow()
+}
+
+/** Makes the native folder picker answer with this folder, as if the user had chosen it. */
+async function folderPickerChooses(folder: string): Promise<void> {
+  await app!.evaluate(({ dialog }, chosen) => {
+    dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [chosen] })) as typeof dialog.showOpenDialog
+  }, folder)
+}
+
+async function savedRepositoryPaths(): Promise<string[]> {
+  const saved = JSON.parse(await readFile(join(userData, 'repositories.json'), 'utf8')) as { repositories: StoredRepository[] }
+  return saved.repositories.map((repo) => repo.path)
 }
 
 test.afterEach(async () => {
@@ -57,9 +73,38 @@ test.describe('with git installed', () => {
 
   test('opens the window on the user’s repository and its newest commit', async () => {
     await expect(window).toHaveTitle('Git Manager')
-    await expect(sidebar().getByRole('button', { name: /sample/ })).toBeVisible()
+    await expect(sidebar().getByRole('button', { name: /^sample/ })).toBeVisible()
     await expect(window.getByTestId('header-branch')).toHaveText('main')
     await expect(diffViewer()).toContainText('Describe the sample')
+  })
+
+  test('is read-only: no Fetch, Pull, Push, or Checkout on another branch', async () => {
+    await sidebar().getByRole('button', { name: 'feature/search', exact: true }).click()
+    await expect(diffViewer()).toContainText('Add search')
+    for (const label of ['Fetch', 'Pull', 'Push', 'Checkout']) {
+      await expect(window.getByRole('button', { name: label, exact: true })).toHaveCount(0)
+    }
+  })
+
+  test('adds a repository chosen in the folder picker, opens it and remembers it', async () => {
+    await folderPickerChooses(fixtures.detached)
+    await sidebar().getByRole('button', { name: 'Add repository' }).click()
+    await expect(status()).toHaveText('Added detached')
+    await expect(window.getByTestId('header-repo')).toHaveText('detached')
+    await expect(window.getByTestId('header-branch')).toHaveText('detached HEAD')
+    expect(await savedRepositoryPaths()).toEqual([fixtures.sample, fixtures.detached])
+  })
+
+  test('removes a repository from the list, and from the saved list', async () => {
+    await folderPickerChooses(fixtures.detached)
+    await sidebar().getByRole('button', { name: 'Add repository' }).click()
+    await expect(status()).toHaveText('Added detached')
+
+    await sidebar().getByRole('button', { name: 'Remove detached from the list' }).click()
+    await expect(status()).toHaveText('Removed detached from the list')
+    await expect(sidebar().getByRole('button', { name: /^detached/ })).toHaveCount(0)
+    await expect(window.getByTestId('header-repo')).toHaveText('sample')
+    expect(await savedRepositoryPaths()).toEqual([fixtures.sample])
   })
 
   test('browses a real repository: a merge, a binary file, a file’s diff and a branch', async () => {
@@ -133,6 +178,27 @@ test.describe('with git installed', () => {
     const violations = await policyViolationsOnReload(window, () => expect(status()).toHaveText('Ready'))
     expect(violations).toEqual([])
   })
+})
+
+test('on first run, invites the user to add a repository and opens the one they choose', async () => {
+  await launch([])
+  await expect(window.getByRole('heading', { name: 'Add a repository to get started' })).toBeVisible()
+  await folderPickerChooses(join(fixtures.sample, 'config'))
+  await window.getByRole('button', { name: 'Add repository…' }).click()
+  await expect(window.getByTestId('header-repo')).toHaveText('sample')
+  await expect(status()).toHaveText('Added sample')
+})
+
+test('lists a repository whose folder is gone, says so, and lets the user remove it', async () => {
+  const gone = join(fixtures.root, 'moved-away')
+  await launch([
+    { id: 'sample', path: fixtures.sample },
+    { id: 'gone', path: gone },
+  ])
+  await expect(status()).toHaveText('Ready')
+  await expect(sidebar().getByRole('button', { name: /^moved-away/ })).toContainText('Folder not found')
+  await sidebar().getByRole('button', { name: 'Remove moved-away from the list' }).click()
+  await expect(sidebar().getByRole('button', { name: /^moved-away/ })).toHaveCount(0)
 })
 
 test('the built desktop app contains none of the browser version’s sample data', async () => {

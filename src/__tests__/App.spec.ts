@@ -100,6 +100,60 @@ describe('App', () => {
     expect(wrapper.get('[data-side="left"][data-cell="del"]').text()).toContain('db.internal')
   })
 
+  it('with no repositories, invites the user to add one and opens it', async () => {
+    const source = new MockGitDataSource()
+    const all = await source.listRepositories()
+    let added = false
+    source.listRepositories = async () => (added ? all.filter((repo) => repo.id === 'pricing') : [])
+    source.addRepository = async () => {
+      added = true
+      return { repository: all.find((repo) => repo.id === 'pricing')!, message: 'Added pricing-api' }
+    }
+    const wrapper = await mountApp(source)
+    expect(wrapper.get('h1').text()).toBe('Add a repository to get started')
+
+    await buttonByText(wrapper, 'Add repository…').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="header-repo"]').text()).toBe('pricing-api')
+    expect(statusText(wrapper)).toBe('Added pricing-api')
+  })
+
+  it('reports a failed add on the first-run screen', async () => {
+    const source = new MockGitDataSource()
+    source.listRepositories = async () => []
+    source.addRepository = async () => {
+      throw new Error('D:/downloads isn’t inside a git repository')
+    }
+    const wrapper = await mountApp(source)
+    await buttonByText(wrapper, 'Add repository…').trigger('click')
+    await flushPromises()
+    expect(statusText(wrapper)).toBe('Failed: D:/downloads isn’t inside a git repository')
+  })
+
+  it('removes a repository from the sidebar', async () => {
+    const wrapper = await mountApp()
+    await wrapper.get('button[aria-label="Remove storefront-web from the list"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('nav').text()).not.toContain('storefront-web')
+    expect(statusText(wrapper)).toBe('Removed storefront-web from the list')
+  })
+
+  it('a read-only app offers no Fetch, Pull, Push or Checkout', async () => {
+    const wrapper = mount(App, { props: { source: new MockGitDataSource(), comparePaths: SAMPLE_COMPARE_PATHS, writable: false } })
+    await flushPromises()
+    await buttonByText(wrapper, 'main').trigger('click')
+    const labels = wrapper.findAll('button').map((button) => button.text())
+    for (const label of ['Fetch', 'Pull', 'Push', 'Checkout']) expect(labels).not.toContain(label)
+  })
+
+  it('says a repository has no commits yet, in the history and in the diff panel', async () => {
+    const source = new MockGitDataSource()
+    source.getHistory = async () => ({ commits: [], hasMore: false })
+    const wrapper = await mountApp(source)
+    expect(wrapper.get('section[aria-label="Commit graph"]').text()).toContain('No commits yet')
+    expect(wrapper.get('section[aria-label="Diff viewer"]').text()).toContain('No commits yet')
+  })
+
   it('applies a custom accent colour', async () => {
     const wrapper = mount(App, {
       props: { source: new MockGitDataSource(), comparePaths: SAMPLE_COMPARE_PATHS, accent: '#F0A35E' },

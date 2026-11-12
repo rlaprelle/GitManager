@@ -96,6 +96,34 @@ describe('DiffPanel in commit mode', () => {
   })
 })
 
+describe('DiffPanel without a commit', () => {
+  function mountEmpty(emptyMessage: string) {
+    return mount(DiffPanel, {
+      props: {
+        commit: undefined,
+        emptyMessage,
+        files: [],
+        filesLoading: false,
+        diffLoading: false,
+        selectedFileIndex: 0,
+        compareOpen: false,
+        diffMode: 'git' as DiffMode,
+        hunks: [],
+        leftPath: '',
+        rightPath: '',
+      },
+    })
+  }
+
+  it('keeps its place and shows why there is no diff, still offering compare', () => {
+    const wrapper = mountEmpty('No commits yet')
+    expect(wrapper.get('section[aria-label="Diff viewer"]').text()).toContain('No commits yet')
+    expect(wrapper.text()).not.toContain('Changes in')
+    expect(wrapper.text()).not.toContain('files changed')
+    expect(buttonByText(wrapper, 'Compare two files')).toBeTruthy()
+  })
+})
+
 describe('DiffPanel in compare mode', () => {
   it('replaces the file list with left and right path inputs', () => {
     const wrapper = mountPanel({ compareOpen: true })

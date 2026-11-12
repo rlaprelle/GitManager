@@ -28,7 +28,7 @@ test('opens on the first repository, its newest commit and first file', async ({
 })
 
 test('switching repository reloads branches and history', async ({ page }) => {
-  await sidebar(page).getByRole('button', { name: /storefront-web/ }).click()
+  await sidebar(page).getByRole('button', { name: /^storefront-web/ }).click()
 
   await expect(header(page).getByTestId('header-repo')).toHaveText('storefront-web')
   await expect(page.getByText('3 commits · all branches')).toBeVisible()
@@ -97,6 +97,13 @@ test('fetch, pull and push report their result in the status bar', async ({ page
 test('add repository explains what to choose', async ({ page }) => {
   await page.getByRole('button', { name: 'Add repository' }).click()
   await expect(status(page)).toHaveText('Add repository: choose a folder that contains a .git directory')
+})
+
+test('removing a repository takes it off the sidebar, keeping the open one', async ({ page }) => {
+  await sidebar(page).getByRole('button', { name: 'Remove storefront-web from the list' }).click()
+  await expect(sidebar(page).getByRole('button', { name: /^storefront-web/ })).toHaveCount(0)
+  await expect(status(page)).toHaveText('Removed storefront-web from the list')
+  await expect(header(page).getByTestId('header-repo')).toHaveText('inventory-service')
 })
 
 test('at phone width the panes stack without horizontal page scroll', async ({ page }) => {

@@ -13,7 +13,8 @@ export interface SampleCommit extends Omit<Commit, 'graph'> {
   files: SampleFileChange[]
 }
 
-export interface SampleRepository extends Repository {
+/** Sample repositories are always readable, so they have no `problem`; the mock adds it. */
+export interface SampleRepository extends Omit<Repository, 'problem'> {
   localBranches: Branches['local']
   remoteBranches: Branches['remote']
   /** Newest first. */

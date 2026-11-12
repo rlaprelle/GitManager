@@ -3,7 +3,15 @@ import { sampleCompareDiff } from '@/data/sampleDiffs'
 import type { SampleCommit, SampleRepository } from '@/data/sampleTypes'
 import { invertHunks } from '@/lib/diff'
 import { layoutLanes, primaryBranchTip } from '@/lib/laneLayout'
-import type { Branches, FileChange, HistoryPage, Hunk, OperationResult, Repository } from '@/types/git'
+import type {
+  AddRepositoryResult,
+  Branches,
+  FileChange,
+  HistoryPage,
+  Hunk,
+  OperationResult,
+  Repository,
+} from '@/types/git'
 import type { GitDataSource } from './GitDataSource'
 
 /**
@@ -12,17 +20,32 @@ import type { GitDataSource } from './GitDataSource'
  * Every result is a copy, so callers can't change the sample data.
  */
 export class MockGitDataSource implements GitDataSource {
+  /** Repositories taken off the list this session; the sample data itself is never changed. */
+  private readonly removed = new Set<string>()
+
   constructor(private readonly repositories: SampleRepository[] = sampleRepositories) {}
 
   async listRepositories(): Promise<Repository[]> {
-    return this.repositories.map(({ id, name, path, currentBranch, changedFileCount, lastFetch }) => ({
+    return this.listed().map(({ id, name, path, currentBranch, changedFileCount, lastFetch }) => ({
       id,
       name,
       path,
       currentBranch,
       changedFileCount,
       lastFetch,
+      problem: null,
     }))
+  }
+
+  /** A browser can't open a folder picker, so this explains what the desktop app would ask for. */
+  async addRepository(): Promise<AddRepositoryResult> {
+    return { repository: null, message: 'Add repository: choose a folder that contains a .git directory' }
+  }
+
+  async removeRepository(repoId: string): Promise<OperationResult> {
+    const repo = this.repository(repoId)
+    this.removed.add(repoId)
+    return { message: `Removed ${repo.name} from the list` }
   }
 
   async getBranches(repoId: string): Promise<Branches> {
@@ -67,8 +90,12 @@ export class MockGitDataSource implements GitDataSource {
     return { message: `Pushed ${branch} to origin/${branch}` }
   }
 
+  private listed(): SampleRepository[] {
+    return this.repositories.filter((repo) => !this.removed.has(repo.id))
+  }
+
   private repository(repoId: string): SampleRepository {
-    const repo = this.repositories.find((candidate) => candidate.id === repoId)
+    const repo = this.listed().find((candidate) => candidate.id === repoId)
     if (!repo) throw new Error(`Unknown repository: ${repoId}`)
     return repo
   }

@@ -102,6 +102,25 @@ export function describeGitDataSourceContract(name: string, createSubject: () =>
       })
     })
 
+    it('describes a problem only for a repository it can’t read', async () => {
+      const { source } = await createSubject()
+      for (const repo of await source.listRepositories()) {
+        if (repo.problem === null) continue
+        expect(repo.problem, repo.name).not.toBe('')
+      }
+      const first = (await source.listRepositories())[0]!
+      expect(first.problem).toBeNull()
+    })
+
+    it('removes a repository from the list, and rejects one it doesn’t know', async () => {
+      const { source } = await createSubject()
+      const [first, ...rest] = await source.listRepositories()
+      const result = await source.removeRepository(first!.id)
+      expect(result.message).toBe(`Removed ${first!.name} from the list`)
+      expect((await source.listRepositories()).map((repo) => repo.id)).toEqual(rest.map((repo) => repo.id))
+      await expect(source.removeRepository('no-such-repository')).rejects.toThrow()
+    })
+
     it('rejects a repository, commit or file it doesn’t know', async () => {
       const { source } = await createSubject()
       // The first repository must have commits.

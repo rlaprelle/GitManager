@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { basename, dirname, normalize } from 'node:path'
-import type { RepositoryList, StoredRepository } from './git/GitCliDataSource'
+import type { RepositoryCatalog, StoredRepository } from './git/GitCliDataSource'
 
 interface StoreFile {
   version: 1
@@ -10,10 +10,10 @@ interface StoreFile {
 
 /**
  * The repositories the user added, kept in `repositories.json` in the app's data folder,
- * in the order they were added. Ids are random and stable, so the UI's selection survives
- * renames of nothing but the folder path.
+ * in the order they were added. Ids are random, and stay the same for as long as the entry
+ * exists.
  */
-export class RepositoryStore implements RepositoryList {
+export class RepositoryStore implements RepositoryCatalog {
   constructor(private readonly file: string) {}
 
   async list(): Promise<StoredRepository[]> {

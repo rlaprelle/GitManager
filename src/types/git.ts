@@ -68,6 +68,8 @@ export interface Repository {
   changedFileCount: number
   /** When the repository was last fetched, ISO 8601, or null if never. */
   lastFetch: string | null
+  /** Why the repository can't be read ('Folder not found'), or null when it can. */
+  problem: string | null
 }
 
 export interface Branches {
@@ -83,5 +85,12 @@ export interface HistoryPage {
 }
 
 export interface OperationResult {
+  message: string
+}
+
+/** What adding a repository did: the repository (null when nothing was added) and what to tell the user. */
+export interface AddRepositoryResult {
+  repository: Repository | null
+  /** For the status bar; '' when there's nothing to say (the user cancelled). */
   message: string
 }

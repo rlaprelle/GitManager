@@ -1,12 +1,17 @@
 <script setup lang="ts">
 import GmIcon from './GmIcon.vue'
 
-defineProps<{
-  repoName: string
-  currentBranch: string
+withDefaults(
+  defineProps<{
+    repoName: string
+    currentBranch: string
   /** e.g. '↑2 vs origin'; null hides it. */
-  syncLabel: string | null
-}>()
+    syncLabel: string | null
+    /** False hides Fetch, Pull and Push (the desktop app is read-only for now). */
+    writable?: boolean
+  }>(),
+  { writable: true },
+)
 
 defineEmits<{ fetch: []; pull: []; push: [] }>()
 
@@ -37,7 +42,7 @@ const secondaryButton =
       <span v-if="syncLabel" class="text-[12px] text-gm-warn">{{ syncLabel }}</span>
     </div>
 
-    <div class="ml-auto flex flex-wrap gap-2">
+    <div v-if="writable" class="ml-auto flex flex-wrap gap-2">
       <button type="button" :class="secondaryButton" @click="$emit('fetch')">
         <GmIcon name="fetch" />
         Fetch

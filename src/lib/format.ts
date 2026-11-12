@@ -15,6 +15,11 @@ export function syncLabel(branch: Pick<LocalBranch, 'ahead' | 'behind'>): string
   return parts.join(' ')
 }
 
+/** The seven-character form git shows ('9f3a1c2'); data sources send full hashes. */
+export function shortHash(hash: string): string {
+  return hash.slice(0, 7)
+}
+
 /** The checked-out branch, or 'detached HEAD' when a commit is checked out directly. */
 export function headLabel(branch: string | null): string {
   return branch ?? 'detached HEAD'

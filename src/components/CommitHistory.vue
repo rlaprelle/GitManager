@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Commit } from '@/types/git'
 import { computed } from 'vue'
-import { commitDateLabel, pluralize } from '@/lib/format'
+import { commitDateLabel, pluralize, shortHash } from '@/lib/format'
 import { graphWidth, laneCount } from '@/lib/graph'
 import CommitGraphCell from './CommitGraphCell.vue'
 import RefBadge from './RefBadge.vue'
@@ -10,7 +10,8 @@ const props = defineProps<{
   commits: Commit[]
   /** The repository has older commits than `commits` holds. */
   hasMore: boolean
-  loading: boolean
+  /** Shown instead of rows and the commit count: 'Loading history…', 'No commits yet', ... */
+  message: string | null
   selectedIndex: number
   currentBranch: string
   /** The clock dates are labelled against ('Today', 'Yesterday'). */
@@ -34,7 +35,7 @@ const columnTemplate = computed(() => ({
   <section aria-label="Commit graph" class="flex min-h-[220px] flex-auto flex-col">
     <div class="flex flex-none items-center gap-3 border-b border-gm-line px-4 py-2.5">
       <h2 class="m-0 text-[13px] font-semibold">History</h2>
-      <span v-if="!loading" class="text-[12px] text-gm-muted">
+      <span v-if="!message" class="text-[12px] text-gm-muted">
         {{ hasMore ? 'Showing the latest ' : '' }}{{ pluralize(commits.length, 'commit', 'commits') }} · all branches
       </span>
     </div>
@@ -49,7 +50,7 @@ const columnTemplate = computed(() => ({
           <span>Graph</span><span>Description</span><span>Author</span><span>Date</span><span>Commit</span>
         </div>
 
-        <p v-if="loading" class="m-0 px-4 py-3 text-[12px] text-gm-muted">Loading history…</p>
+        <p v-if="message" class="m-0 px-4 py-3 text-[12px] text-gm-muted">{{ message }}</p>
 
         <button
           v-for="(commit, index) in commits"
@@ -68,7 +69,7 @@ const columnTemplate = computed(() => ({
           </span>
           <span class="truncate text-[12px] text-gm-muted">{{ commit.author }}</span>
           <span class="text-[12px] whitespace-nowrap text-gm-muted">{{ commitDateLabel(commit.date, now) }}</span>
-          <span class="font-mono text-[12px] text-gm-subtle">{{ commit.hash }}</span>
+          <span class="font-mono text-[12px] text-gm-subtle">{{ shortHash(commit.hash) }}</span>
         </button>
       </div>
     </div>

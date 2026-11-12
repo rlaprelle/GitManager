@@ -6,16 +6,22 @@ import { useNow } from '@/composables/useNow'
 import AppHeader from '@/components/AppHeader.vue'
 import BranchList from '@/components/BranchList.vue'
 import CommitHistory from '@/components/CommitHistory.vue'
+import NoRepositories from '@/components/NoRepositories.vue'
 import RepositoryList from '@/components/RepositoryList.vue'
 import StatusBar from '@/components/StatusBar.vue'
 import DiffPanel from '@/components/diff/DiffPanel.vue'
 
-const props = defineProps<{
-  source: GitDataSource
-  comparePaths: { left: string; right: string }
-  /** Overrides the accent colour (default #5B9DFF). */
-  accent?: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    source: GitDataSource
+    comparePaths: { left: string; right: string }
+    /** Overrides the accent colour (default #5B9DFF). */
+    accent?: string
+    /** False hides Fetch, Pull, Push and Checkout: the desktop app reads real repositories but can't change them yet. */
+    writable?: boolean
+  }>(),
+  { writable: true },
+)
 
 const {
   repositories,
@@ -39,6 +45,7 @@ const {
   currentBranch,
   headLabel,
   headerSyncLabel,
+  historyMessage,
   diffMode,
   activeHunks,
   load,
@@ -57,11 +64,15 @@ const {
   pull,
   push,
   addRepository,
+  removeRepository,
   // The data source is a service, not state: unwrap it in case a parent passed it in reactive props.
 } = useGitManager(toRaw(props.source), { comparePaths: props.comparePaths })
 
 /** Date labels ('Today 11:42', '12 min ago') are formatted against this, so they stay right while the app is open. */
 const now = useNow()
+
+/** Once the history has loaded, the diff panel says why there's no commit to show ('No commits yet'). */
+const diffEmptyMessage = computed(() => (historyLoading.value ? '' : (historyMessage.value ?? '')))
 
 const accentStyle = computed(() => (props.accent ? { '--color-gm-accent': props.accent } : {}))
 
@@ -78,6 +89,7 @@ onMounted(load)
         :repo-name="repository.name"
         :current-branch="headLabel"
         :sync-label="headerSyncLabel"
+        :writable="writable"
         @fetch="fetchRemote"
         @pull="pull"
         @push="push"
@@ -93,12 +105,14 @@ onMounted(load)
             :selected-id="repository.id"
             @select="selectRepository"
             @add="addRepository"
+            @remove="removeRepository"
           />
           <BranchList
             :local-branches="branches.local"
             :remote-branches="branches.remote"
             :current-branch="currentBranch"
             :selected-branch="selectedBranch"
+            :writable="writable"
             @select="selectBranch"
             @checkout="checkoutBranch"
           />
@@ -108,15 +122,15 @@ onMounted(load)
           <CommitHistory
             :commits="commits"
             :has-more="historyHasMore"
-            :loading="historyLoading"
+            :message="historyMessage"
             :selected-index="selectedCommitIndex"
             :current-branch="currentBranch"
             :now="now"
             @select="selectCommit"
           />
           <DiffPanel
-            v-if="commit"
             :commit="commit"
+            :empty-message="diffEmptyMessage"
             :files="files"
             :files-loading="filesLoading"
             :diff-loading="diffLoading"
@@ -144,6 +158,11 @@ onMounted(load)
         :last-fetch="repository.lastFetch"
         :now="now"
       />
+    </template>
+
+    <template v-else-if="!loading && repositories.length === 0">
+      <NoRepositories @add="addRepository" />
+      <StatusBar :status="status" :now="now" />
     </template>
 
     <div v-else class="flex flex-auto items-center justify-center text-gm-muted" role="status">

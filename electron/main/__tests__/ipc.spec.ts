@@ -49,5 +49,15 @@ describe('registerIpcHandlers', () => {
     expect(await invoke(IpcChannel.GetHistory, 'inventory', 'all')).toEqual({ ok: false, message: 'Expected a count from 1 to 10000' })
     expect(await invoke(IpcChannel.GetHistory, 'inventory', 1e9)).toEqual({ ok: false, message: 'Expected a count from 1 to 10000' })
     expect(await invoke(IpcChannel.GetFileDiff, 'inventory', '9f3a1c2')).toEqual({ ok: false, message: 'Expected text, got undefined' })
+    expect(await invoke(IpcChannel.RemoveRepository, 7)).toEqual({ ok: false, message: 'Expected text, got number' })
+  })
+
+  it('adds and removes repositories', async () => {
+    const invoke = registeredHandlers()
+    expect(await invoke(IpcChannel.AddRepository)).toEqual({
+      ok: true,
+      value: { repository: null, message: 'Add repository: choose a folder that contains a .git directory' },
+    })
+    expect(await invoke(IpcChannel.RemoveRepository, 'pricing')).toEqual({ ok: true, value: { message: 'Removed pricing-api from the list' } })
   })
 })

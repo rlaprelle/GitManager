@@ -21,6 +21,8 @@ const bridge: GitManagerBridge = {
     getCommitFiles: (repoId, hash) => call(IpcChannel.GetCommitFiles, repoId, hash),
     getFileDiff: (repoId, hash, path) => call(IpcChannel.GetFileDiff, repoId, hash, path),
     compareFiles: (repoId, leftPath, rightPath) => call(IpcChannel.CompareFiles, repoId, leftPath, rightPath),
+    addRepository: () => call(IpcChannel.AddRepository),
+    removeRepository: (repoId) => call(IpcChannel.RemoveRepository, repoId),
   },
 }
 

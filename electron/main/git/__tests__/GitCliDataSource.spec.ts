@@ -1,7 +1,9 @@
 // @vitest-environment node
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { describeGitDataSourceContract } from '../../../../src/services/__tests__/gitDataSourceContract'
-import { GitCliDataSource, type StoredRepository } from '../GitCliDataSource'
+import { mkdir } from 'node:fs/promises'
+import { join } from 'node:path'
+import { GitCliDataSource, type RepositoryCatalog, type StoredRepository } from '../GitCliDataSource'
 import { type Fixtures, createFixtures, fixtureGit, removeFixtures } from './fixtures'
 
 // Every call starts a git process; on Windows that adds up across the contract's loops.
@@ -17,8 +19,31 @@ afterAll(async () => {
   if (fixtures) await removeFixtures(fixtures)
 })
 
+/** The repository list in memory, behaving like RepositoryStore (which has its own tests). */
+function memoryCatalog(initial: StoredRepository[]): RepositoryCatalog {
+  let repositories = [...initial]
+  return {
+    list: async () => repositories,
+    add: async (path) => {
+      const existing = repositories.find((repo) => repo.path.toLowerCase() === path.toLowerCase())
+      if (existing) return existing
+      const added = { id: `added-${repositories.length}`, path }
+      repositories = [...repositories, added]
+      return added
+    },
+    remove: async (id) => {
+      repositories = repositories.filter((repo) => repo.id !== id)
+    },
+  }
+}
+
+/** A source over these repositories; `chosenFolder` is what the folder picker answers (null = cancelled). */
 function sourceFor(...repositories: StoredRepository[]): GitCliDataSource {
-  return new GitCliDataSource({ list: async () => repositories })
+  return choosing(null, ...repositories)
+}
+
+function choosing(chosenFolder: string | null, ...repositories: StoredRepository[]): GitCliDataSource {
+  return new GitCliDataSource(memoryCatalog(repositories), async () => chosenFolder)
 }
 
 const allFixtures = (): StoredRepository[] => [
@@ -165,7 +190,48 @@ describe('GitCliDataSource reading the fixture repositories', () => {
     await expect(source.getBranches('gone')).rejects.toThrow('Folder not found')
   })
 
+  it('still lists a repository whose folder is gone, with the problem, instead of failing the whole list', async () => {
+    const source = sourceFor({ id: 'sample', path: fixtures.sample }, { id: 'gone', path: join(fixtures.root, 'gone') })
+    const [readable, gone] = await source.listRepositories()
+    expect(readable!.problem).toBeNull()
+    expect(gone).toEqual({
+      id: 'gone',
+      name: 'gone',
+      path: join(fixtures.root, 'gone'),
+      currentBranch: null,
+      changedFileCount: 0,
+      lastFetch: null,
+      problem: 'Folder not found',
+    })
+  })
+
   it('reports that write operations are not available yet', async () => {
     await expect(sample().fetch()).rejects.toThrow("Fetch isn't available in this version yet")
+  })
+})
+
+describe('GitCliDataSource adding repositories', () => {
+  it('adds the repository a chosen folder is in, by its top folder', async () => {
+    const result = await choosing(join(fixtures.sample, 'config')).addRepository()
+    expect(result.message).toBe('Added sample')
+    expect(result.repository).toMatchObject({ name: 'sample', path: fixtures.sample, currentBranch: 'main', problem: null })
+  })
+
+  it('returns the listed repository when its folder is added again', async () => {
+    const source = choosing(fixtures.sample, { id: 'sample', path: fixtures.sample })
+    const result = await source.addRepository()
+    expect(result.message).toBe('sample is already in the list')
+    expect(result.repository?.id).toBe('sample')
+    expect(await source.listRepositories()).toHaveLength(1)
+  })
+
+  it('adds nothing, and says nothing, when the user cancels the folder picker', async () => {
+    expect(await choosing(null).addRepository()).toEqual({ repository: null, message: '' })
+  })
+
+  it('refuses a folder that isn’t inside a git repository', async () => {
+    const plainFolder = join(fixtures.root, 'not-a-repository')
+    await mkdir(plainFolder, { recursive: true })
+    await expect(choosing(plainFolder).addRepository()).rejects.toThrow(`${plainFolder} isn’t inside a git repository`)
   })
 })
