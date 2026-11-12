@@ -293,6 +293,54 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     else closeRepository()
   }
 
+  // ---- refreshing ----
+
+  let refreshing = false
+
+  /**
+   * Re-reads what may have changed outside the app (commits, branches, the checked-out branch,
+   * uncommitted files) without disturbing the view: the history stays on screen while it
+   * reloads, and the selected commit stays selected if it still exists. `announce` reports it
+   * in the status bar (an explicit refresh); otherwise it's silent (the window regaining focus).
+   */
+  async function refresh(options: { announce?: boolean } = {}): Promise<void> {
+    if (refreshing || loading.value) return
+    refreshing = true
+    try {
+      repositories.value = await source.listRepositories()
+      await refreshOpenRepository()
+      if (options.announce && repository.value) status.value = `Refreshed ${repository.value.name}`
+    } catch (error) {
+      status.value = `Couldn’t refresh: ${messageOf(error)}`
+    } finally {
+      refreshing = false
+    }
+  }
+
+  async function refreshOpenRepository(): Promise<void> {
+    const open = repositories.value.find((repo) => repo.id === selectedRepoId.value)
+    if (!open) {
+      const first = repositories.value[0]
+      if (first) await openRepository(first)
+      else closeRepository()
+      return
+    }
+    const selectedHash = commit.value?.hash
+    const [, historyLoaded] = await Promise.all([
+      branchesLoad.refresh(() => source.getBranches(open.id), reportFailure('branches')),
+      historyLoad.refresh(() => source.getHistory(open.id, HISTORY_LIMIT), reportFailure('history')),
+    ])
+    if (!historyLoaded) return
+    const stillThere = commits.value.findIndex((candidate) => candidate.hash === selectedHash)
+    if (stillThere >= 0) {
+      // A commit never changes, so its files and diff on screen are still right.
+      selectedCommitIndex.value = stillThere
+      return
+    }
+    resetCommitView()
+    await openCommit()
+  }
+
   function closeRepository(): void {
     selectedRepoId.value = null
     selectedBranch.value = null
@@ -346,6 +394,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     push,
     addRepository,
     removeRepository,
+    refresh,
   }
 }
 

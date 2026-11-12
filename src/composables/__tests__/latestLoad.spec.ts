@@ -93,6 +93,36 @@ describe('latestLoad', () => {
     expect(area.failed.value).toBe(false)
   })
 
+  it('refresh keeps showing the current value, without loading, until the new one arrives', async () => {
+    const area = latestLoad<string>('')
+    await area.run(async () => 'old', () => {})
+    const pending = deferred<string>()
+    const refreshed = area.refresh(() => pending.promise, () => {})
+
+    expect(area.value.value).toBe('old')
+    expect(area.loading.value).toBe(false)
+    pending.resolve('new')
+    expect(await refreshed).toBe(true)
+    expect(area.value.value).toBe('new')
+  })
+
+  it('refresh gives way to a newer load, and reports its own failure like a load', async () => {
+    const area = latestLoad<string>('')
+    await area.run(async () => 'old', () => {})
+    const pending = deferred<string>()
+    const refreshed = area.refresh(() => pending.promise, () => {})
+    await area.run(async () => 'selected', () => {})
+    pending.resolve('stale')
+    expect(await refreshed).toBe(false)
+    expect(area.value.value).toBe('selected')
+
+    const errors: unknown[] = []
+    await area.refresh(() => Promise.reject(new Error('gone')), (error) => errors.push(error))
+    expect(area.value.value).toBe('')
+    expect(area.failed.value).toBe(true)
+    expect(errors).toEqual([new Error('gone')])
+  })
+
   it('clear abandons a pending load and empties the value', async () => {
     const area = latestLoad<string>('')
     const pending = deferred<string>()

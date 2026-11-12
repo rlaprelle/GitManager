@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, toRaw } from 'vue'
+import { computed, onMounted, onUnmounted, toRaw } from 'vue'
 import type { GitDataSource } from '@/services/GitDataSource'
 import { useGitManager } from '@/composables/useGitManager'
 import { useNow } from '@/composables/useNow'
@@ -65,6 +65,7 @@ const {
   push,
   addRepository,
   removeRepository,
+  refresh,
   // The data source is a service, not state: unwrap it in case a parent passed it in reactive props.
 } = useGitManager(toRaw(props.source), { comparePaths: props.comparePaths })
 
@@ -76,7 +77,28 @@ const diffEmptyMessage = computed(() => (historyLoading.value ? '' : (historyMes
 
 const accentStyle = computed(() => (props.accent ? { '--color-gm-accent': props.accent } : {}))
 
-onMounted(load)
+// Changes made outside the app (a commit, a branch switch, an edited file) show up when the
+// window regains focus, quietly, or on F5, which also says so in the status bar.
+function refreshOnFocus(): void {
+  void refresh()
+}
+
+function refreshOnF5(event: KeyboardEvent): void {
+  if (event.key !== 'F5') return
+  event.preventDefault()
+  void refresh({ announce: true })
+}
+
+onMounted(() => {
+  void load()
+  window.addEventListener('focus', refreshOnFocus)
+  window.addEventListener('keydown', refreshOnF5)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('focus', refreshOnFocus)
+  window.removeEventListener('keydown', refreshOnF5)
+})
 </script>
 
 <template>

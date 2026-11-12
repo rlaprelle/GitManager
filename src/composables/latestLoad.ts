@@ -13,6 +13,11 @@ export interface LatestLoad<T> {
   failed: Ref<boolean>
   /** Resolves true if this load's result was applied. `onError` runs only for the latest load. */
   run(load: () => Promise<T>, onError: (error: unknown) => void): Promise<boolean>
+  /**
+   * Like `run`, but the current value stays on screen (and `loading` stays false) until the new
+   * one arrives: for reloading what the user is already looking at. A failure empties it as `run` does.
+   */
+  refresh(load: () => Promise<T>, onError: (error: unknown) => void): Promise<boolean>
   clear(): void
 }
 
@@ -23,9 +28,16 @@ export function latestLoad<T>(empty: T): LatestLoad<T> {
   let latest = 0
 
   async function run(load: () => Promise<T>, onError: (error: unknown) => void): Promise<boolean> {
-    const request = ++latest
     value.value = empty
     loading.value = true
+    return settle(++latest, load, onError)
+  }
+
+  async function refresh(load: () => Promise<T>, onError: (error: unknown) => void): Promise<boolean> {
+    return settle(++latest, load, onError)
+  }
+
+  async function settle(request: number, load: () => Promise<T>, onError: (error: unknown) => void): Promise<boolean> {
     failed.value = false
     try {
       const result = await load()
@@ -34,6 +46,7 @@ export function latestLoad<T>(empty: T): LatestLoad<T> {
       return true
     } catch (error) {
       if (request === latest) {
+        value.value = empty
         failed.value = true
         onError(error)
       }
@@ -50,5 +63,5 @@ export function latestLoad<T>(empty: T): LatestLoad<T> {
     failed.value = false
   }
 
-  return { value, loading, failed, run, clear }
+  return { value, loading, failed, run, refresh, clear }
 }

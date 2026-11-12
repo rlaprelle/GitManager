@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { SAMPLE_COMPARE_PATHS } from '@/data/sampleRepositories'
+import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositories'
 import { expiryJobDiff, reservationConfigDiff, sampleCompareDiff, skuLookupDiff } from '@/data/sampleDiffs'
 import { invertHunks } from '@/lib/diff'
 import type { GitDataSource } from '@/services/GitDataSource'
@@ -318,6 +318,107 @@ describe('useGitManager', () => {
       const source = new MockGitDataSource()
       source.getHistory = async () => ({ commits: [], hasMore: false })
       expect((await loadedManager(source)).historyMessage.value).toBe('No commits yet')
+    })
+  })
+
+  describe('refreshing after changes made outside the app', () => {
+    /** A mock over its own copy of the sample data, which the test can change "outside the app". */
+    function changeableSource() {
+      const repositories = structuredClone(sampleRepositories)
+      return { source: new MockGitDataSource(repositories), inventory: repositories[0]! }
+    }
+
+    const newCommit = (hash: string, parent: string) => ({
+      hash,
+      parents: [parent],
+      message: 'Made outside the app',
+      author: 'You',
+      date: new Date().toISOString(),
+      refs: [],
+      files: [{ path: 'NOTES.md', status: 'A' as const, hunks: [{ oldStart: 0, newStart: 1, context: '', lines: ['+hi'] }] }],
+    })
+
+    it('shows a new commit and keeps the selected one selected', async () => {
+      const { source, inventory } = changeableSource()
+      const gm = await loadedManager(source)
+      await gm.selectCommit(3)
+      inventory.commits.unshift(newCommit('aaaa111', '9f3a1c2'))
+
+      await gm.refresh()
+      expect(gm.commits.value[0]!.hash).toBe('aaaa111')
+      expect(gm.commit.value?.hash).toBe('2d6e914')
+      expect(gm.activeHunks.value).toEqual(skuLookupDiff)
+    })
+
+    it('opens the newest commit when the selected one no longer exists (amended or rebased)', async () => {
+      const { source, inventory } = changeableSource()
+      const gm = await loadedManager(source)
+      inventory.commits[0] = { ...newCommit('bbbb222', '4e7b0d9'), message: 'Add reservation expiry job (amended)' }
+
+      await gm.refresh()
+      expect(gm.commit.value?.hash).toBe('bbbb222')
+      expect(gm.files.value.map((file) => file.path)).toEqual(['NOTES.md'])
+    })
+
+    it('updates the repository list: changed files and the checked-out branch', async () => {
+      const { source, inventory } = changeableSource()
+      const gm = await loadedManager(source)
+      inventory.changedFileCount = 7
+      inventory.currentBranch = 'main'
+
+      await gm.refresh()
+      expect(gm.repository.value?.changedFileCount).toBe(7)
+      expect(gm.headLabel.value).toBe('main')
+    })
+
+    it('keeps the history on screen while it reloads, instead of showing "Loading history…"', async () => {
+      const held = heldSource()
+      const gm = await loadedManager(held.source)
+      held.hold('getHistory')
+      const refreshed = gm.refresh()
+      await settle()
+      expect(gm.historyMessage.value).toBeNull()
+      expect(gm.commits.value).toHaveLength(10)
+      await held.callsTo('getHistory')[0]!.release()
+      await refreshed
+    })
+
+    it('opens the first repository when the open one has gone from the list', async () => {
+      const source = new MockGitDataSource()
+      const gm = await loadedManager(source)
+      await source.removeRepository('inventory')
+      await gm.refresh()
+      expect(gm.repository.value?.name).toBe('pricing-api')
+    })
+
+    it('says so when asked (F5), and stays quiet otherwise', async () => {
+      await gm.refresh()
+      expect(gm.status.value).toBe('Ready')
+      await gm.refresh({ announce: true })
+      expect(gm.status.value).toBe('Refreshed inventory-service')
+    })
+
+    it('reports a refresh that fails', async () => {
+      const source = new MockGitDataSource()
+      const gm = await loadedManager(source)
+      source.listRepositories = async () => {
+        throw new Error('disk asleep')
+      }
+      await gm.refresh()
+      expect(gm.status.value).toBe('Couldn’t refresh: disk asleep')
+      expect(gm.repository.value?.name).toBe('inventory-service')
+    })
+
+    it('runs one refresh at a time', async () => {
+      const held = heldSource()
+      const gm = await loadedManager(held.source)
+      held.hold('listRepositories')
+      const first = gm.refresh()
+      const second = gm.refresh()
+      await settle()
+      expect(held.callsTo('listRepositories')).toHaveLength(1)
+      await held.callsTo('listRepositories')[0]!.release()
+      await Promise.all([first, second])
     })
   })
 

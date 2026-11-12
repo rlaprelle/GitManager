@@ -74,6 +74,7 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - Branch → commit lookup is by `tipHash`, never index.
 - Composable invariants (tested; change deliberately): selection change resets file index + closes compare; compare forces `diffMode = 'simple'` and ignores `setDiffMode`; every async area (branches, history, files, diff, compare) goes through `latestLoad`, so stale responses are dropped; a failed load → `status = "Couldn't load <area>: …"` and only that area empties; local state (`currentBranch`, `lastFetch`) changes only after the source resolves; operation failures → `status = "Failed: …"`.
 - Never load a whole repository: add a narrow `GitDataSource` call per new view area, add its rules to the contract suite, and load it through `latestLoad`. History is capped at `HISTORY_LIMIT`.
+- Refresh (window focus, F5) uses `latestLoad.refresh`, which keeps the value on screen; never `run` for reloading what the user is looking at, or the pane flashes "Loading…". Keep selection by hash, not index.
 - Composable tests that need slow or out-of-order responses use `heldSource()` (`src/composables/__tests__/heldSource.ts`).
 - Data sources send full hashes and ISO timestamps; the UI formats (`shortHash`, `commitDateLabel`, `lastFetchLabel` against `useNow`). `currentBranch` is null for a detached HEAD; `problem` marks an unreadable repository instead of failing the list.
 - No router, no Pinia — single screen. Revisit only if a second screen needs shared state.
@@ -106,9 +107,10 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - **`build/icon.ico` is generated and committed**: edit the SVGs, run `npm run icon`. Entries are PNG; .NET's old `System.Drawing.Icon` can't read them below 256 px, but Windows (WIC, Explorer) and electron-builder can.
 - `scripts/*.ts` run under Node's type stripping: explicit `.ts` import extensions (`allowImportingTsExtensions` in `tsconfig.node.json`) and erasable syntax only (no enums, no parameter properties).
 - **Unpackaged runs use a separate data folder** (`%APPDATA%\git-manager-dev`, or `GIT_MANAGER_USER_DATA`), never the installed app's `repositories.json`. e2e-electron gives each test its own temp folder; stub the folder picker with `app.evaluate(({ dialog }) => { dialog.showOpenDialog = ... })`.
-- **Git test fixtures** (`electron/main/git/__tests__/fixtures.ts`) build throwaway repos with an empty global config (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`) so the developer's git settings can't change them. Each `git` call is a process: give real-git specs long timeouts.
+- **Git test fixtures** (`electron/main/git/__tests__/fixtures.ts`; `createScratchRepository`, `commitInFixture`, `switchToNewBranchInFixture` for changes "outside the app") build throwaway repos with an empty global config (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`) so the developer's git settings can't change them. Each `git` call is a process: give real-git specs long timeouts.
 - **On Windows a missing working folder fails like missing git** (`spawn git ENOENT`): check the folder exists before running git in it.
 - **Git's diff lists a change's removals before its additions**; `invertHunks` keeps that order, so a swapped compare matches real git.
+- In `page.evaluate` callbacks in e2e-electron, the page variable is named `window`; use `globalThis` for the browser's window.
 - **Desktop renderer entry is `desktop.html`** (`out/renderer/desktop.html`; dev URL + `/desktop.html`), not `index.html`.
 - `npm run dev` and `npm run dev:app` both use port 5173; run one at a time.
 - JetBrains Mono renders ligatures (`==`, `||`) in diffs — expected, matches the design.
