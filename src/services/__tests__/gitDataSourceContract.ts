@@ -44,7 +44,11 @@ export function describeGitDataSourceContract(name: string, createSubject: () =>
         const { local, remote } = await source.getBranches(repo.id)
         const names = [...local, ...remote].map((branch) => branch.name)
         expect(new Set(names).size, repo.name).toBe(names.length)
-        expect(local.map((branch) => branch.name), repo.name).toContain(repo.currentBranch)
+        // A detached HEAD has no current branch, and a new repository's branch has no commit to exist on yet.
+        const { commits } = await source.getHistory(repo.id, 1)
+        if (repo.currentBranch !== null && commits.length > 0) {
+          expect(local.map((branch) => branch.name), repo.name).toContain(repo.currentBranch)
+        }
       })
     })
 
@@ -55,9 +59,19 @@ export function describeGitDataSourceContract(name: string, createSubject: () =>
         expect(new Set(hashes).size, repo.name).toBe(hashes.length)
         expect(whole.hasMore, repo.name).toBe(false)
 
+        // Graph rows depend on what the page holds (whether main is in view), so compare without them.
+        const withoutGraph = ({ graph: _graph, ...commit }: Commit) => commit
         const page = await source.getHistory(repo.id, 2)
-        expect(page.commits, repo.name).toEqual(whole.commits.slice(0, 2))
+        expect(page.commits.map(withoutGraph), repo.name).toEqual(whole.commits.slice(0, 2).map(withoutGraph))
         expect(page.hasMore, repo.name).toBe(whole.commits.length > 2)
+      })
+    })
+
+    it('dates every commit, and the last fetch if there was one, with an ISO 8601 timestamp', async () => {
+      await eachRepository(async (source, repo) => {
+        if (repo.lastFetch !== null) expect(isIsoTimestamp(repo.lastFetch), repo.name).toBe(true)
+        const { commits } = await source.getHistory(repo.id, COMMITS_CHECKED_PER_REPOSITORY)
+        for (const commit of commits) expect(isIsoTimestamp(commit.date), `${commit.hash} ${commit.date}`).toBe(true)
       })
     })
 
@@ -88,8 +102,28 @@ export function describeGitDataSourceContract(name: string, createSubject: () =>
       })
     })
 
+    it('describes a problem only for a repository it can’t read', async () => {
+      const { source } = await createSubject()
+      for (const repo of await source.listRepositories()) {
+        if (repo.problem === null) continue
+        expect(repo.problem, repo.name).not.toBe('')
+      }
+      const first = (await source.listRepositories())[0]!
+      expect(first.problem).toBeNull()
+    })
+
+    it('removes a repository from the list, and rejects one it doesn’t know', async () => {
+      const { source } = await createSubject()
+      const [first, ...rest] = await source.listRepositories()
+      const result = await source.removeRepository(first!.id)
+      expect(result.message).toBe(`Removed ${first!.name} from the list`)
+      expect((await source.listRepositories()).map((repo) => repo.id)).toEqual(rest.map((repo) => repo.id))
+      await expect(source.removeRepository('no-such-repository')).rejects.toThrow()
+    })
+
     it('rejects a repository, commit or file it doesn’t know', async () => {
       const { source } = await createSubject()
+      // The first repository must have commits.
       const repo = (await source.listRepositories())[0]!
       const newest = (await source.getHistory(repo.id, 1)).commits[0]!
 
@@ -105,9 +139,16 @@ export function describeGitDataSourceContract(name: string, createSubject: () =>
       const forward = await source.compareFiles(repo.id, comparePaths.left, comparePaths.right)
       const backward = await source.compareFiles(repo.id, comparePaths.right, comparePaths.left)
       expect(forward.length).toBeGreaterThan(0)
-      expect(backward).toEqual(invertHunks(forward))
+      // Git labels a hunk with a function name taken from the left file, so the label may change on a swap.
+      const withoutContext = (hunks: Hunk[]) => hunks.map(({ context: _context, ...hunk }) => hunk)
+      expect(withoutContext(backward)).toEqual(withoutContext(invertHunks(forward)))
     })
   })
+}
+
+function isIsoTimestamp(value: string): boolean {
+  const iso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/
+  return iso.test(value) && !Number.isNaN(Date.parse(value))
 }
 
 /** '\' marks git's "No newline at end of file" note, which belongs to the line before it. */

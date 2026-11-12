@@ -88,9 +88,14 @@ describe('toSideBySideRows', () => {
 })
 
 describe('invertHunks', () => {
-  it('swaps additions with deletions and the two start lines', () => {
-    const hunk: Hunk = { oldStart: 3, newStart: 5, context: 'x', lines: [' a', '-b', '+c'] }
-    expect(invertHunks([hunk])).toEqual([{ oldStart: 5, newStart: 3, context: 'x', lines: [' a', '+b', '-c'] }])
+  it('swaps additions with deletions and the two start lines, listing removals first as git does', () => {
+    const hunk: Hunk = { oldStart: 3, newStart: 5, context: 'x', lines: [' a', '-b', '+c', ' d'] }
+    expect(invertHunks([hunk])).toEqual([{ oldStart: 5, newStart: 3, context: 'x', lines: [' a', '-c', '+b', ' d'] }])
+  })
+
+  it('keeps a "No newline at end of file" note with the line it belongs to', () => {
+    const hunk: Hunk = { oldStart: 1, newStart: 1, context: '', lines: ['-a', '\\ No newline at end of file', '+b'] }
+    expect(invertHunks([hunk])[0]!.lines).toEqual(['-b', '+a', '\\ No newline at end of file'])
   })
 
   it('does not modify the hunks it was given', () => {

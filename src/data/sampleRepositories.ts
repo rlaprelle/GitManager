@@ -1,4 +1,3 @@
-import type { GraphRow, LaneFlags } from '@/types/git'
 import type { SampleCommit, SampleFileChange, SampleRepository } from './sampleTypes'
 import {
   checkoutServiceDiff,
@@ -18,35 +17,25 @@ import {
   skuLookupTestDiff,
 } from './sampleDiffs'
 
-/** '010' → [false, true, false]: which of the three lanes draw a line. */
-function lanes(pattern: string): LaneFlags {
-  return [pattern[0] === '1', pattern[1] === '1', pattern[2] === '1']
+/** The design's "today" was Nov 10. Dates are stored relative to now, so the screen reads the same any day. */
+const LOADED_AT = new Date()
+
+/** ISO time `days` calendar days before today, at local `time` ('HH:MM'). */
+function daysAgo(days: number, time: string): string {
+  const [hours, minutes] = time.split(':').map(Number)
+  const date = new Date(LOADED_AT.getFullYear(), LOADED_AT.getMonth(), LOADED_AT.getDate() - days, hours, minutes)
+  return date.toISOString()
 }
 
-function graph(
-  lane: number,
-  top: string,
-  bottom: string,
-  curves: { inFrom?: number; outTo?: number } = {},
-): GraphRow {
-  return {
-    lane,
-    top: lanes(top),
-    bottom: lanes(bottom),
-    curveInFrom: curves.inFrom ?? null,
-    curveOutTo: curves.outTo ?? null,
-  }
+function minutesAgo(minutes: number): string {
+  return new Date(LOADED_AT.getTime() - minutes * 60_000).toISOString()
 }
 
-type LinearCommit = Omit<SampleCommit, 'graph'>
+type LinearCommit = Omit<SampleCommit, 'parents'>
 
-/** Single-lane history: every commit on lane 0, joined top to bottom. */
+/** Single-line history: each commit's parent is the next one, and the last is the root. */
 function linearHistory(commits: LinearCommit[]): SampleCommit[] {
-  const last = commits.length - 1
-  return commits.map((commit, index) => ({
-    ...commit,
-    graph: graph(0, index > 0 ? '100' : '000', index < last ? '100' : '000'),
-  }))
+  return commits.map((commit, index) => ({ ...commit, parents: index + 1 < commits.length ? [commits[index + 1]!.hash] : [] }))
 }
 
 const SKU_FIX_FILES: SampleFileChange[] = [
@@ -60,7 +49,7 @@ const inventoryService: SampleRepository = {
   path: 'C:\\dev\\inventory-service',
   currentBranch: 'feature/stock-reservations',
   changedFileCount: 3,
-  lastFetch: '12 min ago',
+  lastFetch: minutesAgo(12),
   localBranches: [
     { name: 'feature/stock-reservations', ahead: 2, behind: 0, tipHash: '9f3a1c2' },
     { name: 'main', ahead: 0, behind: 0, tipHash: 'c81f5a3' },
@@ -77,9 +66,9 @@ const inventoryService: SampleRepository = {
       hash: '9f3a1c2',
       message: 'Add reservation expiry job',
       author: 'You',
-      date: 'Today 11:42',
+      date: daysAgo(0, '11:42'),
       refs: ['feature/stock-reservations'],
-      graph: graph(1, '000', '010'),
+      parents: ['4e7b0d9'],
       files: [
         {
           path: 'src/main/java/com/example/inventory/reservation/ReservationExpiryJob.java',
@@ -93,9 +82,9 @@ const inventoryService: SampleRepository = {
       hash: '4e7b0d9',
       message: 'Reserve stock at checkout',
       author: 'You',
-      date: 'Today 09:15',
+      date: daysAgo(0, '09:15'),
       refs: [],
-      graph: graph(1, '010', '010'),
+      parents: ['a07c3be'],
       files: [
         {
           path: 'src/main/java/com/example/inventory/checkout/CheckoutService.java',
@@ -108,27 +97,27 @@ const inventoryService: SampleRepository = {
       hash: 'c81f5a3',
       message: "Merge branch 'bugfix/sku-null-check'",
       author: 'M. Okafor',
-      date: 'Yesterday 16:20',
+      date: daysAgo(1, '16:20'),
       refs: ['main', 'origin/main'],
-      graph: graph(0, '010', '110', { outTo: 2 }),
+      parents: ['6b2f0e1', '2d6e914'],
       files: SKU_FIX_FILES,
     },
     {
       hash: '2d6e914',
       message: 'Guard against null SKU in lookup',
       author: 'M. Okafor',
-      date: 'Yesterday 14:03',
+      date: daysAgo(1, '14:03'),
       refs: ['bugfix/sku-null-check', 'origin/bugfix/sku-null-check'],
-      graph: graph(2, '111', '111'),
+      parents: ['e5d9a72'],
       files: SKU_FIX_FILES,
     },
     {
       hash: 'a07c3be',
       message: 'Add Reservation entity and repository',
       author: 'You',
-      date: 'Nov 5 17:48',
+      date: daysAgo(5, '17:48'),
       refs: ['origin/feature/stock-reservations'],
-      graph: graph(1, '111', '111'),
+      parents: ['6b2f0e1'],
       files: [
         {
           path: 'src/main/java/com/example/inventory/reservation/Reservation.java',
@@ -146,18 +135,18 @@ const inventoryService: SampleRepository = {
       hash: '6b2f0e1',
       message: 'Bump Spring Boot to 3.3.4',
       author: 'J. Lindqvist',
-      date: 'Nov 5 10:12',
+      date: daysAgo(5, '10:12'),
       refs: [],
-      graph: graph(0, '101', '101', { inFrom: 1 }),
+      parents: ['e5d9a72'],
       files: [{ path: 'pom.xml', status: 'M', hunks: pomBumpDiff }],
     },
     {
       hash: 'e5d9a72',
       message: 'Extract pricing client',
       author: 'J. Lindqvist',
-      date: 'Nov 4 15:30',
+      date: daysAgo(6, '15:30'),
       refs: ['origin/release/2.4'],
-      graph: graph(0, '100', '100', { inFrom: 2 }),
+      parents: ['18c4b6f'],
       files: [
         {
           path: 'src/main/java/com/example/inventory/pricing/PricingClient.java',
@@ -170,9 +159,9 @@ const inventoryService: SampleRepository = {
       hash: '18c4b6f',
       message: 'Paginate GET /items',
       author: 'You',
-      date: 'Nov 3 13:05',
+      date: daysAgo(7, '13:05'),
       refs: [],
-      graph: graph(0, '100', '100'),
+      parents: ['f3a0d28'],
       files: [
         {
           path: 'src/main/java/com/example/inventory/catalog/ItemController.java',
@@ -185,18 +174,19 @@ const inventoryService: SampleRepository = {
       hash: 'f3a0d28',
       message: 'Cache Maven dependencies in CI',
       author: 'M. Okafor',
-      date: 'Nov 1 09:40',
+      date: daysAgo(9, '09:40'),
       refs: [],
-      graph: graph(0, '100', '100'),
+      parents: ['b91e6c4'],
       files: [{ path: '.github/workflows/build.yml', status: 'M', hunks: ciCacheDiff }],
     },
     {
       hash: 'b91e6c4',
       message: 'Add actuator health endpoints',
       author: 'J. Lindqvist',
-      date: 'Oct 30 11:22',
+      date: daysAgo(11, '11:22'),
       refs: [],
-      graph: graph(0, '100', '100'),
+      // Older than the sample shows, so the line runs on past the last row.
+      parents: ['0d4c2aa'],
       files: [{ path: 'src/main/resources/application.yml', status: 'M', hunks: healthEndpointsDiff }],
     },
   ],
@@ -208,7 +198,7 @@ const pricingApi: SampleRepository = {
   path: 'C:\\dev\\pricing-api',
   currentBranch: 'main',
   changedFileCount: 0,
-  lastFetch: '12 min ago',
+  lastFetch: minutesAgo(12),
   localBranches: [{ name: 'main', ahead: 0, behind: 0, tipHash: '7c1d2e0' }],
   remoteBranches: [
     { name: 'origin/main', tipHash: '7c1d2e0' },
@@ -219,7 +209,7 @@ const pricingApi: SampleRepository = {
       hash: '7c1d2e0',
       message: 'Use distroless base image',
       author: 'J. Lindqvist',
-      date: 'Today 10:05',
+      date: daysAgo(0, '10:05'),
       refs: ['main', 'origin/main'],
       files: [{ path: 'Dockerfile', status: 'M', hunks: distrolessDiff }],
     },
@@ -227,7 +217,7 @@ const pricingApi: SampleRepository = {
       hash: '3a9f4b1',
       message: 'Bump Spring Boot to 3.3.4',
       author: 'J. Lindqvist',
-      date: 'Nov 5 10:30',
+      date: daysAgo(5, '10:30'),
       refs: [],
       files: [{ path: 'pom.xml', status: 'M', hunks: pomBumpDiff }],
     },
@@ -235,7 +225,7 @@ const pricingApi: SampleRepository = {
       hash: 'd24c8e7',
       message: 'Document local setup',
       author: 'You',
-      date: 'Nov 2 16:12',
+      date: daysAgo(8, '16:12'),
       refs: ['origin/develop'],
       files: [{ path: 'README.md', status: 'M', hunks: readmeSetupDiff }],
     },
@@ -243,7 +233,7 @@ const pricingApi: SampleRepository = {
       hash: '0b7e3f5',
       message: 'Ignore IDE files',
       author: 'M. Okafor',
-      date: 'Oct 28 09:51',
+      date: daysAgo(13, '09:51'),
       refs: [],
       files: [{ path: '.gitignore', status: 'M', hunks: gitignoreIdeDiff }],
     },
@@ -251,7 +241,7 @@ const pricingApi: SampleRepository = {
       hash: 'e6a1d09',
       message: 'Cache Maven dependencies in CI',
       author: 'M. Okafor',
-      date: 'Oct 25 14:37',
+      date: daysAgo(16, '14:37'),
       refs: [],
       files: [{ path: '.github/workflows/build.yml', status: 'M', hunks: ciCacheDiff }],
     },
@@ -264,7 +254,7 @@ const storefrontWeb: SampleRepository = {
   path: 'C:\\dev\\storefront-web',
   currentBranch: 'develop',
   changedFileCount: 1,
-  lastFetch: '12 min ago',
+  lastFetch: minutesAgo(12),
   localBranches: [
     { name: 'develop', ahead: 1, behind: 0, tipHash: '5f8c2a4' },
     { name: 'main', ahead: 0, behind: 0, tipHash: '92d0f6c' },
@@ -278,7 +268,7 @@ const storefrontWeb: SampleRepository = {
       hash: '5f8c2a4',
       message: 'Ignore IDE files',
       author: 'You',
-      date: 'Today 08:58',
+      date: daysAgo(0, '08:58'),
       refs: ['develop'],
       files: [{ path: '.gitignore', status: 'M', hunks: gitignoreIdeDiff }],
     },
@@ -286,7 +276,7 @@ const storefrontWeb: SampleRepository = {
       hash: 'b3e7d10',
       message: 'Use distroless base image',
       author: 'J. Lindqvist',
-      date: 'Nov 6 15:44',
+      date: daysAgo(4, '15:44'),
       refs: ['origin/develop'],
       files: [{ path: 'Dockerfile', status: 'M', hunks: distrolessDiff }],
     },
@@ -294,7 +284,7 @@ const storefrontWeb: SampleRepository = {
       hash: '92d0f6c',
       message: 'Document local setup',
       author: 'You',
-      date: 'Nov 1 12:20',
+      date: daysAgo(9, '12:20'),
       refs: ['main', 'origin/main'],
       files: [{ path: 'README.md', status: 'M', hunks: readmeSetupDiff }],
     },
@@ -307,7 +297,7 @@ const buildTools: SampleRepository = {
   path: 'C:\\dev\\build-tools',
   currentBranch: 'main',
   changedFileCount: 0,
-  lastFetch: '12 min ago',
+  lastFetch: minutesAgo(12),
   localBranches: [{ name: 'main', ahead: 0, behind: 0, tipHash: '4c6b9e2' }],
   remoteBranches: [{ name: 'origin/main', tipHash: '4c6b9e2' }],
   commits: linearHistory([
@@ -315,7 +305,7 @@ const buildTools: SampleRepository = {
       hash: '4c6b9e2',
       message: 'Cache Maven dependencies in CI',
       author: 'M. Okafor',
-      date: 'Nov 4 11:02',
+      date: daysAgo(6, '11:02'),
       refs: ['main', 'origin/main'],
       files: [{ path: '.github/workflows/build.yml', status: 'M', hunks: ciCacheDiff }],
     },
@@ -323,7 +313,7 @@ const buildTools: SampleRepository = {
       hash: 'a8f13d7',
       message: 'Bump Spring Boot to 3.3.4',
       author: 'J. Lindqvist',
-      date: 'Nov 3 09:17',
+      date: daysAgo(7, '09:17'),
       refs: [],
       files: [{ path: 'pom.xml', status: 'M', hunks: pomBumpDiff }],
     },
@@ -331,7 +321,7 @@ const buildTools: SampleRepository = {
       hash: '1e5d7c0',
       message: 'Document local setup',
       author: 'You',
-      date: 'Oct 21 17:35',
+      date: daysAgo(20, '17:35'),
       refs: [],
       files: [{ path: 'README.md', status: 'M', hunks: readmeSetupDiff }],
     },
@@ -344,7 +334,7 @@ const dotfiles: SampleRepository = {
   path: 'C:\\dev\\dotfiles',
   currentBranch: 'main',
   changedFileCount: 0,
-  lastFetch: '12 min ago',
+  lastFetch: minutesAgo(12),
   localBranches: [{ name: 'main', ahead: 0, behind: 0, tipHash: '6d2a0f8' }],
   remoteBranches: [{ name: 'origin/main', tipHash: '6d2a0f8' }],
   commits: linearHistory([
@@ -352,7 +342,7 @@ const dotfiles: SampleRepository = {
       hash: '6d2a0f8',
       message: 'Ignore IDE files',
       author: 'You',
-      date: 'Oct 19 20:11',
+      date: daysAgo(22, '20:11'),
       refs: ['main', 'origin/main'],
       files: [{ path: '.gitignore', status: 'M', hunks: gitignoreIdeDiff }],
     },
@@ -360,7 +350,7 @@ const dotfiles: SampleRepository = {
       hash: 'c47e91b',
       message: 'Document local setup',
       author: 'You',
-      date: 'Oct 12 18:40',
+      date: daysAgo(29, '18:40'),
       refs: [],
       files: [{ path: 'README.md', status: 'M', hunks: readmeSetupDiff }],
     },

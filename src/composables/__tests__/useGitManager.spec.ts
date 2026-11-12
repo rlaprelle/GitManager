@@ -267,6 +267,140 @@ describe('useGitManager', () => {
       expect(failing.status.value).toBe("Couldn't compare files: file not found")
       expect(failing.activeHunks.value).toEqual([])
     })
+
+    it('waits for both paths before comparing', async () => {
+      const source = new MockGitDataSource()
+      let compared = 0
+      source.compareFiles = async () => {
+        compared++
+        return []
+      }
+      const empty = useGitManager(source, { comparePaths: { left: '', right: '' } })
+      await empty.load()
+      await empty.openCompare()
+      await empty.setLeftPath('a.yml')
+      expect(compared).toBe(0)
+      expect(empty.status.value).toBe('Comparing two files')
+      await empty.setRightPath('b.yml')
+      expect(compared).toBe(1)
+    })
+  })
+
+  it('shows full commit hashes shortened to seven characters in its messages', async () => {
+    const source = new MockGitDataSource()
+    const getHistory = source.getHistory.bind(source)
+    source.getHistory = async (repoId, limit) => {
+      const page = await getHistory(repoId, limit)
+      return { ...page, commits: page.commits.map((commit) => ({ ...commit, hash: commit.hash.padEnd(40, '0') })) }
+    }
+    source.getCommitFiles = async () => []
+    const full = await loadedManager(source)
+    await full.selectCommit(1)
+    expect(full.status.value).toBe('Viewing commit 4e7b0d9')
+  })
+
+  describe('the history pane message', () => {
+    it('is empty once the history has commits', () => {
+      expect(gm.historyMessage.value).toBeNull()
+    })
+
+    it('says the history is loading, failed, or has no commits yet', async () => {
+      const held = heldSource()
+      held.hold('getHistory')
+      const slow = manager(held.source)
+      const loaded = slow.load()
+      await settle()
+      expect(slow.historyMessage.value).toBe('Loading history…')
+      await held.callsTo('getHistory')[0]!.fail(new Error('Folder not found'))
+      await loaded
+      expect(slow.historyMessage.value).toBe('Couldn’t load history')
+
+      const source = new MockGitDataSource()
+      source.getHistory = async () => ({ commits: [], hasMore: false })
+      expect((await loadedManager(source)).historyMessage.value).toBe('No commits yet')
+    })
+  })
+
+  describe('adding and removing repositories', () => {
+    /** The mock, except that adding returns this repository (as the desktop app's folder picker would). */
+    function addingSource(addedId: string, message: string) {
+      const source = new MockGitDataSource()
+      source.addRepository = async () => {
+        const repository = (await source.listRepositories()).find((repo) => repo.id === addedId)!
+        return { repository: { ...repository, id: addedId }, message }
+      }
+      return source
+    }
+
+    it('in the browser, explains what Add repository would ask for', async () => {
+      await gm.addRepository()
+      expect(gm.status.value).toBe('Add repository: choose a folder that contains a .git directory')
+      expect(gm.repositories.value).toHaveLength(5)
+    })
+
+    it('opens a repository that was already listed when it is added again', async () => {
+      const adding = await loadedManager(addingSource('storefront', 'storefront-web is already in the list'))
+      await adding.addRepository()
+      expect(adding.repositories.value).toHaveLength(5)
+      expect(adding.repository.value?.name).toBe('storefront-web')
+      expect(adding.commit.value?.hash).toBe('5f8c2a4')
+      expect(adding.status.value).toBe('storefront-web is already in the list')
+    })
+
+    it('adds a new repository to the end of the list and opens it', async () => {
+      const source = new MockGitDataSource()
+      const listRepositories = source.listRepositories.bind(source)
+      source.listRepositories = async () => (await listRepositories()).filter((repo) => repo.id !== 'dotfiles')
+      source.addRepository = async () => ({
+        repository: (await listRepositories()).find((repo) => repo.id === 'dotfiles')!,
+        message: 'Added dotfiles',
+      })
+      const adding = await loadedManager(source)
+      await adding.addRepository()
+      expect(adding.repositories.value.map((repo) => repo.id).at(-1)).toBe('dotfiles')
+      expect(adding.repository.value?.name).toBe('dotfiles')
+      expect(adding.status.value).toBe('Added dotfiles')
+    })
+
+    it('leaves everything as it was when the user cancels', async () => {
+      const source = new MockGitDataSource()
+      source.addRepository = async () => ({ repository: null, message: '' })
+      const adding = await loadedManager(source)
+      await adding.addRepository()
+      expect(adding.status.value).toBe('Ready')
+      expect(adding.repository.value?.name).toBe('inventory-service')
+    })
+
+    it('reports a folder that could not be added', async () => {
+      const source = new MockGitDataSource()
+      source.addRepository = async () => {
+        throw new Error('C:\\temp isn’t inside a git repository')
+      }
+      const adding = await loadedManager(source)
+      await adding.addRepository()
+      expect(adding.status.value).toBe('Failed: C:\\temp isn’t inside a git repository')
+    })
+
+    it('removing another repository keeps the open one', async () => {
+      await gm.removeRepository('pricing')
+      expect(gm.repositories.value.map((repo) => repo.id)).not.toContain('pricing')
+      expect(gm.repository.value?.name).toBe('inventory-service')
+      expect(gm.status.value).toBe('Removed pricing-api from the list')
+    })
+
+    it('removing the open repository opens the first one left', async () => {
+      await gm.removeRepository('inventory')
+      expect(gm.repository.value?.name).toBe('pricing-api')
+      expect(gm.commit.value?.hash).toBe('7c1d2e0')
+    })
+
+    it('removing the last repository leaves nothing open', async () => {
+      for (const id of ['inventory', 'pricing', 'storefront', 'buildtools', 'dotfiles']) await gm.removeRepository(id)
+      expect(gm.repositories.value).toEqual([])
+      expect(gm.repository.value).toBeUndefined()
+      expect(gm.commits.value).toEqual([])
+      expect(gm.branches.value).toEqual({ local: [], remote: [] })
+    })
   })
 
   describe('repository operations', () => {
@@ -277,8 +411,9 @@ describe('useGitManager', () => {
     })
 
     it('fetching updates the last-fetch time', async () => {
+      const before = Date.now()
       await gm.fetchRemote()
-      expect(gm.repository.value?.lastFetch).toBe('just now')
+      expect(Date.parse(gm.repository.value!.lastFetch!)).toBeGreaterThanOrEqual(before)
       expect(gm.status.value).toBe('Fetched origin: no new commits')
     })
 
@@ -287,6 +422,18 @@ describe('useGitManager', () => {
       expect(gm.status.value).toBe('Pulled origin/feature/stock-reservations: already up to date')
       await gm.push()
       expect(gm.status.value).toBe('Pushed feature/stock-reservations to origin/feature/stock-reservations')
+    })
+
+    it('shows a detached HEAD as such, and refuses to pull or push without a branch', async () => {
+      const source = new MockGitDataSource()
+      const listRepositories = source.listRepositories.bind(source)
+      source.listRepositories = async () => (await listRepositories()).map((repo) => ({ ...repo, currentBranch: null }))
+      const detached = await loadedManager(source)
+      expect(detached.headLabel.value).toBe('detached HEAD')
+      await detached.pull()
+      expect(detached.status.value).toBe('Failed: no branch is checked out')
+      await detached.push()
+      expect(detached.status.value).toBe('Failed: no branch is checked out')
     })
 
     it('a failed checkout leaves the current branch alone', async () => {

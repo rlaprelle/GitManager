@@ -1,0 +1,85 @@
+// @vitest-environment node
+import { describe, expect, it } from 'vitest'
+import { countStatusEntries, parseBranches, parseCommitLog, parseNameStatus } from '../parse'
+
+const NUL = '\0'
+const UNIT = '\x1f'
+
+describe('parseBranches', () => {
+  // Format: %(refname)%00%(objectname)%00%(upstream:track,nobracket)%00%(symref), one ref per line.
+  const output = [
+    ['refs/heads/main', 'a'.repeat(40), 'ahead 2, behind 1', ''],
+    ['refs/heads/feature/x', 'b'.repeat(40), '', ''],
+    ['refs/heads/old', 'c'.repeat(40), 'gone', ''],
+    ['refs/remotes/origin/HEAD', 'a'.repeat(40), '', 'refs/remotes/origin/main'],
+    ['refs/remotes/origin/main', 'd'.repeat(40), '', ''],
+  ]
+    .map((fields) => fields.join(NUL))
+    .join('\n')
+
+  it('splits local and remote branches, with ahead/behind counts from the upstream', () => {
+    expect(parseBranches(output + '\n')).toEqual({
+      local: [
+        { name: 'main', ahead: 2, behind: 1, tipHash: 'a'.repeat(40) },
+        { name: 'feature/x', ahead: 0, behind: 0, tipHash: 'b'.repeat(40) },
+        { name: 'old', ahead: 0, behind: 0, tipHash: 'c'.repeat(40) },
+      ],
+      remote: [{ name: 'origin/main', tipHash: 'd'.repeat(40) }],
+    })
+  })
+
+  it('reads an empty listing as no branches', () => {
+    expect(parseBranches('')).toEqual({ local: [], remote: [] })
+  })
+})
+
+describe('parseCommitLog', () => {
+  // Format: %H %P %an %aI %s %D separated by 0x1f, one commit per NUL-terminated record (-z).
+  const record = (...fields: string[]) => fields.join(UNIT) + NUL
+
+  it('reads hash, parents, author, ISO date, subject and branch labels', () => {
+    const output =
+      record('m'.repeat(40), `${'p'.repeat(40)} ${'q'.repeat(40)}`, 'Ada Lovelace', '2026-11-10T11:42:00+01:00', "Merge branch 'fix'", 'HEAD -> main, origin/main, tag: v1.0, origin/HEAD') +
+      record('r'.repeat(40), '', 'Ada Lovelace', '2026-11-09T09:00:00+01:00', 'Initial commit', '')
+    expect(parseCommitLog(output)).toEqual([
+      {
+        hash: 'm'.repeat(40),
+        parents: ['p'.repeat(40), 'q'.repeat(40)],
+        author: 'Ada Lovelace',
+        date: '2026-11-10T11:42:00+01:00',
+        message: "Merge branch 'fix'",
+        refs: ['main', 'origin/main'],
+      },
+      { hash: 'r'.repeat(40), parents: [], author: 'Ada Lovelace', date: '2026-11-09T09:00:00+01:00', message: 'Initial commit', refs: [] },
+    ])
+  })
+
+  it('drops a detached HEAD label, keeping the branches beside it', () => {
+    const output = record('h'.repeat(40), '', 'A', '2026-11-10T11:42:00Z', 's', 'HEAD, feature/x')
+    expect(parseCommitLog(output)[0]!.refs).toEqual(['feature/x'])
+  })
+
+  it('keeps a subject that contains commas and arrows untouched', () => {
+    const output = record('h'.repeat(40), '', 'A', '2026-11-10T11:42:00Z', 'Fix a, b -> c', '')
+    expect(parseCommitLog(output)[0]!.message).toBe('Fix a, b -> c')
+  })
+})
+
+describe('parseNameStatus', () => {
+  it('pairs each status with its path, reading a type change as a modification', () => {
+    const output = ['M', 'src/app.ts', 'A', 'docs/new file.md', 'D', 'old.txt', 'T', 'link', ''].join(NUL)
+    expect(parseNameStatus(output)).toEqual([
+      { path: 'src/app.ts', status: 'M' },
+      { path: 'docs/new file.md', status: 'A' },
+      { path: 'old.txt', status: 'D' },
+      { path: 'link', status: 'M' },
+    ])
+  })
+})
+
+describe('countStatusEntries', () => {
+  it('counts one entry per NUL-terminated path', () => {
+    expect(countStatusEntries([' M a.txt', '?? b.txt', 'A  c/d.txt', ''].join(NUL))).toBe(3)
+    expect(countStatusEntries('')).toBe(0)
+  })
+})

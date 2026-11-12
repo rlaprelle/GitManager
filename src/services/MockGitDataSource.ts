@@ -2,7 +2,16 @@ import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositor
 import { sampleCompareDiff } from '@/data/sampleDiffs'
 import type { SampleCommit, SampleRepository } from '@/data/sampleTypes'
 import { invertHunks } from '@/lib/diff'
-import type { Branches, FileChange, HistoryPage, Hunk, OperationResult, Repository } from '@/types/git'
+import { layoutLanes, primaryBranchTip } from '@/lib/laneLayout'
+import type {
+  AddRepositoryResult,
+  Branches,
+  FileChange,
+  HistoryPage,
+  Hunk,
+  OperationResult,
+  Repository,
+} from '@/types/git'
 import type { GitDataSource } from './GitDataSource'
 
 /**
@@ -11,17 +20,32 @@ import type { GitDataSource } from './GitDataSource'
  * Every result is a copy, so callers can't change the sample data.
  */
 export class MockGitDataSource implements GitDataSource {
+  /** Repositories taken off the list this session; the sample data itself is never changed. */
+  private readonly removed = new Set<string>()
+
   constructor(private readonly repositories: SampleRepository[] = sampleRepositories) {}
 
   async listRepositories(): Promise<Repository[]> {
-    return this.repositories.map(({ id, name, path, currentBranch, changedFileCount, lastFetch }) => ({
+    return this.listed().map(({ id, name, path, currentBranch, changedFileCount, lastFetch }) => ({
       id,
       name,
       path,
       currentBranch,
       changedFileCount,
       lastFetch,
+      problem: null,
     }))
+  }
+
+  /** A browser can't open a folder picker, so this explains what the desktop app would ask for. */
+  async addRepository(): Promise<AddRepositoryResult> {
+    return { repository: null, message: 'Add repository: choose a folder that contains a .git directory' }
+  }
+
+  async removeRepository(repoId: string): Promise<OperationResult> {
+    const repo = this.repository(repoId)
+    this.removed.add(repoId)
+    return { message: `Removed ${repo.name} from the list` }
   }
 
   async getBranches(repoId: string): Promise<Branches> {
@@ -30,11 +54,7 @@ export class MockGitDataSource implements GitDataSource {
   }
 
   async getHistory(repoId: string, limit: number): Promise<HistoryPage> {
-    const { commits } = this.repository(repoId)
-    return {
-      commits: commits.slice(0, limit).map(({ files: _files, ...commit }) => structuredClone(commit)),
-      hasMore: commits.length > limit,
-    }
+    return sampleHistoryPage(this.repository(repoId), limit)
   }
 
   async getCommitFiles(repoId: string, hash: string): Promise<FileChange[]> {
@@ -70,8 +90,12 @@ export class MockGitDataSource implements GitDataSource {
     return { message: `Pushed ${branch} to origin/${branch}` }
   }
 
+  private listed(): SampleRepository[] {
+    return this.repositories.filter((repo) => !this.removed.has(repo.id))
+  }
+
   private repository(repoId: string): SampleRepository {
-    const repo = this.repositories.find((candidate) => candidate.id === repoId)
+    const repo = this.listed().find((candidate) => candidate.id === repoId)
     if (!repo) throw new Error(`Unknown repository: ${repoId}`)
     return repo
   }
@@ -80,5 +104,18 @@ export class MockGitDataSource implements GitDataSource {
     const commit = this.repository(repoId).commits.find((candidate) => candidate.hash === hash)
     if (!commit) throw new Error(`Unknown commit: ${hash}`)
     return commit
+  }
+}
+
+/** A sample repository's newest `limit` commits, laid out with the same function the real git source uses. */
+export function sampleHistoryPage(repo: SampleRepository, limit: number): HistoryPage {
+  const page = repo.commits.slice(0, limit)
+  const rows = layoutLanes(page, primaryBranchTip({ local: repo.localBranches, remote: repo.remoteBranches }))
+  return {
+    commits: page.map(({ files: _files, parents: _parents, ...commit }, index) => ({
+      ...structuredClone(commit),
+      graph: rows[index]!,
+    })),
+    hasMore: repo.commits.length > limit,
   }
 }

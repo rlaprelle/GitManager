@@ -1,0 +1,117 @@
+import { execFile } from 'node:child_process'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
+
+const run = promisify(execFile)
+
+export interface Fixtures {
+  root: string
+  /** Merge, deletion, binary file, no trailing newline, a path with a space and accent, a remote one commit behind, one uncommitted change. */
+  sample: string
+  /** `git init` and nothing else. */
+  empty: string
+  /** Two commits with the older one checked out directly (detached HEAD). */
+  detached: string
+}
+
+/**
+ * Builds throwaway repositories with git. Commands run with an empty global config so the
+ * user's own settings (signing, hooks, autocrlf, default branch) can't change the fixtures.
+ */
+export async function createFixtures(): Promise<Fixtures> {
+  const root = await mkdtemp(join(tmpdir(), 'git-manager-fixtures-'))
+  const emptyConfig = join(root, 'empty.gitconfig')
+  await writeFile(emptyConfig, '')
+  let clock = Date.UTC(2026, 10, 1, 9, 0) / 1000
+
+  const git = async (cwd: string, ...args: string[]) => {
+    clock += 3600
+    const date = `${clock} +0000`
+    const { stdout } = await run('git', args, {
+      cwd,
+      env: {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: emptyConfig,
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_AUTHOR_NAME: 'Ada Lovelace',
+        GIT_AUTHOR_EMAIL: 'ada@example.com',
+        GIT_COMMITTER_NAME: 'Ada Lovelace',
+        GIT_COMMITTER_EMAIL: 'ada@example.com',
+        GIT_AUTHOR_DATE: date,
+        GIT_COMMITTER_DATE: date,
+      },
+    })
+    return stdout
+  }
+  const write = async (repo: string, path: string, content: string | Buffer) => {
+    await mkdir(join(repo, path, '..'), { recursive: true })
+    await writeFile(join(repo, path), content)
+  }
+  const commit = async (repo: string, message: string) => {
+    await git(repo, 'add', '--all')
+    await git(repo, 'commit', '--quiet', '-m', message)
+  }
+
+  const sample = join(root, 'sample')
+  await mkdir(sample)
+  await git(sample, 'init', '--quiet', '-b', 'main')
+  await write(sample, 'README.md', '# Sample\n')
+  await write(sample, 'app.yml', ['port: 8080', 'host: localhost', 'debug: false', ''].join('\n'))
+  await write(sample, 'notes.txt', 'to be deleted\n')
+  await write(sample, 'config/left.yml', ['  name: left', '  size: 1', '  mode: fast', ''].join('\n'))
+  await write(sample, 'config/right.yml', ['  name: right', '  size: 1', '  mode: slow', ''].join('\n'))
+  await commit(sample, 'Initial commit')
+
+  await write(sample, 'app.yml', ['port: 9090', 'host: localhost', 'debug: false', 'timeout: 30s', ''].join('\n'))
+  await write(sample, 'docs/read me é.md', 'Accented and spaced\n')
+  await commit(sample, 'Configure port and timeout')
+
+  await git(sample, 'checkout', '--quiet', '-b', 'feature/search')
+  await write(sample, 'src/search.ts', 'export const search = () => []\n')
+  await commit(sample, 'Add search')
+
+  await git(sample, 'checkout', '--quiet', 'main')
+  await git(sample, 'rm', '--quiet', 'notes.txt')
+  await write(sample, 'logo.png', Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02, 0x00]))
+  await write(sample, 'no-newline.txt', 'last line')
+  await commit(sample, 'Remove notes, add logo')
+
+  await git(sample, 'merge', '--quiet', '--no-ff', '-m', "Merge branch 'feature/search'", 'feature/search')
+
+  const origin = join(root, 'origin.git')
+  await git(root, 'clone', '--quiet', '--bare', sample, origin)
+  await git(sample, 'remote', 'add', 'origin', origin)
+  await git(sample, 'fetch', '--quiet', 'origin')
+  await git(sample, 'branch', '--quiet', '--set-upstream-to=origin/main', 'main')
+
+  await write(sample, 'README.md', '# Sample\n\nAhead of origin.\n')
+  await commit(sample, 'Describe the sample')
+  await write(sample, 'README.md', '# Sample\n\nUncommitted.\n')
+
+  const empty = join(root, 'empty')
+  await mkdir(empty)
+  await git(empty, 'init', '--quiet', '-b', 'main')
+
+  const detached = join(root, 'detached')
+  await mkdir(detached)
+  await git(detached, 'init', '--quiet', '-b', 'main')
+  await write(detached, 'a.txt', 'a\n')
+  await commit(detached, 'First')
+  await write(detached, 'a.txt', 'b\n')
+  await commit(detached, 'Second')
+  await git(detached, 'checkout', '--quiet', '--detach', 'HEAD~1')
+
+  return { root, sample, empty, detached }
+}
+
+export async function removeFixtures(fixtures: Fixtures): Promise<void> {
+  await rm(fixtures.root, { recursive: true, force: true, maxRetries: 5 })
+}
+
+/** Runs git in a fixture, for tests that look up what it holds (hashes, for instance). */
+export async function fixtureGit(cwd: string, ...args: string[]): Promise<string> {
+  const { stdout } = await run('git', args, { cwd })
+  return stdout
+}

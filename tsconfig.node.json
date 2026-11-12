@@ -19,6 +19,8 @@
     "types": ["node"],
     // scripts/ run directly under Node (type stripping), which needs explicit .ts imports.
     "allowImportingTsExtensions": true,
+    // e2e specs import shared types from src/, which use the @/ alias.
+    "paths": { "@/*": ["./src/*"] },
     // e2e callbacks passed to page.evaluate run in the browser.
     "lib": ["ES2024", "DOM"]
   }

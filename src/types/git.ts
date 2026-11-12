@@ -18,27 +18,28 @@ export interface FileChange {
   status: FileStatus
 }
 
-/** The graph has three lanes (0–2); each flag says whether that lane's line is drawn. */
-export type LaneFlags = [boolean, boolean, boolean]
-
-/** How one commit's row of the history graph is drawn. */
+/**
+ * How one commit's row of the history graph is drawn. Lanes are numbered from 0 at the left.
+ * Every list holds lane numbers.
+ */
 export interface GraphRow {
   /** Lane the commit dot sits in. */
   lane: number
-  /** Straight lines in the top half of the row (above the dot's centre). */
-  top: LaneFlags
-  /** Straight lines in the bottom half of the row. */
-  bottom: LaneFlags
-  /** A curve entering the dot from this lane at the top edge, or null. */
-  curveInFrom: number | null
-  /** A curve leaving the dot towards this lane at the bottom edge, or null. */
-  curveOutTo: number | null
+  /** Lanes with a straight line in the top half of the row (above the dot's centre). */
+  top: number[]
+  /** Lanes with a straight line in the bottom half of the row. */
+  bottom: number[]
+  /** Lanes whose line curves into the dot from the row's top edge (a branch joining its parent). */
+  curvesIn: number[]
+  /** Lanes the dot curves out to at the row's bottom edge (a merge's second and later parents). */
+  curvesOut: number[]
 }
 
 export interface Commit {
   hash: string
   message: string
   author: string
+  /** Author date, ISO 8601. The UI formats it ('Today 11:42'). */
   date: string
   /** Branch names pointing at this commit; remote ones start with 'origin/'. */
   refs: string[]
@@ -62,9 +63,13 @@ export interface Repository {
   id: string
   name: string
   path: string
-  currentBranch: string
+  /** The checked-out branch, or null when HEAD is detached (a commit is checked out directly). */
+  currentBranch: string | null
   changedFileCount: number
-  lastFetch: string
+  /** When the repository was last fetched, ISO 8601, or null if never. */
+  lastFetch: string | null
+  /** Why the repository can't be read ('Folder not found'), or null when it can. */
+  problem: string | null
 }
 
 export interface Branches {
@@ -80,5 +85,12 @@ export interface HistoryPage {
 }
 
 export interface OperationResult {
+  message: string
+}
+
+/** What adding a repository did: the repository (null when nothing was added) and what to tell the user. */
+export interface AddRepositoryResult {
+  repository: Repository | null
+  /** For the status bar; '' when there's nothing to say (the user cancelled). */
   message: string
 }

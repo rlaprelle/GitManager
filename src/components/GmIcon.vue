@@ -11,6 +11,7 @@ export type IconName =
   | 'compare'
   | 'back'
   | 'swap'
+  | 'remove'
 
 withDefaults(defineProps<{ name: IconName; size?: number; strokeWidth?: number }>(), {
   size: 16,
@@ -63,6 +64,10 @@ withDefaults(defineProps<{ name: IconName; size?: number; strokeWidth?: number }
       <path d="M12 20V7" />
       <path d="M6 13l6-6 6 6" />
       <path d="M5 4h14" />
+    </template>
+    <template v-else-if="name === 'remove'">
+      <path d="M6 6l12 12" />
+      <path d="M18 6L6 18" />
     </template>
     <template v-else-if="name === 'plus'">
       <path d="M12 5v14" />

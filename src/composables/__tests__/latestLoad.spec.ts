@@ -77,6 +77,22 @@ describe('latestLoad', () => {
     expect(area.value.value).toBe('newer')
   })
 
+  it('remembers that the latest load failed until another starts or the area is cleared', async () => {
+    const area = latestLoad<string>('')
+    await area.run(() => Promise.reject(new Error('boom')), () => {})
+    expect(area.failed.value).toBe(true)
+
+    const pending = deferred<string>()
+    const run = area.run(() => pending.promise, () => {})
+    expect(area.failed.value).toBe(false)
+    pending.resolve('ok')
+    await run
+
+    await area.run(() => Promise.reject(new Error('again')), () => {})
+    area.clear()
+    expect(area.failed.value).toBe(false)
+  })
+
   it('clear abandons a pending load and empties the value', async () => {
     const area = latestLoad<string>('')
     const pending = deferred<string>()

@@ -3,10 +3,13 @@ import { mount } from '@vue/test-utils'
 import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositories'
 import { sampleCompareDiff } from '@/data/sampleDiffs'
 import type { DiffMode } from '@/composables/useGitManager'
+import { sampleHistoryPage } from '@/services/MockGitDataSource'
 import DiffPanel from '../DiffPanel.vue'
 
-const expiryCommit = sampleRepositories[0]!.commits[0]!
-const skuCommit = sampleRepositories[0]!.commits[3]!
+const inventory = sampleRepositories[0]!
+const history = sampleHistoryPage(inventory, 200).commits
+const expiryCommit = { ...history[0]!, files: inventory.commits[0]!.files }
+const skuCommit = { ...history[3]!, files: inventory.commits[3]!.files }
 
 type PanelOverrides = Partial<{
   compareOpen: boolean
@@ -90,6 +93,34 @@ describe('DiffPanel in commit mode', () => {
     expect(wrapper.emitted('selectFile')).toEqual([[1]])
     expect(wrapper.emitted('setDiffMode')).toEqual([['simple']])
     expect(wrapper.emitted('openCompare')).toHaveLength(1)
+  })
+})
+
+describe('DiffPanel without a commit', () => {
+  function mountEmpty(emptyMessage: string) {
+    return mount(DiffPanel, {
+      props: {
+        commit: undefined,
+        emptyMessage,
+        files: [],
+        filesLoading: false,
+        diffLoading: false,
+        selectedFileIndex: 0,
+        compareOpen: false,
+        diffMode: 'git' as DiffMode,
+        hunks: [],
+        leftPath: '',
+        rightPath: '',
+      },
+    })
+  }
+
+  it('keeps its place and shows why there is no diff, still offering compare', () => {
+    const wrapper = mountEmpty('No commits yet')
+    expect(wrapper.get('section[aria-label="Diff viewer"]').text()).toContain('No commits yet')
+    expect(wrapper.text()).not.toContain('Changes in')
+    expect(wrapper.text()).not.toContain('files changed')
+    expect(buttonByText(wrapper, 'Compare two files')).toBeTruthy()
   })
 })
 

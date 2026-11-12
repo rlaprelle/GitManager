@@ -5,9 +5,10 @@ import BranchList from '../BranchList.vue'
 
 const inventory = sampleRepositories[0]!
 
-function mountList(selectedBranch: string | null = 'feature/stock-reservations') {
+function mountList(selectedBranch: string | null = 'feature/stock-reservations', writable = true) {
   return mount(BranchList, {
     props: {
+      writable,
       localBranches: inventory.localBranches,
       remoteBranches: inventory.remoteBranches,
       currentBranch: 'feature/stock-reservations',
@@ -21,6 +22,12 @@ function branchButton(wrapper: ReturnType<typeof mountList>, name: string) {
 }
 
 describe('BranchList', () => {
+  it('offers no Checkout when the app can only read', () => {
+    const labels = mountList('main', false).findAll('button').map((b) => b.text())
+    expect(labels).not.toContain('Checkout')
+    expect(mountList('main', true).findAll('button').map((b) => b.text())).toContain('Checkout')
+  })
+
   it('lists local and remote branches', () => {
     const text = mountList().text()
     expect(text).toContain('bugfix/sku-null-check')
@@ -49,5 +56,15 @@ describe('BranchList', () => {
     const wrapper = mountList('main')
     await wrapper.findAll('button').find((b) => b.text() === 'Checkout')!.trigger('click')
     expect(wrapper.emitted('checkout')).toEqual([['main']])
+  })
+})
+
+describe('BranchList with no branches yet', () => {
+  it('leaves out the Local and Remote headings when there is nothing under them', () => {
+    const wrapper = mount(BranchList, {
+      props: { localBranches: [], remoteBranches: [], currentBranch: 'main', selectedBranch: 'main' },
+    })
+    expect(wrapper.text()).not.toContain('Local')
+    expect(wrapper.text()).not.toContain('Remote')
   })
 })

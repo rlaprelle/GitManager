@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import type { Commit, FileChange, Hunk } from '@/types/git'
 import type { DiffMode } from '@/composables/useGitManager'
-import { splitPath } from '@/lib/format'
+import { shortHash, splitPath } from '@/lib/format'
 import GmIcon from '../GmIcon.vue'
 import ChangedFileList from './ChangedFileList.vue'
 import ComparePathInputs from './ComparePathInputs.vue'
@@ -11,7 +11,10 @@ import SideBySideDiff from './SideBySideDiff.vue'
 import UnifiedDiff from './UnifiedDiff.vue'
 
 const props = defineProps<{
-  commit: Commit
+  /** Undefined while the history loads, or when there is none; the panel keeps its place. */
+  commit: Commit | undefined
+  /** Shown instead of files and diff when there's no commit ('No commits yet'). */
+  emptyMessage?: string
   files: FileChange[]
   filesLoading: boolean
   diffLoading: boolean
@@ -40,12 +43,12 @@ const file = computed<FileChange | undefined>(
 const leftLabel = computed(() => {
   if (props.compareOpen) return splitPath(props.leftPath).name
   if (!file.value || file.value.status === 'A') return '(new file)'
-  return `${splitPath(file.value.path).name} @ ${props.commit.hash}^`
+  return `${splitPath(file.value.path).name} @ ${shortHash(props.commit?.hash ?? '')}^`
 })
 
 const rightLabel = computed(() => {
   if (props.compareOpen) return splitPath(props.rightPath).name
-  return file.value ? `${splitPath(file.value.path).name} @ ${props.commit.hash}` : ''
+  return file.value ? `${splitPath(file.value.path).name} @ ${shortHash(props.commit?.hash ?? '')}` : ''
 })
 
 const toolbarButton =
@@ -55,13 +58,13 @@ const toolbarButton =
 <template>
   <section
     aria-label="Diff viewer"
-    class="flex min-h-0 flex-[0_0_400px] flex-col border-t border-gm-line-strong bg-gm-sidebar max-[860px]:flex-none"
+    class="flex min-h-[240px] flex-[0_1_400px] flex-col border-t border-gm-line-strong bg-gm-sidebar max-[860px]:flex-none"
   >
     <div class="flex flex-none flex-wrap items-center gap-x-3 gap-y-2 border-b border-gm-line px-4 py-2">
       <template v-if="!compareOpen">
-        <h2 class="m-0 min-w-0 truncate text-[13px] font-semibold">
+        <h2 v-if="commit" class="m-0 min-w-0 truncate text-[13px] font-semibold">
           Changes in
-          <span class="font-mono font-medium text-gm-ref-local-text">{{ commit.hash }}</span>
+          <span class="font-mono font-medium text-gm-ref-local-text">{{ shortHash(commit.hash) }}</span>
           · {{ commit.message }}
         </h2>
         <button type="button" :class="toolbarButton" class="ml-auto" @click="emit('openCompare')">
@@ -73,12 +76,15 @@ const toolbarButton =
         <h2 class="m-0 text-[13px] font-semibold">Compare two files</h2>
         <button type="button" :class="toolbarButton" class="ml-auto" @click="emit('closeCompare')">
           <GmIcon name="back" :size="15" />
-          Back to {{ commit.hash }}
+          {{ commit ? `Back to ${shortHash(commit.hash)}` : 'Back' }}
         </button>
       </template>
     </div>
 
-    <div class="flex min-h-0 flex-auto flex-wrap">
+    <p v-if="!commit && !compareOpen" class="m-0 flex flex-auto items-center justify-center text-gm-muted">
+      {{ emptyMessage }}
+    </p>
+    <div v-else class="flex min-h-0 flex-auto flex-wrap">
       <ChangedFileList
         v-if="!compareOpen"
         :files="files"

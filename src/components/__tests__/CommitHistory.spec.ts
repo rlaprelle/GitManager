@@ -1,19 +1,26 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { sampleRepositories } from '@/data/sampleRepositories'
+import { sampleHistoryPage } from '@/services/MockGitDataSource'
+import type { Commit } from '@/types/git'
 import CommitHistory from '../CommitHistory.vue'
 
 const inventory = sampleRepositories[0]!
+const inventoryCommits = sampleHistoryPage(inventory, 200).commits
 
-function mountHistory(selectedIndex = 0, overrides: { hasMore?: boolean; loading?: boolean } = {}) {
-  const loading = overrides.loading ?? false
+function mountHistory(
+  selectedIndex = 0,
+  overrides: { hasMore?: boolean; message?: string | null; commits?: Commit[] } = {},
+) {
+  const message = overrides.message ?? null
   return mount(CommitHistory, {
     props: {
-      commits: loading ? [] : inventory.commits,
+      commits: message ? [] : (overrides.commits ?? inventoryCommits),
       hasMore: overrides.hasMore ?? false,
-      loading,
+      message,
       selectedIndex,
-      currentBranch: inventory.currentBranch,
+      currentBranch: inventory.currentBranch!,
+      now: new Date(),
     },
   })
 }
@@ -33,9 +40,9 @@ describe('CommitHistory', () => {
     expect(mountHistory(0, { hasMore: true }).text()).toContain('Showing the latest 10 commits · all branches')
   })
 
-  it('shows a loading message instead of rows while the history loads', () => {
-    const wrapper = mountHistory(0, { loading: true })
-    expect(wrapper.text()).toContain('Loading history…')
+  it.each(['Loading history…', 'No commits yet', 'Couldn’t load history'])('shows "%s" instead of rows and a count', (message) => {
+    const wrapper = mountHistory(0, { message })
+    expect(wrapper.text()).toContain(message)
     expect(wrapper.text()).not.toContain('0 commits')
     expect(rows(wrapper)).toHaveLength(0)
   })
@@ -63,6 +70,20 @@ describe('CommitHistory', () => {
 
   it('draws a graph dot in every row', () => {
     expect(mountHistory().findAll('svg circle')).toHaveLength(10)
+  })
+
+  it('keeps the design’s 64px graph column for three lanes and widens it for more', () => {
+    const graphWidth = (wrapper: ReturnType<typeof mountHistory>) => wrapper.get('svg').attributes('width')
+    expect(graphWidth(mountHistory())).toBe('64')
+    const wide = inventoryCommits.map((commit, index) => (index === 0 ? { ...commit, graph: { ...commit.graph, lane: 5 } } : commit))
+    expect(graphWidth(mountHistory(0, { commits: wide }))).toBe('118')
+  })
+
+  it('shows a full hash as its first seven characters', () => {
+    const full = inventoryCommits.map((commit) => ({ ...commit, hash: commit.hash.padEnd(40, '0') }))
+    const text = rows(mountHistory(0, { commits: full }))[0]!.text()
+    expect(text).toContain('9f3a1c2')
+    expect(text).not.toContain('9f3a1c20')
   })
 
   it('marks the selected commit and emits the clicked index', async () => {

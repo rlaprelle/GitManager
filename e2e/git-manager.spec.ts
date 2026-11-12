@@ -28,7 +28,7 @@ test('opens on the first repository, its newest commit and first file', async ({
 })
 
 test('switching repository reloads branches and history', async ({ page }) => {
-  await sidebar(page).getByRole('button', { name: /storefront-web/ }).click()
+  await sidebar(page).getByRole('button', { name: /^storefront-web/ }).click()
 
   await expect(header(page).getByTestId('header-repo')).toHaveText('storefront-web')
   await expect(page.getByText('3 commits · all branches')).toBeVisible()
@@ -99,6 +99,13 @@ test('add repository explains what to choose', async ({ page }) => {
   await expect(status(page)).toHaveText('Add repository: choose a folder that contains a .git directory')
 })
 
+test('removing a repository takes it off the sidebar, keeping the open one', async ({ page }) => {
+  await sidebar(page).getByRole('button', { name: 'Remove storefront-web from the list' }).click()
+  await expect(sidebar(page).getByRole('button', { name: /^storefront-web/ })).toHaveCount(0)
+  await expect(status(page)).toHaveText('Removed storefront-web from the list')
+  await expect(header(page).getByTestId('header-repo')).toHaveText('inventory-service')
+})
+
 test('at phone width the panes stack without horizontal page scroll', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
@@ -119,6 +126,14 @@ test('at the smallest desktop size the whole window fits without page scroll', a
   }))
   expect(overflow).toEqual({ x: 0, y: 0 })
   await expect(status(page)).toBeInViewport()
+})
+
+test('at the smallest desktop size the diff stays on screen and a long history scrolls inside its pane', async ({ page }) => {
+  await page.setViewportSize(SMALLEST_DESKTOP)
+  await expect(diffViewer(page)).toBeInViewport({ ratio: 1 })
+  const history = page.getByRole('region', { name: 'Commit graph' }).locator('.overflow-auto')
+  const scroll = await history.evaluate((pane) => ({ content: pane.scrollHeight, visible: pane.clientHeight }))
+  expect(scroll.content).toBeGreaterThan(scroll.visible)
 })
 
 test('at the smallest desktop size branch labels stay inside the description column', async ({ page }) => {
