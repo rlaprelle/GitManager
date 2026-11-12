@@ -196,7 +196,7 @@ Every method is async and reports failure by rejecting, including when it's give
 
 **State:** `repositories`, `loading`, `status`, `selectedBranch`, `selectedCommitIndex`, `selectedFileIndex`, `compareOpen`, `leftPath`, `rightPath`, and the loading flags `historyLoading`, `filesLoading`, `diffLoading`. The selected repository id and the user's chosen diff mode are kept internally.
 
-**Loading in pieces.** Opening a repository loads its branches and history together, then the newest commit's files, then the first file's diff. Selecting a commit loads its files and then the first diff; selecting a file loads its diff. Each of these areas is a `latestLoad` (`src/composables/latestLoad.ts`): it holds the area's value and its loading and failed flags, and only its most recent load may change it. A slow response for something the user has already clicked away from is dropped, and its failure isn't reported. History asks for at most `HISTORY_LIMIT` (200) commits. The selection actions return promises that settle when their loads finish.
+**Loading in pieces.** Opening a repository loads its branches and history together, then the newest commit's files, then the first file's diff. Selecting a commit loads its files and then the first diff; selecting a file loads its diff. Each of these areas is a `latestLoad` (`src/composables/latestLoad.ts`): it holds the area's value and its loading and failed flags, and only its most recent load may change it. A slow response for something the user has already clicked away from is dropped, and its failure isn't reported. History asks for `HISTORY_LIMIT` (200) commits at first; `showMoreHistory()` asks for 200 more each time (re-reading the longer page quietly, keeping the selection) while `loadingMoreHistory` is true. The longer history lasts through refreshes; opening a repository starts again at 200. The selection actions return promises that settle when their loads finish.
 
 **Derived:**
 
@@ -228,7 +228,7 @@ Behavioural rules the composable enforces. Tests cover each of them, so change t
 
 ### Diffs (`src/lib/diff.ts`)
 
-- `toUnifiedLines(hunks)` emits a `hunk` header row for each hunk, followed by `context`, `add` or `del` rows. Each row carries its old and new line numbers. Additions have no old number and deletions have no new number.
+- `toUnifiedLines(hunks)` emits a `hunk` header row for each hunk, followed by `context`, `add` or `del` rows. Each row carries its old and new line numbers. Additions have no old number and deletions have no new number. git's `\ No newline at end of file` becomes a `note` row with no numbers; it isn't a line of the file, so it neither counts in `hunkHeader` nor shifts the numbering. The side-by-side view leaves notes out.
 - `toSideBySideRows(hunks)` pairs each run of deletions with the run of additions that follows it, row by row. When one side runs out, its cells are filled with `empty`. Context lines appear on both sides. Separator rows (`⋯ from line N · context`, using the hunk's new start line) come before every hunk when there is more than one hunk, or when any hunk starts after line 1 on either side.
 - `invertHunks(hunks)` swaps `+` and `-` and the start lines, then lists each change's removals before its additions, as git does (keeping a `\ No newline` note after its line). It returns new objects and never changes its input.
 - `parseUnifiedDiff(text)` (`src/lib/parseDiff.ts`) reads `git diff` output into hunks, skipping file headers; a binary file has none.
@@ -312,7 +312,7 @@ Stable selectors for the tests are roles and labels first, then `data-testid`. A
 ## Known limitations
 
 - The desktop app is read-only: Fetch, Pull, Push and Checkout are hidden until they're built (credentials, a dirty working tree and conflicts need handling first).
-- The history shows only the newest 200 commits (the header says so when there are more). There is no "load more" yet, and the list isn't virtualized. `git status` on a very large working tree can still be slow.
+- The history loads 200 commits at a time ("Show more commits"), and the list isn't virtualized, so thousands of rows get slow. Each page re-reads the whole history from the top, since the lane layout depends on everything above. `git status` on a very large working tree can still be slow.
 - Renames show as a deletion plus an addition. A merge shows only what it brought into its first parent.
 - Branches beyond 8 lanes share the last lane.
 - Not covered by tests: submodules, Git LFS, a worktree opened directly, a damaged `.git`.

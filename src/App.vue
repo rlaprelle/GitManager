@@ -34,6 +34,7 @@ const {
   leftPath,
   rightPath,
   historyLoading,
+  loadingMoreHistory,
   filesLoading,
   diffLoading,
   repository,
@@ -66,6 +67,7 @@ const {
   addRepository,
   removeRepository,
   refresh,
+  showMoreHistory,
   // The data source is a service, not state: unwrap it in case a parent passed it in reactive props.
 } = useGitManager(toRaw(props.source), { comparePaths: props.comparePaths })
 
@@ -148,11 +150,13 @@ onUnmounted(() => {
           <CommitHistory
             :commits="commits"
             :has-more="historyHasMore"
+            :loading-more="loadingMoreHistory"
             :message="historyMessage"
             :selected-index="selectedCommitIndex"
             :current-branch="currentBranch"
             :now="now"
             @select="selectCommit"
+            @show-more="showMoreHistory"
           />
           <DiffPanel
             :commit="commit"

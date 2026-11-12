@@ -6,7 +6,7 @@ import { latestLoad } from './latestLoad'
 
 export type DiffMode = 'git' | 'simple'
 
-/** How many of a repository's newest commits the history shows. */
+/** How many of a repository's newest commits the history shows at first, and how many more each "show more" adds. */
 export const HISTORY_LIMIT = 200
 
 export interface GitManagerOptions {
@@ -33,6 +33,10 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   const filesLoad = latestLoad<FileChange[]>([])
   const diffLoad = latestLoad<Hunk[]>([])
   const compareLoad = latestLoad<Hunk[]>([])
+
+  /** How many commits the open repository's history asks for; grows with showMoreHistory. */
+  const historyLimit = ref(HISTORY_LIMIT)
+  const loadingMoreHistory = ref(false)
 
   const compareOpen = ref(false)
   const leftPath = ref(options.comparePaths.left)
@@ -111,12 +115,13 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   async function openRepository(repo: Repository): Promise<void> {
     selectedRepoId.value = repo.id
     selectedBranch.value = repo.currentBranch
+    historyLimit.value = HISTORY_LIMIT
     resetCommitView()
     filesLoad.clear()
     diffLoad.clear()
     const [, historyLoaded] = await Promise.all([
       branchesLoad.run(() => source.getBranches(repo.id), reportFailure('branches')),
-      historyLoad.run(() => source.getHistory(repo.id, HISTORY_LIMIT), reportFailure('history')),
+      historyLoad.run(() => source.getHistory(repo.id, historyLimit.value), reportFailure('history')),
     ])
     if (historyLoaded) await openCommit()
   }
@@ -325,12 +330,23 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
       else closeRepository()
       return
     }
-    const selectedHash = commit.value?.hash
-    const [, historyLoaded] = await Promise.all([
+    await Promise.all([
       branchesLoad.refresh(() => source.getBranches(open.id), reportFailure('branches')),
-      historyLoad.refresh(() => source.getHistory(open.id, HISTORY_LIMIT), reportFailure('history')),
+      reloadHistoryKeepingSelection(open.id),
     ])
-    if (!historyLoaded) return
+  }
+
+  /**
+   * Reloads the history (as many commits as `historyLimit` says) while the current one stays
+   * on screen, then reselects the selected commit by hash; if it's gone, opens the newest.
+   */
+  async function reloadHistoryKeepingSelection(repoId: string): Promise<void> {
+    const selectedHash = commit.value?.hash
+    const loaded = await historyLoad.refresh(
+      () => source.getHistory(repoId, historyLimit.value),
+      reportFailure('history'),
+    )
+    if (!loaded) return
     const stillThere = commits.value.findIndex((candidate) => candidate.hash === selectedHash)
     if (stillThere >= 0) {
       // A commit never changes, so its files and diff on screen are still right.
@@ -339,6 +355,21 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     }
     resetCommitView()
     await openCommit()
+  }
+
+  // ---- showing more history ----
+
+  /** Adds the next HISTORY_LIMIT commits to the history, keeping the selection. */
+  async function showMoreHistory(): Promise<void> {
+    const repo = repository.value
+    if (!repo || loadingMoreHistory.value || !historyHasMore.value) return
+    historyLimit.value += HISTORY_LIMIT
+    loadingMoreHistory.value = true
+    try {
+      await reloadHistoryKeepingSelection(repo.id)
+    } finally {
+      loadingMoreHistory.value = false
+    }
   }
 
   function closeRepository(): void {
@@ -360,6 +391,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     leftPath,
     rightPath,
     historyLoading: historyLoad.loading,
+    loadingMoreHistory,
     filesLoading: filesLoad.loading,
     diffLoading: diffLoad.loading,
     // derived
@@ -395,6 +427,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     addRepository,
     removeRepository,
     refresh,
+    showMoreHistory,
   }
 }
 

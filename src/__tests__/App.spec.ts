@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import { SAMPLE_COMPARE_PATHS } from '@/data/sampleRepositories'
+import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositories'
 import type { GitDataSource } from '@/services/GitDataSource'
 import { MockGitDataSource } from '@/services/MockGitDataSource'
 import { heldSource } from '@/composables/__tests__/heldSource'
@@ -181,6 +181,26 @@ describe('App', () => {
     window.dispatchEvent(new Event('focus'))
     await flushPromises()
     expect(listed).toBe(2)
+  })
+
+  it('shows more of a long history from the button at the end of the list', async () => {
+    const long = structuredClone(sampleRepositories[0]!)
+    long.commits = Array.from({ length: 250 }, (_, i) => ({
+      hash: `c${249 - i}`,
+      parents: i < 249 ? [`c${248 - i}`] : [],
+      message: `Commit ${249 - i}`,
+      author: 'You',
+      date: new Date(Date.UTC(2026, 0, 1) + (249 - i) * 60_000).toISOString(),
+      refs: [],
+      files: [],
+    }))
+    const wrapper = await mountApp(new MockGitDataSource([long]))
+    const rows = () => wrapper.findAll('section[aria-label="Commit graph"] button[aria-pressed]')
+    expect(rows()).toHaveLength(200)
+    await wrapper.get('[data-testid="show-more-history"]').trigger('click')
+    await flushPromises()
+    expect(rows()).toHaveLength(250)
+    expect(wrapper.find('[data-testid="show-more-history"]').exists()).toBe(false)
   })
 
   it('applies a custom accent colour', async () => {

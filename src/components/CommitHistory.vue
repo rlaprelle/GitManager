@@ -10,6 +10,8 @@ const props = defineProps<{
   commits: Commit[]
   /** The repository has older commits than `commits` holds. */
   hasMore: boolean
+  /** The next page is on its way: the button says so and can't be clicked again. */
+  loadingMore: boolean
   /** Shown instead of rows and the commit count: 'Loading history…', 'No commits yet', ... */
   message: string | null
   selectedIndex: number
@@ -18,7 +20,7 @@ const props = defineProps<{
   now: Date
 }>()
 
-defineEmits<{ select: [index: number] }>()
+defineEmits<{ select: [index: number]; showMore: [] }>()
 
 const columns = 'grid items-center gap-3 pr-4 pl-2'
 
@@ -72,6 +74,18 @@ const columnTemplate = computed(() => ({
           <span class="text-[12px] whitespace-nowrap text-gm-muted">{{ commitDateLabel(commit.date, now) }}</span>
           <span class="font-mono text-[12px] text-gm-subtle">{{ shortHash(commit.hash) }}</span>
         </button>
+
+        <div v-if="hasMore && !message" class="px-4 py-3">
+          <button
+            type="button"
+            data-testid="show-more-history"
+            class="inline-flex h-8 cursor-pointer items-center rounded-lg border border-gm-line-strong bg-gm-raised px-3 text-[12px] text-gm-text hover:bg-gm-hover disabled:cursor-default disabled:text-gm-muted"
+            :disabled="loadingMore"
+            @click="$emit('showMore')"
+          >
+            {{ loadingMore ? 'Loading more commits…' : 'Show more commits' }}
+          </button>
+        </div>
       </div>
     </div>
   </section>
