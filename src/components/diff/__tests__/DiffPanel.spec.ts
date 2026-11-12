@@ -80,6 +80,29 @@ describe('DiffPanel in commit mode', () => {
     expect(wrapper.find('[data-testid="unified-diff"]').exists()).toBe(false)
   })
 
+  it('shows a renamed file with an R and where it came from, and labels the left side with its old name', () => {
+    const wrapper = mount(DiffPanel, {
+      props: {
+        commit: expiryCommit,
+        files: [{ path: 'docs/guide.md', status: 'R' as const, oldPath: 'GUIDE.md' }],
+        filesLoading: false,
+        diffLoading: false,
+        selectedFileIndex: 0,
+        compareOpen: false,
+        diffMode: 'simple' as DiffMode,
+        hunks: [{ oldStart: 1, newStart: 1, context: '', lines: ['-old', '+new'] }],
+        leftPath: '',
+        rightPath: '',
+      },
+    })
+    const row = wrapper.get('button[aria-pressed="true"]')
+    expect(row.text()).toContain('R')
+    expect(row.text()).toContain('guide.md')
+    expect(row.text()).toContain('renamed from GUIDE.md')
+    expect(wrapper.get('[data-testid="left-label"]').text()).toBe('GUIDE.md @ 9f3a1c2^')
+    expect(wrapper.get('[data-testid="right-label"]').text()).toBe('guide.md @ 9f3a1c2')
+  })
+
   it('labels the left side of a newly added file as a new file', () => {
     const wrapper = mountPanel({ diffMode: 'simple' })
     expect(wrapper.get('[data-testid="left-label"]').text()).toBe('(new file)')

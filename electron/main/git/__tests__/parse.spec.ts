@@ -75,6 +75,15 @@ describe('parseNameStatus', () => {
       { path: 'link', status: 'M' },
     ])
   })
+
+  it('reads a rename (R with its similarity) as two paths: from, then to', () => {
+    const output = ['R100', 'GUIDE.md', 'docs/guide.md', 'M', 'app.ts', 'R087', 'a b.txt', 'c/a b.txt', ''].join(NUL)
+    expect(parseNameStatus(output)).toEqual([
+      { path: 'docs/guide.md', status: 'R', oldPath: 'GUIDE.md' },
+      { path: 'app.ts', status: 'M' },
+      { path: 'c/a b.txt', status: 'R', oldPath: 'a b.txt' },
+    ])
+  })
 })
 
 describe('countStatusEntries', () => {

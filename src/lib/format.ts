@@ -15,6 +15,16 @@ export function syncLabel(branch: Pick<LocalBranch, 'ahead' | 'behind'>): string
   return parts.join(' ')
 }
 
+/**
+ * Where a renamed file came from, in the fewest words that tell: its old name if that changed
+ * ('renamed from Notes.java'), otherwise its old folder ('moved from src/main/').
+ */
+export function renameLabel(oldPath: string, newPath: string): string {
+  const before = splitPath(oldPath)
+  if (before.name !== splitPath(newPath).name) return `renamed from ${before.name}`
+  return `moved from ${before.dir || 'the top folder'}`
+}
+
 /** The seven-character form git shows ('9f3a1c2'); data sources send full hashes. */
 export function shortHash(hash: string): string {
   return hash.slice(0, 7)

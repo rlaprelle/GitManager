@@ -84,12 +84,17 @@ export function describeGitDataSourceContract(name: string, createSubject: () =>
       })
     })
 
-    it('lists each commit’s changed files once, with a status of A, M or D', async () => {
+    it('lists each commit’s changed files once, with a status of A, M, D or R (with the old path)', async () => {
       await eachCheckedCommit(async (source, repo, commit) => {
         const files = await source.getCommitFiles(repo.id, commit.hash)
         const paths = files.map((file) => file.path)
         expect(new Set(paths).size, commit.hash).toBe(paths.length)
-        for (const file of files) expect(['A', 'M', 'D'], `${commit.hash} ${file.path}`).toContain(file.status)
+        for (const file of files) {
+          const label = `${commit.hash} ${file.path}`
+          expect(['A', 'M', 'D', 'R'], label).toContain(file.status)
+          if (file.status === 'R') expect(file.oldPath, label).toBeTruthy()
+          else expect(file.oldPath, label).toBeUndefined()
+        }
       })
     })
 

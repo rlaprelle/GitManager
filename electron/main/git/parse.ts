@@ -66,21 +66,31 @@ function branchLabels(decoration: string): string[] {
     .filter((label) => label && label !== 'HEAD' && !label.startsWith('tag: ') && !label.endsWith('/HEAD'))
 }
 
-/** `diff-tree -r -z --name-status --no-renames`: status and path, each NUL-terminated. */
+/**
+ * `diff-tree -r -z --name-status -M`: a status, then its path, each NUL-terminated; a rename
+ * ('R' plus a similarity, e.g. 'R087') is followed by two paths, where it was and where it is.
+ */
 export function parseNameStatus(output: string): FileChange[] {
   const fields = output.split(NUL)
   const changes: FileChange[] = []
-  for (let i = 0; i + 1 < fields.length; i += 2) {
-    const status = fields[i]!
-    const path = fields[i + 1]!
-    if (!status || !path) continue
-    changes.push({ path, status: fileStatus(status) })
+  let i = 0
+  while (i < fields.length) {
+    const code = fields[i++]!
+    if (!code) continue
+    if (code.startsWith('R')) {
+      const oldPath = fields[i++]!
+      const path = fields[i++]!
+      changes.push({ path, status: 'R', oldPath })
+      continue
+    }
+    const path = fields[i++]
+    if (path) changes.push({ path, status: fileStatus(code) })
   }
   return changes
 }
 
 /** A, M and D as they are; anything else git reports for one path (a type change, T) counts as modified. */
-function fileStatus(code: string): FileStatus {
+function fileStatus(code: string): Exclude<FileStatus, 'R'> {
   return code === 'A' || code === 'D' ? code : 'M'
 }
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { FileChange, FileStatus } from '@/types/git'
-import { pluralize, splitPath } from '@/lib/format'
+import { pluralize, renameLabel, splitPath } from '@/lib/format'
 
 defineProps<{ files: FileChange[]; loading: boolean; selectedIndex: number }>()
 
@@ -10,6 +10,7 @@ const STATUS_COLOR: Record<FileStatus, string> = {
   A: 'text-gm-add-sign',
   M: 'text-gm-warn',
   D: 'text-gm-del-sign',
+  R: 'text-gm-link',
 }
 </script>
 
@@ -36,7 +37,10 @@ const STATUS_COLOR: Record<FileStatus, string> = {
         </span>
         <span class="flex min-w-0 flex-col gap-px">
           <span class="truncate text-[12px] font-medium">{{ splitPath(file.path).name }}</span>
-          <span class="truncate font-mono text-[11px] text-gm-faint">{{ splitPath(file.path).dir }}</span>
+          <span v-if="file.oldPath" class="truncate font-mono text-[11px] text-gm-faint" :title="file.oldPath">
+            {{ renameLabel(file.oldPath, file.path) }}
+          </span>
+          <span v-else class="truncate font-mono text-[11px] text-gm-faint">{{ splitPath(file.path).dir }}</span>
         </span>
       </button>
     </div>

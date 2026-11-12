@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { commitDateLabel, lastFetchLabel, pluralize, shortHash, splitPath, syncLabel } from '../format'
+import { commitDateLabel, lastFetchLabel, pluralize, renameLabel, shortHash, splitPath, syncLabel } from '../format'
 
 describe('splitPath', () => {
   it('splits a forward-slash path into file name and directory', () => {
@@ -77,6 +77,18 @@ describe('lastFetchLabel', () => {
 
   it('switches to a date after a week', () => {
     expect(lastFetchLabel(local(2026, 10, 30, 11, 22).toISOString(), now)).toBe('Oct 30')
+  })
+})
+
+describe('renameLabel', () => {
+  it('names the old file when the name changed, wherever it lived', () => {
+    expect(renameLabel('src/main/NotesService.java', 'src/main/notes/NoteStore.java')).toBe('renamed from NotesService.java')
+    expect(renameLabel('GUIDE.md', 'docs/guide.md')).toBe('renamed from GUIDE.md')
+  })
+
+  it('names the old folder when only the folder changed', () => {
+    expect(renameLabel('src/main/Notes.java', 'src/notes/Notes.java')).toBe('moved from src/main/')
+    expect(renameLabel('Notes.java', 'src/Notes.java')).toBe('moved from the top folder')
   })
 })
 

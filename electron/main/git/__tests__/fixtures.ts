@@ -182,6 +182,22 @@ export async function createLongRepository(fixtures: Fixtures, name: string, cou
   return repo
 }
 
+/** Moves a file with `git mv` (optionally rewriting it) and commits, as the user would. */
+export async function renameInFixture(
+  fixtures: Fixtures,
+  repo: string,
+  from: string,
+  to: string,
+  message: string,
+  newContent?: string,
+): Promise<void> {
+  await mkdir(join(repo, to, '..'), { recursive: true })
+  await userGit(fixtures, repo, 'mv', from, to)
+  if (newContent !== undefined) await writeFile(join(repo, to), newContent)
+  await userGit(fixtures, repo, 'add', '--all')
+  await userGit(fixtures, repo, 'commit', '--quiet', '-m', message)
+}
+
 /** Creates and checks out a branch, as the user would. */
 export async function switchToNewBranchInFixture(fixtures: Fixtures, repo: string, branch: string): Promise<void> {
   await userGit(fixtures, repo, 'switch', '--quiet', '-c', branch)

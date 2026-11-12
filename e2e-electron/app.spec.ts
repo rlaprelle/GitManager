@@ -10,6 +10,7 @@ import {
   createLongRepository,
   createScratchRepository,
   removeFixtures,
+  renameInFixture,
   switchToNewBranchInFixture,
 } from '../electron/main/git/__tests__/fixtures'
 import {
@@ -243,6 +244,22 @@ test('shows the newest 200 commits of a long history, and the rest on request', 
   await expect(history).toContainText('230 commits · all branches')
   await expect(history.getByRole('button', { name: 'Show more commits' })).toHaveCount(0)
   await expect(diffViewer()).toContainText('Commit 230')
+})
+
+test('shows a renamed and edited file as one rename, diffed against its old self', async () => {
+  const repo = await createScratchRepository(fixtures, 'with-rename')
+  const notes = Array.from({ length: 8 }, (_, i) => `note ${i + 1}`)
+  await commitInFixture(fixtures, repo, 'notes.txt', notes.join('\n') + '\n', 'Take notes')
+  const edited = notes.map((line, i) => (i === 2 ? 'note three, edited' : line))
+  await renameInFixture(fixtures, repo, 'notes.txt', 'docs/notes.md', 'Move the notes', edited.join('\n') + '\n')
+  await launch([{ id: 'with-rename', path: repo }])
+
+  await expect(diffViewer()).toContainText('Move the notes')
+  await expect(diffViewer()).toContainText('1 file changed')
+  await expect(diffViewer()).toContainText('renamed from notes.txt')
+  const diff = window.getByTestId('unified-diff')
+  await expect(diff.locator('[data-kind="del"]')).toHaveText([/note 3/])
+  await expect(diff.locator('[data-kind="add"]')).toHaveText([/note three, edited/])
 })
 
 test('the built desktop app contains none of the browser version’s sample data', async () => {

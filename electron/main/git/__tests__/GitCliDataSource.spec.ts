@@ -4,15 +4,33 @@ import { describeGitDataSourceContract } from '../../../../src/services/__tests_
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { GitCliDataSource, type RepositoryCatalog, type StoredRepository } from '../GitCliDataSource'
-import { type Fixtures, createFixtures, fixtureGit, removeFixtures } from './fixtures'
+import {
+  type Fixtures,
+  commitInFixture,
+  createFixtures,
+  createScratchRepository,
+  fixtureGit,
+  removeFixtures,
+  renameInFixture,
+} from './fixtures'
 
 // Every call starts a git process; on Windows that adds up across the contract's loops.
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 })
 
 let fixtures: Fixtures
+/** A repository whose last two commits are a pure rename and a rename with an edit. */
+let renamed: string
+
+const NOTES = Array.from({ length: 10 }, (_, i) => `note ${i + 1}`)
 
 beforeAll(async () => {
   fixtures = await createFixtures()
+  renamed = await createScratchRepository(fixtures, 'renamed')
+  await commitInFixture(fixtures, renamed, 'GUIDE.md', '# Guide\n\nHow to use it.\n', 'Write the guide')
+  await commitInFixture(fixtures, renamed, 'notes.txt', NOTES.join('\n') + '\n', 'Take notes')
+  await renameInFixture(fixtures, renamed, 'GUIDE.md', 'docs/guide.md', 'Move the guide into docs')
+  const edited = NOTES.map((line, i) => (i === 4 ? 'note five, edited' : line))
+  await renameInFixture(fixtures, renamed, 'notes.txt', 'docs/notes.md', 'Rename and edit the notes', edited.join('\n') + '\n')
 })
 
 afterAll(async () => {
@@ -50,6 +68,7 @@ const allFixtures = (): StoredRepository[] => [
   { id: 'sample', path: fixtures.sample },
   { id: 'empty', path: fixtures.empty },
   { id: 'detached', path: fixtures.detached },
+  { id: 'renamed', path: renamed },
 ]
 
 describeGitDataSourceContract('GitCliDataSource', async () => ({
@@ -207,6 +226,24 @@ describe('GitCliDataSource reading the fixture repositories', () => {
 
   it('reports that write operations are not available yet', async () => {
     await expect(sample().fetch()).rejects.toThrow("Fetch isn't available in this version yet")
+  })
+})
+
+describe('GitCliDataSource and renamed files', () => {
+  const source = () => sourceFor({ id: 'renamed', path: renamed })
+  const hashOf = async (revision: string) => (await fixtureGit(renamed, 'rev-parse', revision)).trim()
+
+  it('lists a moved file once, as R with the path it came from, and no change inside it', async () => {
+    const moved = await hashOf('HEAD~1')
+    expect(await source().getCommitFiles('renamed', moved)).toEqual([{ path: 'docs/guide.md', status: 'R', oldPath: 'GUIDE.md' }])
+    expect(await source().getFileDiff('renamed', moved, 'docs/guide.md')).toEqual([])
+  })
+
+  it('diffs a renamed and edited file against its old self, not as a whole new file', async () => {
+    const edited = await hashOf('HEAD')
+    expect(await source().getCommitFiles('renamed', edited)).toEqual([{ path: 'docs/notes.md', status: 'R', oldPath: 'notes.txt' }])
+    const hunks = await source().getFileDiff('renamed', edited, 'docs/notes.md')
+    expect(hunks.flatMap((hunk) => hunk.lines).filter((line) => line[0] !== ' ')).toEqual(['-note 5', '+note five, edited'])
   })
 })
 
