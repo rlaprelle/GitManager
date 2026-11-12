@@ -95,7 +95,11 @@ onMounted(load)
         @push="push"
       />
 
-      <div class="flex min-h-0 flex-auto flex-wrap">
+      <!--
+        Wraps only on narrow screens, where the page scrolls. A wrapping row takes its height from its content,
+        so on the desktop it must not wrap: the panes get the window's height and scroll inside themselves.
+      -->
+      <div class="flex min-h-0 flex-auto max-[860px]:flex-wrap">
         <nav
           aria-label="Repositories and branches"
           class="flex min-w-0 flex-[1_1_260px] flex-col border-r border-gm-line bg-gm-sidebar"

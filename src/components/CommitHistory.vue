@@ -32,7 +32,8 @@ const columnTemplate = computed(() => ({
 </script>
 
 <template>
-  <section aria-label="Commit graph" class="flex min-h-[220px] flex-auto flex-col">
+  <!-- Takes the space the diff panel leaves; a long history scrolls inside. Natural height on narrow screens. -->
+  <section aria-label="Commit graph" class="flex min-h-[220px] flex-[1_1_0px] flex-col max-[860px]:flex-none">
     <div class="flex flex-none items-center gap-3 border-b border-gm-line px-4 py-2.5">
       <h2 class="m-0 text-[13px] font-semibold">History</h2>
       <span v-if="!message" class="text-[12px] text-gm-muted">

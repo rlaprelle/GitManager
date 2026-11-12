@@ -153,6 +153,7 @@ test.describe('with git installed', () => {
       )
       .toEqual({ x: 0, y: 0 })
     await expect(status()).toBeInViewport()
+    await expect(diffViewer()).toBeInViewport({ ratio: 1 })
   })
 
   test('works offline: loads only from disk and renders in the bundled fonts', async () => {

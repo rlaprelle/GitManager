@@ -128,6 +128,14 @@ test('at the smallest desktop size the whole window fits without page scroll', a
   await expect(status(page)).toBeInViewport()
 })
 
+test('at the smallest desktop size the diff stays on screen and a long history scrolls inside its pane', async ({ page }) => {
+  await page.setViewportSize(SMALLEST_DESKTOP)
+  await expect(diffViewer(page)).toBeInViewport({ ratio: 1 })
+  const history = page.getByRole('region', { name: 'Commit graph' }).locator('.overflow-auto')
+  const scroll = await history.evaluate((pane) => ({ content: pane.scrollHeight, visible: pane.clientHeight }))
+  expect(scroll.content).toBeGreaterThan(scroll.visible)
+})
+
 test('at the smallest desktop size branch labels stay inside the description column', async ({ page }) => {
   await page.setViewportSize(SMALLEST_DESKTOP)
   const overflowing = await page

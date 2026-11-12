@@ -58,7 +58,7 @@ const toolbarButton =
 <template>
   <section
     aria-label="Diff viewer"
-    class="flex min-h-0 flex-[0_0_400px] flex-col border-t border-gm-line-strong bg-gm-sidebar max-[860px]:flex-none"
+    class="flex min-h-[240px] flex-[0_1_400px] flex-col border-t border-gm-line-strong bg-gm-sidebar max-[860px]:flex-none"
   >
     <div class="flex flex-none flex-wrap items-center gap-x-3 gap-y-2 border-b border-gm-line px-4 py-2">
       <template v-if="!compareOpen">
