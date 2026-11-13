@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { countStatusEntries, parseBranches, parseCommitLog, parseNameStatus } from '../parse'
+import { checkoutRefusal, countStatusEntries, parseBranches, parseCommitLog, parseNameStatus } from '../parse'
 
 const NUL = '\0'
 const UNIT = '\x1f'
@@ -90,5 +90,57 @@ describe('countStatusEntries', () => {
   it('counts one entry per NUL-terminated path', () => {
     expect(countStatusEntries([' M a.txt', '?? b.txt', 'A  c/d.txt', ''].join(NUL))).toBe(3)
     expect(countStatusEntries('')).toBe(0)
+  })
+})
+
+describe('checkoutRefusal', () => {
+  // Git 2.46's own words, captured from `git switch`.
+  const changed = (...files: string[]) =>
+    [
+      'error: Your local changes to the following files would be overwritten by checkout:',
+      ...files.map((file) => `\t${file}`),
+      'Please commit your changes or stash them before you switch branches.',
+      'Aborting',
+      '',
+    ].join('\n')
+  const untracked = (...files: string[]) =>
+    [
+      'error: The following untracked working tree files would be overwritten by checkout:',
+      ...files.map((file) => `\t${file}`),
+      'Please move or remove them before you switch branches.',
+      'Aborting',
+      '',
+    ].join('\n')
+
+  it('names the changed files that would be overwritten', () => {
+    expect(checkoutRefusal(changed('README.md'), 'feature')).toBe(
+      'your changes to README.md would be overwritten by switching to feature. Commit or stash them first.',
+    )
+    expect(checkoutRefusal(changed('a.txt', 'docs/read me é.md'), 'feature')).toBe(
+      'your changes to a.txt and docs/read me é.md would be overwritten by switching to feature. Commit or stash them first.',
+    )
+  })
+
+  it('names three files at most', () => {
+    expect(checkoutRefusal(changed('a', 'b', 'c'), 'x')).toMatch(/^your changes to a, b and c would/)
+    expect(checkoutRefusal(changed('a', 'b', 'c', 'd', 'e'), 'x')).toMatch(/^your changes to a, b, c and 2 more would/)
+  })
+
+  it('names untracked files that would be overwritten', () => {
+    expect(checkoutRefusal(untracked('new.txt'), 'other')).toBe(
+      'untracked file new.txt would be overwritten by switching to other. Move or remove it first.',
+    )
+    expect(checkoutRefusal(untracked('a', 'b'), 'other')).toBe(
+      'untracked files a and b would be overwritten by switching to other. Move or remove them first.',
+    )
+  })
+
+  it('reads Windows line endings', () => {
+    expect(checkoutRefusal(changed('a.txt').replaceAll('\n', '\r\n'), 'x')).toMatch(/^your changes to a.txt would/)
+  })
+
+  it('leaves any other error alone', () => {
+    expect(checkoutRefusal("fatal: 'main' is already used by worktree at 'C:/work/other'\n", 'main')).toBeNull()
+    expect(checkoutRefusal('', 'main')).toBeNull()
   })
 })

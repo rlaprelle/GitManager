@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { reactive } from 'vue'
 import type { GitBridge } from '@/types/bridge'
 import { IpcGitDataSource } from '../IpcGitDataSource'
 import { MockGitDataSource } from '../MockGitDataSource'
@@ -16,12 +17,13 @@ function recordingBridge() {
     compareFiles: (...args) => (calls.push(['compareFiles', ...args]), mock.compareFiles(...args)),
     addRepository: (...args) => (calls.push(['addRepository', ...args]), mock.addRepository()),
     removeRepository: (...args) => (calls.push(['removeRepository', ...args]), mock.removeRepository(...args)),
+    checkout: (...args) => (calls.push(['checkout', ...args]), mock.checkout(...args)),
   }
   return { bridge, calls }
 }
 
 describe('IpcGitDataSource', () => {
-  it('forwards every read call, with its arguments, to the bridge', async () => {
+  it('forwards every call it supports, with its arguments, to the bridge', async () => {
     const { bridge, calls } = recordingBridge()
     const source = new IpcGitDataSource(bridge)
     await source.listRepositories()
@@ -32,6 +34,7 @@ describe('IpcGitDataSource', () => {
     await source.compareFiles('inventory', 'a.yml', 'b.yml')
     await source.addRepository()
     await source.removeRepository('pricing')
+    await source.checkout('inventory', { remote: 'origin/release/2.4' }, { leaveCommits: true })
     expect(calls).toEqual([
       ['listRepositories'],
       ['getBranches', 'inventory'],
@@ -41,13 +44,28 @@ describe('IpcGitDataSource', () => {
       ['compareFiles', 'inventory', 'a.yml', 'b.yml'],
       ['addRepository'],
       ['removeRepository', 'pricing'],
+      ['checkout', 'inventory', { remote: 'origin/release/2.4' }, { leaveCommits: true }],
     ])
   })
 
-  it('rejects write operations without calling the bridge', async () => {
+  it('sends plain copies over IPC, even of Vue reactive objects, which IPC can’t clone', async () => {
     const { bridge, calls } = recordingBridge()
     const source = new IpcGitDataSource(bridge)
-    await expect(source.checkout('inventory', 'main')).rejects.toThrow("Checkout isn't available in this version yet")
+    await source.checkout('inventory', reactive({ local: 'main' }), reactive({ leaveCommits: true }))
+    await source.checkout('inventory', reactive({ remote: 'origin/release/2.4' }))
+    for (const [, , target, options] of calls) {
+      // Electron's IPC clones its arguments the way structuredClone does, which throws on a proxy.
+      expect(() => structuredClone([target, options])).not.toThrow()
+    }
+    expect(calls.map((call) => call.slice(2))).toEqual([
+      [{ local: 'main' }, { leaveCommits: true }],
+      [{ remote: 'origin/release/2.4' }, {}],
+    ])
+  })
+
+  it('rejects Fetch, Pull and Push without calling the bridge', async () => {
+    const { bridge, calls } = recordingBridge()
+    const source = new IpcGitDataSource(bridge)
     await expect(source.fetch('inventory')).rejects.toThrow("Fetch isn't available")
     await expect(source.pull('inventory', 'main')).rejects.toThrow("Pull isn't available")
     await expect(source.push('inventory', 'main')).rejects.toThrow("Push isn't available")

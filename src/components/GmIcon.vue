@@ -12,6 +12,7 @@ export type IconName =
   | 'back'
   | 'swap'
   | 'remove'
+  | 'warning'
 
 withDefaults(defineProps<{ name: IconName; size?: number; strokeWidth?: number }>(), {
   size: 16,
@@ -64,6 +65,11 @@ withDefaults(defineProps<{ name: IconName; size?: number; strokeWidth?: number }
       <path d="M12 20V7" />
       <path d="M6 13l6-6 6 6" />
       <path d="M5 4h14" />
+    </template>
+    <template v-else-if="name === 'warning'">
+      <path d="M12 4 2.5 20h19L12 4z" />
+      <path d="M12 10v4.5" />
+      <path d="M12 17.5h.01" />
     </template>
     <template v-else-if="name === 'remove'">
       <path d="M6 6l12 12" />

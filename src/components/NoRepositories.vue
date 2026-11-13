@@ -11,8 +11,8 @@ defineEmits<{ add: [] }>()
       <GmIcon name="folder" :size="28" :stroke-width="1.6" class="text-gm-accent" />
       <h1 class="m-0 text-[18px] font-semibold">Add a repository to get started</h1>
       <p class="m-0 text-gm-soft">
-        Choose a folder that contains a git repository, or any folder inside one. Git Manager only reads it: nothing in
-        the repository is changed.
+        Choose a folder that contains a git repository, or any folder inside one. Browsing never changes it: only a
+        button you click, such as Checkout, does.
       </p>
       <button
         type="button"

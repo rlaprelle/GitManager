@@ -5,7 +5,7 @@ import '@fontsource-variable/jetbrains-mono'
 import './style.css'
 import App from './App.vue'
 import GitRequired from './components/GitRequired.vue'
-import type { GitDataSource } from './services/GitDataSource'
+import type { GitDataSource, RepositoryOperation } from './services/GitDataSource'
 import type { GitStatus } from './types/bridge'
 
 // Shared by the two entry points: main.ts (browser, sample data) and desktop.ts (installed git).
@@ -13,8 +13,8 @@ import type { GitStatus } from './types/bridge'
 export interface AppOptions {
   source: GitDataSource
   comparePaths: { left: string; right: string }
-  /** False hides the write operations. */
-  writable: boolean
+  /** The operations that change a repository this host offers; the others' buttons are hidden. */
+  operations: readonly RepositoryOperation[]
 }
 
 export function mountApp(options: AppOptions): void {

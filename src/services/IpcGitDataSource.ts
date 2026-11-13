@@ -2,6 +2,9 @@ import type { GitBridge } from '@/types/bridge'
 import type {
   AddRepositoryResult,
   Branches,
+  CheckoutOptions,
+  CheckoutResult,
+  CheckoutTarget,
   FileChange,
   HistoryPage,
   Hunk,
@@ -11,8 +14,8 @@ import type {
 import type { GitDataSource } from './GitDataSource'
 
 /**
- * The desktop app's data source: each read goes over the preload bridge to the main process,
- * which runs the installed git. Read-only for now; the UI hides the write operations.
+ * The desktop app's data source: each call goes over the preload bridge to the main process,
+ * which runs the installed git. Fetch, Pull and Push aren't built yet; the UI hides them.
  */
 export class IpcGitDataSource implements GitDataSource {
   constructor(private readonly git: GitBridge) {}
@@ -50,8 +53,14 @@ export class IpcGitDataSource implements GitDataSource {
     return this.git.removeRepository(repoId)
   }
 
-  checkout(_repoId: string, _branch: string): Promise<OperationResult> {
-    return notYetAvailable('Checkout')
+  /**
+   * Sends plain copies: IPC clones its arguments, and a Vue reactive object (the composable
+   * keeps a waiting checkout in a ref) is a proxy, which can't be cloned.
+   */
+  checkout(repoId: string, target: CheckoutTarget, options: CheckoutOptions = {}): Promise<CheckoutResult> {
+    const plainTarget: CheckoutTarget = 'local' in target ? { local: target.local } : { remote: target.remote }
+    const plainOptions: CheckoutOptions = options.leaveCommits === undefined ? {} : { leaveCommits: options.leaveCommits }
+    return this.git.checkout(repoId, plainTarget, plainOptions)
   }
 
   fetch(_repoId: string): Promise<OperationResult> {

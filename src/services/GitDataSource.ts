@@ -1,4 +1,20 @@
-import type { AddRepositoryResult, Branches, FileChange, HistoryPage, Hunk, OperationResult, Repository } from '@/types/git'
+import type {
+  AddRepositoryResult,
+  Branches,
+  CheckoutOptions,
+  CheckoutResult,
+  CheckoutTarget,
+  FileChange,
+  HistoryPage,
+  Hunk,
+  OperationResult,
+  Repository,
+} from '@/types/git'
+
+/** The operations that change a repository; a host shows the buttons only for those it offers. */
+export type RepositoryOperation = 'checkout' | 'fetch' | 'pull' | 'push'
+
+export const ALL_OPERATIONS: readonly RepositoryOperation[] = ['checkout', 'fetch', 'pull', 'push']
 
 /**
  * Everything the UI needs from git, one call per thing the screen shows, so a real
@@ -21,7 +37,12 @@ export interface GitDataSource {
   addRepository(): Promise<AddRepositoryResult>
   /** Takes a repository off the list. Never touches its folder. */
   removeRepository(repoId: string): Promise<OperationResult>
-  checkout(repoId: string, branch: string): Promise<OperationResult>
+  /**
+   * Switches to a branch the repository has, carrying uncommitted changes along as git does
+   * (git refuses, and so does this, when they would be overwritten). A remote target creates
+   * the local branch that tracks it, and is refused when a local branch of that name exists.
+   */
+  checkout(repoId: string, target: CheckoutTarget, options?: CheckoutOptions): Promise<CheckoutResult>
   fetch(repoId: string): Promise<OperationResult>
   pull(repoId: string, branch: string): Promise<OperationResult>
   push(repoId: string, branch: string): Promise<OperationResult>

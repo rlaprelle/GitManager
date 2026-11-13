@@ -1,11 +1,15 @@
 import { stat } from 'node:fs/promises'
 import { basename, isAbsolute, normalize, relative, resolve } from 'node:path'
+import { localNameOf, switchedMessage } from '../../../src/lib/checkout'
 import { layoutLanes, primaryBranchTip } from '../../../src/lib/laneLayout'
 import { parseUnifiedDiff } from '../../../src/lib/parseDiff'
 import type { GitDataSource } from '../../../src/services/GitDataSource'
 import type {
   AddRepositoryResult,
   Branches,
+  CheckoutOptions,
+  CheckoutResult,
+  CheckoutTarget,
   FileChange,
   HistoryPage,
   Hunk,
@@ -15,6 +19,7 @@ import type {
 import {
   BRANCH_FORMAT,
   LOG_FORMAT,
+  checkoutRefusal,
   countStatusEntries,
   parseBranches,
   parseCommitLog,
@@ -41,12 +46,15 @@ export type ChooseFolder = () => Promise<string | null>
 
 const FOLDER_NOT_FOUND = 'Folder not found'
 
+/** Uncommitted changes, one NUL-terminated entry per path (untracked files included). */
+const STATUS = ['status', '--porcelain=v1', '-z', '--no-renames', '--untracked-files=normal']
+
 /** Full or abbreviated commit hash. Checked so a "hash" can never be read as a git option. */
 const COMMIT_HASH = /^[0-9a-f]{4,64}$/i
 
 /**
- * Reads repositories with the user's installed git. Read-only for now: the write operations
- * reject, and the UI hides their buttons in the desktop app.
+ * Reads repositories with the user's installed git, and switches branches. Fetch, Pull and
+ * Push reject for now, and the desktop app hides their buttons.
  *
  * Every argument that comes from the renderer is checked before it reaches git: repositories
  * are looked up by id (the renderer never supplies a folder), hashes must look like hashes,
@@ -148,8 +156,24 @@ export class GitCliDataSource implements GitDataSource {
     return parseUnifiedDiff(diff)
   }
 
-  async checkout(): Promise<OperationResult> {
-    throw notYetAvailable('Checkout')
+  /**
+   * `git switch`, after checking the target is one of the repository's branches: the name never
+   * reaches git unless git listed it, so it can't be read as an option. Uncommitted changes come
+   * along as git allows; when git refuses, the error names the files.
+   */
+  async checkout(repoId: string, target: CheckoutTarget, options: CheckoutOptions = {}): Promise<CheckoutResult> {
+    const folder = await this.folderOf(repoId)
+    const plan = await switchPlan(folder, await this.branchesAt(folder), target)
+    if (!options.leaveCommits) {
+      const commitsLeft = await commitsOnlyOnDetachedHead(folder)
+      if (commitsLeft > 0) return { kind: 'confirm', commitsLeft }
+    }
+    await git(folder, ['switch', '--quiet', ...plan.args]).catch((error: unknown) => {
+      const refusal = error instanceof GitError ? checkoutRefusal(error.stderr, plan.branch) : null
+      throw refusal ? new GitError(refusal, (error as GitError).stderr) : error
+    })
+    const changes = countStatusEntries(await git(folder, STATUS))
+    return { kind: 'switched', branch: plan.branch, message: switchedMessage(plan.branch, changes, plan.tracking) }
   }
 
   async fetch(): Promise<OperationResult> {
@@ -179,7 +203,7 @@ export class GitCliDataSource implements GitDataSource {
     try {
       const [currentBranch, changes, lastFetch] = await Promise.all([
         checkedOutBranch(path),
-        git(path, ['status', '--porcelain=v1', '-z', '--no-renames', '--untracked-files=normal']),
+        git(path, STATUS),
         lastFetchTime(path),
       ])
       return { ...unreadable(''), currentBranch, changedFileCount: countStatusEntries(changes), lastFetch, problem: null }
@@ -252,6 +276,35 @@ async function comparedRange(folder: string, hash: string): Promise<string[]> {
   })
   const [commit = '', firstParent] = line.trim().split(' ')
   return firstParent ? [firstParent, commit] : ['--root', commit]
+}
+
+/** What `git switch` is given for a target, and the branch it ends on. */
+interface SwitchPlan {
+  args: string[]
+  branch: string
+  /** The remote branch a new local branch tracks. */
+  tracking?: string
+}
+
+async function switchPlan(folder: string, branches: Branches, target: CheckoutTarget): Promise<SwitchPlan> {
+  if ('local' in target) {
+    if (!branches.local.some((branch) => branch.name === target.local)) throw new GitError(`Unknown branch: ${target.local}`)
+    // --no-guess: never create a branch from a remote one of the same name; only a remote target does that.
+    return { args: ['--no-guess', target.local], branch: target.local }
+  }
+  if (!branches.remote.some((branch) => branch.name === target.remote)) throw new GitError(`Unknown branch: ${target.remote}`)
+  const remotes = (await git(folder, ['remote'])).split('\n').map((line) => line.trim()).filter(Boolean)
+  const name = localNameOf(target.remote, remotes)
+  if (name === null) throw new GitError(`${target.remote} belongs to no remote`)
+  if (branches.local.some((branch) => branch.name === name)) throw new GitError(`A local branch ${name} already exists`)
+  return { args: ['--track', target.remote], branch: name, tracking: target.remote }
+}
+
+/** Commits that switching away from a detached HEAD would leave on no branch, remote branch or tag. */
+async function commitsOnlyOnDetachedHead(folder: string): Promise<number> {
+  if ((await checkedOutBranch(folder)) !== null || !(await hasCommits(folder))) return 0
+  const count = await git(folder, ['rev-list', '--count', 'HEAD', '--not', '--branches', '--remotes', '--tags'])
+  return Number(count.trim())
 }
 
 function checkedPath(path: string): string {

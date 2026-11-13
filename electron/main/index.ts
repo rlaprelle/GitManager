@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { BrowserWindow, app, dialog, ipcMain } from 'electron'
+import { BrowserWindow, Menu, app, dialog, ipcMain } from 'electron'
 import windowIcon from '../../build/icon.ico?asset'
 import { GitCliDataSource } from './git/GitCliDataSource'
 import { checkGit } from './git/gitVersion'
@@ -37,6 +37,7 @@ function createMainWindow(): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      devTools: developerToolsAllowed(),
     },
   })
   window.once('ready-to-show', () => window.show())
@@ -78,8 +79,20 @@ function separateUnpackagedData(): void {
   app.setPath('userData', process.env['GIT_MANAGER_USER_DATA'] ?? join(app.getPath('appData'), 'git-manager-dev'))
 }
 
+/**
+ * Only unpackaged runs (dev:app) keep Electron's default menu, whose shortcuts reload the
+ * window (Ctrl+R, losing the app's state mid-operation) and open DevTools (Ctrl+Shift+I, a
+ * console inside the app). GIT_MANAGER_NO_DEV_TOOLS=1 gives an unpackaged run the packaged
+ * behaviour, so the e2e suite can check it; it can only take the tools away, never add them.
+ */
+function developerToolsAllowed(): boolean {
+  return !app.isPackaged && process.env['GIT_MANAGER_NO_DEV_TOOLS'] !== '1'
+}
+
 separateUnpackagedData()
 app.setAppUserModelId(APP_USER_MODEL_ID)
+// Before 'ready', or Electron builds the default menu first.
+if (!developerToolsAllowed()) Menu.setApplicationMenu(null)
 
 void app.whenReady().then(() => {
   const repositories = new RepositoryStore(join(app.getPath('userData'), 'repositories.json'))

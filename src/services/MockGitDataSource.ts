@@ -1,11 +1,15 @@
 import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositories'
 import { sampleCompareDiff } from '@/data/sampleDiffs'
 import type { SampleCommit, SampleRepository } from '@/data/sampleTypes'
+import { localNameOf, switchedMessage } from '@/lib/checkout'
 import { invertHunks } from '@/lib/diff'
 import { layoutLanes, primaryBranchTip } from '@/lib/laneLayout'
 import type {
   AddRepositoryResult,
   Branches,
+  CheckoutOptions,
+  CheckoutResult,
+  CheckoutTarget,
   FileChange,
   HistoryPage,
   Hunk,
@@ -14,16 +18,23 @@ import type {
 } from '@/types/git'
 import type { GitDataSource } from './GitDataSource'
 
+/** The sample repositories have one remote. */
+const SAMPLE_REMOTES = ['origin']
+
 /**
- * In-memory stand-in for a git backend, serving the design's sample repos.
- * Remote operations always succeed and report the design's messages.
- * Every result is a copy, so callers can't change the sample data.
+ * In-memory stand-in for a git backend, serving the design's sample repos. Checkout really
+ * switches; remote operations always succeed and report the design's messages. Every result is
+ * a copy, so callers can't change the data through it.
  */
 export class MockGitDataSource implements GitDataSource {
-  /** Repositories taken off the list this session; the sample data itself is never changed. */
+  /** Repositories taken off the list this session. */
   private readonly removed = new Set<string>()
 
-  constructor(private readonly repositories: SampleRepository[] = sampleRepositories) {}
+  /**
+   * Checkout changes `repositories`. By default they're this source's own copy of the samples;
+   * repositories passed in stay the caller's, so a test can change them "outside the app".
+   */
+  constructor(private readonly repositories: SampleRepository[] = structuredClone(sampleRepositories)) {}
 
   async listRepositories(): Promise<Repository[]> {
     return this.listed().map(({ id, name, path, currentBranch, changedFileCount, lastFetch }) => ({
@@ -74,8 +85,22 @@ export class MockGitDataSource implements GitDataSource {
     return isReversedSample ? invertHunks(sampleCompareDiff) : structuredClone(sampleCompareDiff)
   }
 
-  async checkout(_repoId: string, branch: string): Promise<OperationResult> {
-    return { message: `Switched to branch ${branch}` }
+  /** The samples have no detached HEAD, so there are never commits to leave and `options` changes nothing. */
+  async checkout(repoId: string, target: CheckoutTarget, _options?: CheckoutOptions): Promise<CheckoutResult> {
+    const repo = this.repository(repoId)
+    if ('local' in target) {
+      if (!repo.localBranches.some((branch) => branch.name === target.local)) throw new Error(`Unknown branch: ${target.local}`)
+      repo.currentBranch = target.local
+      return { kind: 'switched', branch: target.local, message: switchedMessage(target.local, repo.changedFileCount) }
+    }
+    const remote = repo.remoteBranches.find((branch) => branch.name === target.remote)
+    if (!remote) throw new Error(`Unknown branch: ${target.remote}`)
+    const name = localNameOf(remote.name, SAMPLE_REMOTES)
+    if (name === null) throw new Error(`${remote.name} belongs to no remote`)
+    if (repo.localBranches.some((branch) => branch.name === name)) throw new Error(`A local branch ${name} already exists`)
+    repo.localBranches.push({ name, ahead: 0, behind: 0, tipHash: remote.tipHash })
+    repo.currentBranch = name
+    return { kind: 'switched', branch: name, message: switchedMessage(name, repo.changedFileCount, remote.name) }
   }
 
   async fetch(_repoId: string): Promise<OperationResult> {

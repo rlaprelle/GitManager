@@ -6,7 +6,7 @@ export type GitStatus =
   | { state: 'too-old'; version: string; minimum: string }
   | { state: 'missing'; minimum: string }
 
-/** The GitDataSource calls the desktop app supports, carried to the main process over IPC. Writes come later. */
+/** The GitDataSource calls the desktop app supports, carried to the main process over IPC. Fetch, Pull and Push come later. */
 export type GitBridge = Pick<
   GitDataSource,
   | 'listRepositories'
@@ -17,6 +17,7 @@ export type GitBridge = Pick<
   | 'compareFiles'
   | 'addRepository'
   | 'removeRepository'
+  | 'checkout'
 >
 
 /** How a main-process handler answers: the value, or the error's message without Electron's wrapper. */

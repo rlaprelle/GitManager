@@ -570,10 +570,120 @@ describe('useGitManager', () => {
   })
 
   describe('repository operations', () => {
-    it('checking out a branch makes it the current branch', async () => {
+    it('checking out a branch makes it the current branch, keeping the selected commit', async () => {
+      await gm.selectBranch('main')
+      const selected = gm.commit.value?.hash
       await gm.checkoutBranch('main')
       expect(gm.currentBranch.value).toBe('main')
-      expect(gm.status.value).toBe('Switched to branch main')
+      expect(gm.selectedBranch.value).toBe('main')
+      expect(gm.commit.value?.hash).toBe(selected)
+      expect(gm.status.value).toBe('Switched to main; 3 uncommitted changes came along')
+      expect(gm.operationRunning.value).toBe(false)
+    })
+
+    it('checking out a remote branch switches to its new local branch, and lists it', async () => {
+      await gm.selectBranch('origin/release/2.4')
+      const selected = gm.commit.value?.hash
+      expect(gm.checkoutableRemotes.value).toContain('origin/release/2.4')
+
+      await gm.checkoutRemoteBranch('origin/release/2.4')
+      expect(gm.currentBranch.value).toBe('release/2.4')
+      expect(gm.selectedBranch.value).toBe('release/2.4')
+      expect(gm.commit.value?.hash).toBe(selected)
+      expect(gm.branches.value.local.map((branch) => branch.name)).toContain('release/2.4')
+      expect(gm.checkoutableRemotes.value).not.toContain('origin/release/2.4')
+      expect(gm.status.value).toBe('Switched to a new branch release/2.4, tracking origin/release/2.4; 3 uncommitted changes came along')
+    })
+
+    it('runs one operation at a time, and refreshes only after it', async () => {
+      const held = heldSource()
+      const busy = await loadedManager(held.source)
+      held.hold('checkout', 'listRepositories')
+      const checkingOut = busy.checkoutBranch('main')
+      await settle()
+      expect(busy.operationRunning.value).toBe(true)
+      expect(busy.status.value).toBe('Switching to main…')
+
+      await busy.checkoutBranch('bugfix/sku-null-check')
+      await busy.fetchRemote()
+      await busy.refresh({ announce: true })
+      expect(held.callsTo('checkout')).toHaveLength(1)
+      expect(held.callsTo('listRepositories')).toHaveLength(0)
+
+      await held.callsTo('checkout')[0]!.release()
+      expect(held.callsTo('listRepositories')).toHaveLength(1)
+      await held.callsTo('listRepositories')[0]!.release()
+      await checkingOut
+      expect(busy.operationRunning.value).toBe(false)
+      expect(busy.currentBranch.value).toBe('main')
+      expect(busy.status.value).toBe('Switched to main; 3 uncommitted changes came along')
+    })
+
+    it('waits for a refresh already running before checking out', async () => {
+      const held = heldSource()
+      const waiting = await loadedManager(held.source)
+      held.hold('listRepositories')
+      const refreshing = waiting.refresh()
+      await settle()
+      const checkingOut = waiting.checkoutBranch('main')
+      await settle()
+      expect(held.callsTo('checkout')).toHaveLength(0)
+
+      held.letThrough('listRepositories')
+      await held.callsTo('listRepositories')[0]!.release()
+      await Promise.all([refreshing, checkingOut])
+      expect(waiting.currentBranch.value).toBe('main')
+    })
+
+    it('asks before leaving a detached HEAD’s commits, and goes ahead only when told to', async () => {
+      const source = new MockGitDataSource()
+      const calls: unknown[][] = []
+      const checkout = source.checkout.bind(source)
+      source.checkout = async (repoId, target, options) => {
+        calls.push([target, options])
+        return options?.leaveCommits ? checkout(repoId, target, options) : { kind: 'confirm', commitsLeft: 2 }
+      }
+      const asking = await loadedManager(source)
+      await asking.checkoutRemoteBranch('origin/release/2.4')
+      expect(asking.pendingCheckout.value).toEqual({
+        target: { remote: 'origin/release/2.4' },
+        branch: 'origin/release/2.4',
+        destination: 'release/2.4',
+        commitsLeft: 2,
+      })
+      expect(asking.status.value).toBe('Switching to origin/release/2.4 would leave 2 commits on no branch')
+      expect(asking.currentBranch.value).toBe('feature/stock-reservations')
+      expect(asking.operationRunning.value).toBe(false)
+
+      await asking.confirmCheckout()
+      expect(calls).toEqual([
+        [{ remote: 'origin/release/2.4' }, {}],
+        [{ remote: 'origin/release/2.4' }, { leaveCommits: true }],
+      ])
+      expect(asking.pendingCheckout.value).toBeNull()
+      expect(asking.currentBranch.value).toBe('release/2.4')
+    })
+
+    it('cancelling the question changes nothing', async () => {
+      const source = new MockGitDataSource()
+      source.checkout = async () => ({ kind: 'confirm', commitsLeft: 1 })
+      const asking = await loadedManager(source)
+      await asking.checkoutBranch('main')
+      asking.cancelCheckout()
+      expect(asking.pendingCheckout.value).toBeNull()
+      expect(asking.currentBranch.value).toBe('feature/stock-reservations')
+      expect(asking.status.value).toBe('Checkout cancelled; nothing changed')
+      await asking.confirmCheckout()
+      expect(asking.currentBranch.value).toBe('feature/stock-reservations')
+    })
+
+    it('drops the question when another repository is opened', async () => {
+      const source = new MockGitDataSource()
+      source.checkout = async () => ({ kind: 'confirm', commitsLeft: 1 })
+      const asking = await loadedManager(source)
+      await asking.checkoutBranch('main')
+      await asking.selectRepository('pricing')
+      expect(asking.pendingCheckout.value).toBeNull()
     })
 
     it('fetching updates the last-fetch time', async () => {
@@ -611,6 +721,7 @@ describe('useGitManager', () => {
       await failing.checkoutBranch('main')
       expect(failing.currentBranch.value).toBe('feature/stock-reservations')
       expect(failing.status.value).toBe('Failed: local changes would be overwritten')
+      expect(failing.operationRunning.value).toBe(false)
     })
   })
 })

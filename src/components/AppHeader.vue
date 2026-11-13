@@ -1,22 +1,29 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+import { ALL_OPERATIONS, type RepositoryOperation } from '@/services/GitDataSource'
 import GmIcon from './GmIcon.vue'
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     repoName: string
     currentBranch: string
-  /** e.g. '↑2 vs origin'; null hides it. */
+    /** e.g. '↑2 vs origin'; null hides it. */
     syncLabel: string | null
-    /** False hides Fetch, Pull and Push (the desktop app is read-only for now). */
-    writable?: boolean
+    /** The operations the host offers; Fetch, Pull and Push show only when listed. */
+    operations?: readonly RepositoryOperation[]
+    /** True while an operation runs: the buttons are disabled. */
+    busy?: boolean
   }>(),
-  { writable: true },
+  { operations: () => ALL_OPERATIONS, busy: false },
 )
+
+const offers = (operation: RepositoryOperation) => props.operations.includes(operation)
+const offersRemoteOperations = computed(() => offers('fetch') || offers('pull') || offers('push'))
 
 defineEmits<{ fetch: []; pull: []; push: [] }>()
 
 const secondaryButton =
-  'inline-flex h-9 cursor-pointer items-center gap-2 rounded-lg border border-gm-line-strong bg-gm-raised px-3.5 text-gm-text hover:bg-gm-hover'
+  'inline-flex h-9 cursor-pointer items-center gap-2 rounded-lg border border-gm-line-strong bg-gm-raised px-3.5 text-gm-text hover:bg-gm-hover disabled:cursor-default disabled:text-gm-disabled'
 </script>
 
 <template>
@@ -42,18 +49,20 @@ const secondaryButton =
       <span v-if="syncLabel" class="text-[12px] text-gm-warn">{{ syncLabel }}</span>
     </div>
 
-    <div v-if="writable" class="ml-auto flex flex-wrap gap-2">
-      <button type="button" :class="secondaryButton" @click="$emit('fetch')">
+    <div v-if="offersRemoteOperations" class="ml-auto flex flex-wrap gap-2">
+      <button v-if="offers('fetch')" type="button" :class="secondaryButton" :disabled="busy" @click="$emit('fetch')">
         <GmIcon name="fetch" />
         Fetch
       </button>
-      <button type="button" :class="secondaryButton" @click="$emit('pull')">
+      <button v-if="offers('pull')" type="button" :class="secondaryButton" :disabled="busy" @click="$emit('pull')">
         <GmIcon name="pull" />
         Pull
       </button>
       <button
+        v-if="offers('push')"
         type="button"
-        class="inline-flex h-9 cursor-pointer items-center gap-2 rounded-lg border-0 bg-gm-accent px-3.5 font-semibold text-gm-on-accent"
+        class="inline-flex h-9 cursor-pointer items-center gap-2 rounded-lg border-0 bg-gm-accent px-3.5 font-semibold text-gm-on-accent disabled:cursor-default disabled:opacity-60"
+        :disabled="busy"
         @click="$emit('push')"
       >
         <GmIcon name="push" />

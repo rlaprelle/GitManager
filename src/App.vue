@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, toRaw } from 'vue'
-import type { GitDataSource } from '@/services/GitDataSource'
+import { ALL_OPERATIONS, type GitDataSource, type RepositoryOperation } from '@/services/GitDataSource'
 import { useGitManager } from '@/composables/useGitManager'
 import { useNow } from '@/composables/useNow'
 import AppHeader from '@/components/AppHeader.vue'
 import BranchList from '@/components/BranchList.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import CommitHistory from '@/components/CommitHistory.vue'
 import NoRepositories from '@/components/NoRepositories.vue'
 import RepositoryList from '@/components/RepositoryList.vue'
@@ -17,10 +18,10 @@ const props = withDefaults(
     comparePaths: { left: string; right: string }
     /** Overrides the accent colour (default #5B9DFF). */
     accent?: string
-    /** False hides Fetch, Pull, Push and Checkout: the desktop app reads real repositories but can't change them yet. */
-    writable?: boolean
+    /** The operations that change a repository this host offers; the others' buttons are hidden. */
+    operations?: readonly RepositoryOperation[]
   }>(),
-  { writable: true },
+  { operations: () => ALL_OPERATIONS },
 )
 
 const {
@@ -35,10 +36,13 @@ const {
   rightPath,
   historyLoading,
   loadingMoreHistory,
+  operationRunning,
+  pendingCheckout,
   filesLoading,
   diffLoading,
   repository,
   branches,
+  checkoutableRemotes,
   commits,
   historyHasMore,
   commit,
@@ -61,6 +65,9 @@ const {
   setRightPath,
   swapComparePaths,
   checkoutBranch,
+  checkoutRemoteBranch,
+  confirmCheckout,
+  cancelCheckout,
   fetchRemote,
   pull,
   push,
@@ -76,6 +83,13 @@ const now = useNow()
 
 /** Once the history has loaded, the diff panel says why there's no commit to show ('No commits yet'). */
 const diffEmptyMessage = computed(() => (historyLoading.value ? '' : (historyMessage.value ?? '')))
+
+const canCheckout = computed(() => props.operations.includes('checkout'))
+
+const pendingCommits = computed(() => {
+  const count = pendingCheckout.value?.commitsLeft ?? 0
+  return count === 1 ? '1 commit' : `${count} commits`
+})
 
 const accentStyle = computed(() => (props.accent ? { '--color-gm-accent': props.accent } : {}))
 
@@ -113,7 +127,8 @@ onUnmounted(() => {
         :repo-name="repository.name"
         :current-branch="headLabel"
         :sync-label="headerSyncLabel"
-        :writable="writable"
+        :operations="operations"
+        :busy="operationRunning"
         @fetch="fetchRemote"
         @pull="pull"
         @push="push"
@@ -140,9 +155,12 @@ onUnmounted(() => {
             :remote-branches="branches.remote"
             :current-branch="currentBranch"
             :selected-branch="selectedBranch"
-            :writable="writable"
+            :can-checkout="canCheckout"
+            :checkoutable-remotes="checkoutableRemotes"
+            :busy="operationRunning"
             @select="selectBranch"
             @checkout="checkoutBranch"
+            @checkout-remote="checkoutRemoteBranch"
           />
         </nav>
 
@@ -180,6 +198,19 @@ onUnmounted(() => {
           />
         </main>
       </div>
+
+      <ConfirmDialog
+        :open="pendingCheckout !== null"
+        :title="`Leave ${pendingCommits} behind?`"
+        confirm-label="Switch anyway"
+        @confirm="confirmCheckout"
+        @cancel="cancelCheckout"
+      >
+        HEAD is detached, and {{ pendingCommits }} on it {{ pendingCheckout?.commitsLeft === 1 ? 'isn’t' : 'aren’t' }}
+        on any branch. After switching to <span class="font-mono text-gm-text">{{ pendingCheckout?.destination }}</span>, only
+        git’s reflog will still have {{ pendingCheckout?.commitsLeft === 1 ? 'it' : 'them' }}, and only for a while.
+        To keep {{ pendingCheckout?.commitsLeft === 1 ? 'it' : 'them' }}, create a branch first.
+      </ConfirmDialog>
 
       <StatusBar
         :status="status"

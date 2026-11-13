@@ -12,6 +12,6 @@ void bridge.getGitStatus().then((status) => {
     mountGitRequired(status)
     return
   }
-  // Read-only until the write operations are built: Fetch, Pull, Push and Checkout stay hidden.
-  mountApp({ source: new IpcGitDataSource(bridge.git), comparePaths: { left: '', right: '' }, writable: false })
+  // Fetch, Pull and Push stay hidden until GitCliDataSource can do them.
+  mountApp({ source: new IpcGitDataSource(bridge.git), comparePaths: { left: '', right: '' }, operations: ['checkout'] })
 })

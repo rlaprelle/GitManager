@@ -1,6 +1,17 @@
 import { computed, ref } from 'vue'
 import type { GitDataSource } from '@/services/GitDataSource'
-import type { Branches, Commit, FileChange, HistoryPage, Hunk, OperationResult, Repository } from '@/types/git'
+import type {
+  Branches,
+  CheckoutOptions,
+  CheckoutTarget,
+  Commit,
+  FileChange,
+  HistoryPage,
+  Hunk,
+  OperationResult,
+  Repository,
+} from '@/types/git'
+import { destinationOf, remotesToCheckOut } from '@/lib/checkout'
 import { headLabel as describeHead, shortHash, syncLabel } from '@/lib/format'
 import { latestLoad } from './latestLoad'
 
@@ -11,6 +22,16 @@ export const HISTORY_LIMIT = 200
 
 export interface GitManagerOptions {
   comparePaths: { left: string; right: string }
+}
+
+/** A checkout waiting for the user to agree to leave a detached HEAD's commits behind. */
+export interface PendingCheckout {
+  target: CheckoutTarget
+  /** The branch as the user clicked it: 'main', or 'origin/feature'. */
+  branch: string
+  /** The branch HEAD would end on: 'main', or 'feature' for origin/feature. */
+  destination: string
+  commitsLeft: number
 }
 
 const NO_BRANCHES: Branches = { local: [], remote: [] }
@@ -38,6 +59,10 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   const historyLimit = ref(HISTORY_LIMIT)
   const loadingMoreHistory = ref(false)
 
+  /** True while a repository operation runs; only one runs at a time. */
+  const operationRunning = ref(false)
+  const pendingCheckout = ref<PendingCheckout | null>(null)
+
   const compareOpen = ref(false)
   const leftPath = ref(options.comparePaths.left)
   const rightPath = ref(options.comparePaths.right)
@@ -49,6 +74,8 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   )
 
   const branches = computed(() => branchesLoad.value.value)
+  /** Remote branches the sidebar offers to check out (those with no local branch of their name). */
+  const checkoutableRemotes = computed(() => remotesToCheckOut(branches.value))
   const commits = computed<Commit[]>(() => historyLoad.value.value.commits)
   const historyHasMore = computed(() => historyLoad.value.value.hasMore)
 
@@ -115,6 +142,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   async function openRepository(repo: Repository): Promise<void> {
     selectedRepoId.value = repo.id
     selectedBranch.value = repo.currentBranch
+    pendingCheckout.value = null
     historyLimit.value = HISTORY_LIMIT
     resetCommitView()
     filesLoad.clear()
@@ -237,20 +265,70 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
 
   async function runOperation(operation: (repo: Repository) => Promise<OperationResult>): Promise<boolean> {
     const repo = repository.value
-    if (!repo) return false
+    if (!repo || operationRunning.value) return false
+    operationRunning.value = true
     try {
       status.value = (await operation(repo)).message
       return true
     } catch (error) {
       status.value = `Failed: ${messageOf(error)}`
       return false
+    } finally {
+      operationRunning.value = false
     }
   }
 
+  /** Switches to a local branch. */
   async function checkoutBranch(name: string): Promise<void> {
+    await runCheckout({ local: name }, name)
+  }
+
+  /** Creates the local branch that tracks a remote one, and switches to it. */
+  async function checkoutRemoteBranch(name: string): Promise<void> {
+    await runCheckout({ remote: name }, name)
+  }
+
+  /** Goes ahead with the checkout that was waiting, leaving the detached HEAD's commits behind. */
+  async function confirmCheckout(): Promise<void> {
+    const pending = pendingCheckout.value
+    if (!pending) return
+    await runCheckout(pending.target, pending.branch, { leaveCommits: true })
+  }
+
+  function cancelCheckout(): void {
+    if (!pendingCheckout.value) return
+    pendingCheckout.value = null
+    status.value = 'Checkout cancelled; nothing changed'
+  }
+
+  /**
+   * Asks the source to switch, then reloads what the switch changed. The source decides
+   * whether it needs the user's agreement first (pendingCheckout). A refresh already running
+   * finishes first, so what it read before the switch can't land after it.
+   */
+  async function runCheckout(target: CheckoutTarget, branch: string, options: CheckoutOptions = {}): Promise<void> {
     const repo = repository.value
-    const succeeded = await runOperation((r) => source.checkout(r.id, name))
-    if (succeeded && repo) repo.currentBranch = name
+    if (!repo || operationRunning.value) return
+    pendingCheckout.value = null
+    operationRunning.value = true
+    status.value = `Switching to ${branch}…`
+    try {
+      await refreshInFlight
+      const result = await source.checkout(repo.id, target, options)
+      if (result.kind === 'confirm') {
+        pendingCheckout.value = { target, branch, destination: destinationOf(target), commitsLeft: result.commitsLeft }
+        status.value = `Switching to ${branch} would leave ${commitCount(result.commitsLeft)} on no branch`
+        return
+      }
+      repo.currentBranch = result.branch
+      selectedBranch.value = result.branch
+      status.value = result.message
+      await reload()
+    } catch (error) {
+      status.value = `Failed: ${messageOf(error)}`
+    } finally {
+      operationRunning.value = false
+    }
   }
 
   async function fetchRemote(): Promise<void> {
@@ -300,25 +378,33 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
 
   // ---- refreshing ----
 
-  let refreshing = false
+  /** The refresh running now, if any. */
+  let refreshInFlight: Promise<void> | null = null
 
   /**
    * Re-reads what may have changed outside the app (commits, branches, the checked-out branch,
    * uncommitted files) without disturbing the view: the history stays on screen while it
    * reloads, and the selected commit stays selected if it still exists. `announce` reports it
    * in the status bar (an explicit refresh); otherwise it's silent (the window regaining focus).
+   * Skipped while an operation runs, since it reloads what it changed itself.
    */
   async function refresh(options: { announce?: boolean } = {}): Promise<void> {
-    if (refreshing || loading.value) return
-    refreshing = true
+    if (refreshInFlight || loading.value || operationRunning.value) return
+    refreshInFlight = reload(options.announce)
+    try {
+      await refreshInFlight
+    } finally {
+      refreshInFlight = null
+    }
+  }
+
+  async function reload(announce = false): Promise<void> {
     try {
       repositories.value = await source.listRepositories()
       await refreshOpenRepository()
-      if (options.announce && repository.value) status.value = `Refreshed ${repository.value.name}`
+      if (announce && repository.value) status.value = `Refreshed ${repository.value.name}`
     } catch (error) {
       status.value = `Couldn’t refresh: ${messageOf(error)}`
-    } finally {
-      refreshing = false
     }
   }
 
@@ -392,11 +478,14 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     rightPath,
     historyLoading: historyLoad.loading,
     loadingMoreHistory,
+    operationRunning,
+    pendingCheckout,
     filesLoading: filesLoad.loading,
     diffLoading: diffLoad.loading,
     // derived
     repository,
     branches,
+    checkoutableRemotes,
     commits,
     historyHasMore,
     commit,
@@ -421,6 +510,9 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     setRightPath,
     swapComparePaths,
     checkoutBranch,
+    checkoutRemoteBranch,
+    confirmCheckout,
+    cancelCheckout,
     fetchRemote,
     pull,
     push,
@@ -434,6 +526,10 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
 function checkedOutBranch(repo: Repository): string {
   if (repo.currentBranch === null) throw new Error('no branch is checked out')
   return repo.currentBranch
+}
+
+function commitCount(count: number): string {
+  return count === 1 ? '1 commit' : `${count} commits`
 }
 
 function messageOf(error: unknown): string {
