@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
+import type { GitDataSource } from '../../../src/services/GitDataSource'
 import { MockGitDataSource } from '../../../src/services/MockGitDataSource'
 import { IpcChannel } from '../../shared/channels'
 import { type IpcRegistrar, registerIpcHandlers } from '../ipc'
@@ -7,11 +8,11 @@ import { type IpcRegistrar, registerIpcHandlers } from '../ipc'
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>
 
 /** Records handlers the way ipcMain.handle would, so tests can invoke them like the preload does. */
-function registeredHandlers() {
+function registeredHandlers(source: GitDataSource = new MockGitDataSource()) {
   const handlers = new Map<string, Handler>()
   const ipc: IpcRegistrar = { handle: (channel, listener) => handlers.set(channel, listener as Handler) }
   registerIpcHandlers(ipc, {
-    source: new MockGitDataSource(),
+    source,
     appVersion: '1.2.3',
     checkGit: async () => ({ state: 'ready', version: '2.46.1' }),
   })
@@ -59,5 +60,55 @@ describe('registerIpcHandlers', () => {
       value: { repository: null, message: 'Add repository: choose a folder that contains a .git directory' },
     })
     expect(await invoke(IpcChannel.RemoveRepository, 'pricing')).toEqual({ ok: true, value: { message: 'Removed pricing-api from the list' } })
+  })
+
+  it('checks out a local or a remote branch', async () => {
+    const invoke = registeredHandlers()
+    expect(await invoke(IpcChannel.Checkout, 'inventory', { local: 'main' })).toEqual({
+      ok: true,
+      value: { kind: 'switched', branch: 'main', message: 'Switched to main; 3 uncommitted changes came along' },
+    })
+    expect(await invoke(IpcChannel.Checkout, 'inventory', { remote: 'origin/release/2.4' })).toMatchObject({
+      ok: true,
+      value: { kind: 'switched', branch: 'release/2.4' },
+    })
+  })
+
+  it('passes the source only a well-formed checkout target and options', async () => {
+    const received: unknown[][] = []
+    const source = new MockGitDataSource()
+    source.checkout = async (...args) => {
+      received.push(args)
+      return { kind: 'confirm', commitsLeft: 1 }
+    }
+    const invoke = registeredHandlers(source)
+    await invoke(IpcChannel.Checkout, 'inventory', { local: 'main' })
+    await invoke(IpcChannel.Checkout, 'inventory', { remote: 'origin/x' }, { leaveCommits: true })
+    expect(received).toEqual([
+      ['inventory', { local: 'main' }, {}],
+      ['inventory', { remote: 'origin/x' }, { leaveCommits: true }],
+    ])
+
+    const target = 'Expected a branch to check out: { local } or { remote }'
+    const options = 'Expected checkout options: { leaveCommits?: boolean }'
+    for (const [badTarget, badOptions, message] of [
+      ['main', undefined, target],
+      [{}, undefined, target],
+      [{ local: 'main', remote: 'origin/main' }, undefined, target],
+      [{ local: 7 }, undefined, target],
+      [{ branch: 'main' }, undefined, target],
+      [['main'], undefined, target],
+      [null, undefined, target],
+      [{ local: 'main' }, { leaveCommits: 'yes' }, options],
+      [{ local: 'main' }, { leaveCommits: true, force: true }, options],
+      [{ local: 'main' }, true, options],
+    ] as const) {
+      expect(await invoke(IpcChannel.Checkout, 'inventory', badTarget, badOptions), JSON.stringify([badTarget, badOptions])).toEqual({
+        ok: false,
+        message,
+      })
+    }
+    expect(await invoke(IpcChannel.Checkout, 3, { local: 'main' })).toEqual({ ok: false, message: 'Expected text, got number' })
+    expect(received).toHaveLength(2)
   })
 })

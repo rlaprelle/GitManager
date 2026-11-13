@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositories'
-import type { GitDataSource } from '@/services/GitDataSource'
+import type { GitDataSource, RepositoryOperation } from '@/services/GitDataSource'
 import { MockGitDataSource } from '@/services/MockGitDataSource'
 import { heldSource } from '@/composables/__tests__/heldSource'
 import App from '../App.vue'
@@ -18,6 +18,11 @@ function statusText(wrapper: Awaited<ReturnType<typeof mountApp>>) {
 
 function buttonByText(wrapper: Awaited<ReturnType<typeof mountApp>>, text: string) {
   return wrapper.findAll('button').find((b) => b.text().includes(text))!
+}
+
+/** A branch row in the sidebar, by its exact name. */
+function branchRow(wrapper: Awaited<ReturnType<typeof mountApp>>, name: string) {
+  return wrapper.findAll('nav button[aria-pressed]').find((b) => b.find('span.font-mono').text() === name)!
 }
 
 // Checks the wiring between the composable and the components; behaviour details live in their own tests.
@@ -72,11 +77,72 @@ describe('App', () => {
 
   it('checks out a branch and moves HEAD to it', async () => {
     const wrapper = await mountApp()
-    await buttonByText(wrapper, 'bugfix/sku-null-check').trigger('click')
+    await branchRow(wrapper, 'bugfix/sku-null-check').trigger('click')
     await buttonByText(wrapper, 'Checkout').trigger('click')
     await flushPromises()
     expect(wrapper.get('[data-testid="header-branch"]').text()).toBe('bugfix/sku-null-check')
-    expect(statusText(wrapper)).toBe('Switched to branch bugfix/sku-null-check')
+    expect(statusText(wrapper)).toBe('Switched to bugfix/sku-null-check; 3 uncommitted changes came along')
+  })
+
+  it('shows a checkout running: Checkout says Switching… and the header buttons wait', async () => {
+    const held = heldSource()
+    held.hold('checkout')
+    const wrapper = await mountApp(held.source)
+    await branchRow(wrapper, 'main').trigger('click')
+    await buttonByText(wrapper, 'Checkout').trigger('click')
+    await flushPromises()
+    expect(buttonByText(wrapper, 'Switching…').attributes('disabled')).toBeDefined()
+    for (const label of ['Fetch', 'Pull', 'Push']) expect(buttonByText(wrapper, label).attributes('disabled'), label).toBeDefined()
+    expect(statusText(wrapper)).toBe('Switching to main…')
+
+    await held.callsTo('checkout')[0]!.release()
+    await flushPromises()
+    expect(wrapper.findAll('button').some((button) => button.text() === 'Switching…')).toBe(false)
+    expect(buttonByText(wrapper, 'Fetch').attributes('disabled')).toBeUndefined()
+  })
+
+  it('checks out a remote branch as a new local branch', async () => {
+    const wrapper = await mountApp()
+    await branchRow(wrapper, 'origin/release/2.4').trigger('click')
+    await buttonByText(wrapper, 'Checkout').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="header-branch"]').text()).toBe('release/2.4')
+    const local = wrapper.findAll('nav button[aria-pressed]').map((button) => button.text())
+    expect(local.some((text) => text.startsWith('release/2.4') && text.includes('HEAD'))).toBe(true)
+  })
+
+  it('asks in a dialog before leaving commits behind, and switches only when told to', async () => {
+    HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+      this.open = true
+    })
+    HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
+      this.open = false
+    })
+    const source = new MockGitDataSource()
+    const checkout = source.checkout.bind(source)
+    source.checkout = async (repoId, target, options) =>
+      options?.leaveCommits ? checkout(repoId, target, options) : { kind: 'confirm', commitsLeft: 2 }
+    const wrapper = await mountApp(source)
+    const dialog = () => wrapper.get('dialog').element as HTMLDialogElement
+
+    await branchRow(wrapper, 'main').trigger('click')
+    await buttonByText(wrapper, 'Checkout').trigger('click')
+    await flushPromises()
+    expect(dialog().open).toBe(true)
+    expect(wrapper.get('dialog h2').text()).toBe('Leave 2 commits behind?')
+    expect(wrapper.get('dialog').text()).toContain('After switching to main')
+
+    await buttonByText(wrapper, 'Cancel').trigger('click')
+    await flushPromises()
+    expect(dialog().open).toBe(false)
+    expect(wrapper.get('[data-testid="header-branch"]').text()).toBe('feature/stock-reservations')
+
+    await buttonByText(wrapper, 'Checkout').trigger('click')
+    await flushPromises()
+    await buttonByText(wrapper, 'Switch anyway').trigger('click')
+    await flushPromises()
+    expect(dialog().open).toBe(false)
+    expect(wrapper.get('[data-testid="header-branch"]').text()).toBe('main')
   })
 
   it('fetch, pull and push report in the status bar', async () => {
@@ -138,12 +204,16 @@ describe('App', () => {
     expect(statusText(wrapper)).toBe('Removed storefront-web from the list')
   })
 
-  it('a read-only app offers no Fetch, Pull, Push or Checkout', async () => {
-    const wrapper = mount(App, { props: { source: new MockGitDataSource(), comparePaths: SAMPLE_COMPARE_PATHS, writable: false } })
-    await flushPromises()
-    await buttonByText(wrapper, 'main').trigger('click')
-    const labels = wrapper.findAll('button').map((button) => button.text())
-    for (const label of ['Fetch', 'Pull', 'Push', 'Checkout']) expect(labels).not.toContain(label)
+  it('offers only the operations its host does', async () => {
+    const offering = async (operations: RepositoryOperation[]) => {
+      const wrapper = mount(App, { props: { source: new MockGitDataSource(), comparePaths: SAMPLE_COMPARE_PATHS, operations } })
+      await flushPromises()
+      await branchRow(wrapper, 'main').trigger('click')
+      const labels = wrapper.findAll('button').map((button) => button.text())
+      return ['Fetch', 'Pull', 'Push', 'Checkout'].filter((label) => labels.includes(label))
+    }
+    expect(await offering([])).toEqual([])
+    expect(await offering(['checkout'])).toEqual(['Checkout'])
   })
 
   it('says a repository has no commits yet, in the history and in the diff panel', async () => {

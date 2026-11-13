@@ -98,3 +98,35 @@ function fileStatus(code: string): Exclude<FileStatus, 'R'> {
 export function countStatusEntries(output: string): number {
   return output.split(NUL).filter(Boolean).length
 }
+
+/** How many file names a refusal lists before "and N more": it has to fit the status bar. */
+const NAMED_FILES = 3
+
+/**
+ * Git's refusal to switch branches because files would be overwritten, as one line for the
+ * status bar (the composable puts "Failed: " in front). Null for any other error, whose first
+ * line already says enough. Git lists the files one per tab-indented line after its heading.
+ */
+export function checkoutRefusal(stderr: string, branch: string): string | null {
+  const lines = stderr.split(/\r?\n/)
+  const heading = lines.findIndex((line) => /would be overwritten by checkout:$/.test(line))
+  if (heading === -1) return null
+  const files: string[] = []
+  for (const line of lines.slice(heading + 1)) {
+    if (!line.startsWith('\t')) break
+    files.push(line.slice(1))
+  }
+  const untracked = /untracked working tree files/.test(lines[heading]!)
+  const named = fileList(files)
+  return untracked
+    ? `untracked ${files.length === 1 ? 'file' : 'files'} ${named} would be overwritten by switching to ${branch}. Move or remove ${files.length === 1 ? 'it' : 'them'} first.`
+    : `your changes to ${named} would be overwritten by switching to ${branch}. Commit or stash them first.`
+}
+
+/** 'a, b and c', or 'a, b, c and 4 more'. */
+function fileList(files: string[]): string {
+  if (files.length <= NAMED_FILES) {
+    return files.length === 1 ? files[0]! : `${files.slice(0, -1).join(', ')} and ${files.at(-1)}`
+  }
+  return `${files.slice(0, NAMED_FILES).join(', ')} and ${files.length - NAMED_FILES} more`
+}

@@ -23,6 +23,7 @@ const bridge: GitManagerBridge = {
     compareFiles: (repoId, leftPath, rightPath) => call(IpcChannel.CompareFiles, repoId, leftPath, rightPath),
     addRepository: () => call(IpcChannel.AddRepository),
     removeRepository: (repoId) => call(IpcChannel.RemoveRepository, repoId),
+    checkout: (repoId, target, options) => call(IpcChannel.Checkout, repoId, target, options),
   },
 }
 

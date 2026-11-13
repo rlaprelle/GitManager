@@ -4,12 +4,12 @@ A calm, dark-themed git client that puts the questions you ask most often on one
 
 Git Manager is for developers who juggle several repositories and want a quick visual answer without reaching for the command line. That might be a service, its API client, a front end and a dotfiles repo all at once.
 
-> **Status:** the Windows desktop app reads your real repositories with your installed Git for Windows, **read-only**: add repositories and browse their branches, history and diffs. Fetch, Pull, Push and Checkout come later and are hidden until then. The browser version runs on built-in sample repositories, where every button works against sample data. See [Real repositories](#real-repositories).
+> **Status:** the Windows desktop app works on your real repositories with your installed Git for Windows: add repositories, browse their branches, history and diffs, and check out branches. Fetch, Pull and Push come later and are hidden until then. The browser version runs on built-in sample repositories, where every button works against sample data. See [Real repositories](#real-repositories).
 
 ## What you can do
 
 - **Add and switch between repositories.** Add a repository by choosing its folder (or any folder inside it); remove one from the list with its × button, which never touches the folder. The sidebar lists every repository you've added, how many files have uncommitted changes in each, and says so if a folder has been moved or deleted.
-- **See your branches.** Local branches show how far they are ahead of or behind their remote (`↑2 ↓1`), and the checked-out branch is marked `HEAD`. Click a branch to jump to its newest commit. Click **Checkout** to switch to it.
+- **See your branches.** Local branches show how far they are ahead of or behind their remote (`↑2 ↓1`), and the checked-out branch is marked `HEAD`. Click a branch to jump to its newest commit. Click **Checkout** to switch to it. Uncommitted changes come along, as with `git switch`, and the status bar says how many did. If they would be overwritten, nothing happens and the status bar names the files. Checkout on a remote branch (`origin/feature`) creates the local branch that tracks it, unless you already have one. Leaving a detached HEAD whose commits aren't on any branch asks first.
 - **Read the history as a graph.** Commits are listed newest first beside a coloured lane graph that shows where branches split off and merge back. `main` keeps the left-most lane, and the graph widens for busy histories (up to eight lanes). Branch labels sit on the commits they point to.
 - **See what a commit changed.** Pick a commit, then a file, and read the change in one of two views:
   - **Git diff:** the familiar unified view with `+` and `-` lines and hunk headers.
@@ -27,7 +27,7 @@ Git Manager is for developers who juggle several repositories and want a quick v
 ## Design principles
 
 - **One screen, no modes to get lost in.** Repositories, branches, history and the diff are always visible together. Compare is the only other view, and its **Back to *commit*** button always takes you out of it.
-- **Read-only until you ask.** Clicking around never changes your repository. Checkout, Fetch, Pull and Push are always separate, clearly labelled buttons.
+- **Nothing changes until you ask.** Clicking around never changes your repository. Checkout, Fetch, Pull and Push are always separate, clearly labelled buttons, and one runs at a time.
 - **Dense but quiet.** A dark palette, monospace type for anything git produces (hashes, paths, code), and colour reserved for meaning: green for additions, red for deletions, and the accent colour for what's selected.
 - **Works narrow.** On a small window or a phone, the panes stack instead of shrinking past usefulness.
 
@@ -72,10 +72,12 @@ For how the code is organised, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md
 
 The interface talks to git through a single TypeScript interface, `GitDataSource` (`src/services/GitDataSource.ts`). It asks only for what the screen shows (a repository's branches, a page of history, one commit's files, one file's diff), so large repositories never have to be read in full: the history shows the newest 200 commits, and **Show more commits** at the end of the list adds 200 at a time.
 
-- **Desktop app:** its Electron main process runs your installed Git for Windows, so it uses your own git settings, and passes results to the interface over the preload bridge. It only reads: it never takes git's locks, so it can't get in the way of your own git commands. If git is missing or older than 2.30, the app says so instead of starting. Your repository list is kept in `%APPDATA%\git-manager\repositories.json`.
+- **Desktop app:** its Electron main process runs your installed Git for Windows, so it uses your own git settings, and passes results to the interface over the preload bridge. Reading never takes git's locks, so it can't get in the way of your own git commands; Checkout runs `git switch`, which takes them as your own commands do. If git is missing or older than 2.30, the app says so instead of starting. Your repository list is kept in `%APPDATA%\git-manager\repositories.json`.
 - **Browser version:** keeps the sample data (`MockGitDataSource`), so the interface can be developed and tested without touching a real repository.
 
-Renamed files show as one change ("renamed from …", or "moved from …" when only the folder changed), diffed against their old version. Not tried yet: submodules, Git LFS and worktrees.
+Renamed files show as one change ("renamed from …", or "moved from …" when only the folder changed), diffed against their old version. Not tried yet: submodules and Git LFS (an LFS checkout that needs to sign in will fail: the app doesn't show git's sign-in prompts yet). A branch checked out in another worktree can't be checked out here; git's message says where it is.
+
+The installed app has no menu: Ctrl+R (reload) and Ctrl+Shift+I (DevTools) do nothing, and F5 refreshes. `npm run dev:app` keeps both for development.
 
 ## Built with
 

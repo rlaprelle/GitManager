@@ -42,8 +42,22 @@ test('selecting a branch jumps to its tip, and Checkout moves HEAD', async ({ pa
 
   await sidebar(page).getByRole('button', { name: 'Checkout' }).click()
   await expect(header(page).getByTestId('header-branch')).toHaveText('main')
-  await expect(status(page)).toHaveText('Switched to branch main')
+  await expect(status(page)).toHaveText('Switched to main; 3 uncommitted changes came along')
   await expect(page.getByRole('button', { name: /HEAD → main/ })).toBeVisible()
+})
+
+test('Checkout on a remote branch creates its local branch and switches to it', async ({ page }) => {
+  await sidebar(page).getByRole('button', { name: 'origin/main', exact: true }).click()
+  // origin/main already has a local branch, so it offers no Checkout.
+  await expect(sidebar(page).getByRole('button', { name: 'Checkout' })).toHaveCount(0)
+
+  await sidebar(page).getByRole('button', { name: 'origin/release/2.4', exact: true }).click()
+  await sidebar(page).getByRole('button', { name: 'Checkout' }).click()
+  await expect(status(page)).toHaveText(
+    'Switched to a new branch release/2.4, tracking origin/release/2.4; 3 uncommitted changes came along',
+  )
+  await expect(header(page).getByTestId('header-branch')).toHaveText('release/2.4')
+  await expect(sidebar(page).getByRole('button', { name: /^release\/2\.4\s*HEAD/ })).toBeVisible()
 })
 
 test('selecting a commit and a file shows that file’s git diff', async ({ page }) => {

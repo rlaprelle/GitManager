@@ -198,6 +198,33 @@ export async function renameInFixture(
   await userGit(fixtures, repo, 'commit', '--quiet', '-m', message)
 }
 
+/**
+ * A repository of a test's own with a remote, 'origin' (a bare repository beside it), and
+ * main checked out tracking origin/main. It has a second local branch, feature/local, and
+ * origin has a branch with no local twin, origin/feature/remote.
+ */
+export async function createRepositoryWithRemote(fixtures: Fixtures, name: string): Promise<string> {
+  const repo = await createScratchRepository(fixtures, name)
+  await userGit(fixtures, repo, 'switch', '--quiet', '-c', 'feature/local')
+  await commitInFixture(fixtures, repo, 'local.txt', 'local\n', 'Work locally')
+  await userGit(fixtures, repo, 'switch', '--quiet', '-c', 'feature/remote', 'main')
+  await commitInFixture(fixtures, repo, 'remote.txt', 'remote\n', 'Work someone pushed')
+  await userGit(fixtures, repo, 'switch', '--quiet', 'main')
+
+  const origin = join(fixtures.root, `${name}-origin.git`)
+  await userGit(fixtures, fixtures.root, 'clone', '--quiet', '--bare', repo, origin)
+  await userGit(fixtures, repo, 'remote', 'add', 'origin', origin)
+  await userGit(fixtures, repo, 'fetch', '--quiet', 'origin')
+  await userGit(fixtures, repo, 'branch', '--quiet', '--set-upstream-to=origin/main', 'main')
+  await userGit(fixtures, repo, 'branch', '--quiet', '-D', 'feature/remote')
+  return repo
+}
+
+/** Runs git in a test's own repository, as the user would in their own terminal. */
+export async function gitInFixture(fixtures: Fixtures, repo: string, ...args: string[]): Promise<string> {
+  return userGit(fixtures, repo, ...args)
+}
+
 /** Creates and checks out a branch, as the user would. */
 export async function switchToNewBranchInFixture(fixtures: Fixtures, repo: string, branch: string): Promise<void> {
   await userGit(fixtures, repo, 'switch', '--quiet', '-c', branch)

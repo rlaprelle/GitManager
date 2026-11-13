@@ -1,15 +1,17 @@
 // @vitest-environment node
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { describeGitDataSourceContract } from '../../../../src/services/__tests__/gitDataSourceContract'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { GitCliDataSource, type RepositoryCatalog, type StoredRepository } from '../GitCliDataSource'
 import {
   type Fixtures,
   commitInFixture,
   createFixtures,
+  createRepositoryWithRemote,
   createScratchRepository,
   fixtureGit,
+  gitInFixture,
   removeFixtures,
   renameInFixture,
 } from './fixtures'
@@ -25,6 +27,10 @@ const NOTES = Array.from({ length: 10 }, (_, i) => `note ${i + 1}`)
 
 beforeAll(async () => {
   fixtures = await createFixtures()
+  // The app runs git with the user's own config; tests use an empty one so the developer's
+  // settings (hooks, aliases, checkout defaults) can't change what they see.
+  vi.stubEnv('GIT_CONFIG_GLOBAL', join(fixtures.root, 'empty.gitconfig'))
+  vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1')
   renamed = await createScratchRepository(fixtures, 'renamed')
   await commitInFixture(fixtures, renamed, 'GUIDE.md', '# Guide\n\nHow to use it.\n', 'Write the guide')
   await commitInFixture(fixtures, renamed, 'notes.txt', NOTES.join('\n') + '\n', 'Take notes')
@@ -34,8 +40,17 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  vi.unstubAllEnvs()
   if (fixtures) await removeFixtures(fixtures)
 })
+
+let checkoutRepositories = 0
+
+/** A fresh repository with a remote, for a test that checks out branches. */
+async function checkoutRepository(): Promise<{ source: GitCliDataSource; folder: string }> {
+  const folder = await createRepositoryWithRemote(fixtures, `checkout-${++checkoutRepositories}`)
+  return { source: sourceFor({ id: 'repo', path: folder }), folder }
+}
 
 /** The repository list in memory, behaving like RepositoryStore (which has its own tests). */
 function memoryCatalog(initial: StoredRepository[]): RepositoryCatalog {
@@ -71,10 +86,17 @@ const allFixtures = (): StoredRepository[] => [
   { id: 'renamed', path: renamed },
 ]
 
-describeGitDataSourceContract('GitCliDataSource', async () => ({
-  source: sourceFor(...allFixtures()),
-  comparePaths: { left: 'config/left.yml', right: 'config/right.yml' },
-}))
+describeGitDataSourceContract(
+  'GitCliDataSource',
+  async () => ({
+    source: sourceFor(...allFixtures()),
+    comparePaths: { left: 'config/left.yml', right: 'config/right.yml' },
+  }),
+  async () => {
+    const { source } = await checkoutRepository()
+    return { source, repoId: 'repo', otherLocal: 'feature/local', remoteOnly: 'origin/feature/remote' }
+  },
+)
 
 describe('GitCliDataSource reading the fixture repositories', () => {
   const sample = () => sourceFor(...allFixtures())
@@ -226,6 +248,85 @@ describe('GitCliDataSource reading the fixture repositories', () => {
 
   it('reports that write operations are not available yet', async () => {
     await expect(sample().fetch()).rejects.toThrow("Fetch isn't available in this version yet")
+  })
+})
+
+describe('GitCliDataSource checking out branches', () => {
+  const headOf = async (folder: string) => (await fixtureGit(folder, 'symbolic-ref', '--short', 'HEAD')).trim()
+
+  it('switches, and says how many uncommitted changes came along', async () => {
+    const { source, folder } = await checkoutRepository()
+    await writeFile(join(folder, 'README.md'), 'edited, not committed\n')
+    await writeFile(join(folder, 'scratch.txt'), 'untracked\n')
+    const result = await source.checkout('repo', { local: 'feature/local' })
+    expect(result).toEqual({
+      kind: 'switched',
+      branch: 'feature/local',
+      message: 'Switched to feature/local; 2 uncommitted changes came along',
+    })
+    expect(await headOf(folder)).toBe('feature/local')
+  })
+
+  it('makes a remote branch’s local branch track it', async () => {
+    const { source, folder } = await checkoutRepository()
+    const result = await source.checkout('repo', { remote: 'origin/feature/remote' })
+    expect(result).toEqual({
+      kind: 'switched',
+      branch: 'feature/remote',
+      message: 'Switched to a new branch feature/remote, tracking origin/feature/remote',
+    })
+    expect((await fixtureGit(folder, 'rev-parse', '--abbrev-ref', 'feature/remote@{upstream}')).trim()).toBe('origin/feature/remote')
+  })
+
+  it('refuses, naming the files, when changes would be overwritten', async () => {
+    const { source, folder } = await checkoutRepository()
+    await commitInFixture(fixtures, folder, 'shared.txt', 'on main\n', 'Add shared on main')
+    await gitInFixture(fixtures, folder, 'switch', '--quiet', 'feature/local')
+    await commitInFixture(fixtures, folder, 'shared.txt', 'on feature\n', 'Add shared on feature')
+    await gitInFixture(fixtures, folder, 'switch', '--quiet', 'main')
+    await writeFile(join(folder, 'shared.txt'), 'edited\n')
+
+    await expect(source.checkout('repo', { local: 'feature/local' })).rejects.toThrow(
+      'your changes to shared.txt would be overwritten by switching to feature/local. Commit or stash them first.',
+    )
+    expect(await headOf(folder)).toBe('main')
+  })
+
+  it('refuses, naming the file, when an untracked file would be overwritten', async () => {
+    const { source, folder } = await checkoutRepository()
+    await writeFile(join(folder, 'local.txt'), 'mine\n')
+    await expect(source.checkout('repo', { local: 'feature/local' })).rejects.toThrow(
+      'untracked file local.txt would be overwritten by switching to feature/local. Move or remove it first.',
+    )
+    expect(await headOf(folder)).toBe('main')
+  })
+
+  it('asks before leaving commits that no branch contains, and switches once told to', async () => {
+    const { source, folder } = await checkoutRepository()
+    await gitInFixture(fixtures, folder, 'switch', '--quiet', '--detach', 'main')
+    await commitInFixture(fixtures, folder, 'a.txt', 'a\n', 'Detached one')
+    await commitInFixture(fixtures, folder, 'b.txt', 'b\n', 'Detached two')
+    const detachedHead = (await fixtureGit(folder, 'rev-parse', 'HEAD')).trim()
+
+    expect(await source.checkout('repo', { local: 'main' })).toEqual({ kind: 'confirm', commitsLeft: 2 })
+    expect((await fixtureGit(folder, 'rev-parse', 'HEAD')).trim()).toBe(detachedHead)
+
+    const result = await source.checkout('repo', { local: 'main' }, { leaveCommits: true })
+    expect(result).toMatchObject({ kind: 'switched', branch: 'main' })
+    expect(await headOf(folder)).toBe('main')
+  })
+
+  it('switches from a detached HEAD without asking when a branch has its commits', async () => {
+    const { source, folder } = await checkoutRepository()
+    await gitInFixture(fixtures, folder, 'switch', '--quiet', '--detach', 'feature/local')
+    expect(await source.checkout('repo', { local: 'main' })).toMatchObject({ kind: 'switched', branch: 'main' })
+  })
+
+  it('passes on git’s refusal to check out a branch another worktree has', async () => {
+    const { source, folder } = await checkoutRepository()
+    await gitInFixture(fixtures, folder, 'worktree', 'add', '--quiet', `${folder}-worktree`, 'feature/local')
+    await expect(source.checkout('repo', { local: 'feature/local' })).rejects.toThrow(/feature\/local' is already (used|checked out)/)
+    expect(await headOf(folder)).toBe('main')
   })
 })
 

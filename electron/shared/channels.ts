@@ -11,4 +11,5 @@ export const IpcChannel = {
   CompareFiles: 'git:compare-files',
   AddRepository: 'repositories:add',
   RemoveRepository: 'repositories:remove',
+  Checkout: 'git:checkout',
 } as const

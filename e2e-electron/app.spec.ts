@@ -8,7 +8,10 @@ import {
   commitInFixture,
   createFixtures,
   createLongRepository,
+  createRepositoryWithRemote,
   createScratchRepository,
+  fixtureGit,
+  gitInFixture,
   removeFixtures,
   renameInFixture,
   switchToNewBranchInFixture,
@@ -44,11 +47,22 @@ test.afterAll(async () => {
  * Launches the built app ('.' = package.json "main", what the installer packages) with a fresh
  * data folder listing these repositories (the sample fixture unless told otherwise).
  */
-async function launch(repositories?: StoredRepository[]): Promise<void> {
+async function launch(repositories?: StoredRepository[], env: Record<string, string> = {}): Promise<void> {
   userData = await mkdtemp(join(tmpdir(), 'git-manager-userdata-'))
   const listed = repositories ?? [{ id: 'sample', path: fixtures.sample }]
   await writeFile(join(userData, 'repositories.json'), JSON.stringify({ version: 1, repositories: listed }))
-  app = await electron.launch({ args: ['.'], env: { ...process.env, GIT_MANAGER_USER_DATA: userData } })
+  app = await electron.launch({
+    args: ['.'],
+    env: {
+      ...process.env,
+      GIT_MANAGER_USER_DATA: userData,
+      // The app runs git with the user's config; an empty one keeps the developer's hooks and
+      // settings out of what the tests see.
+      GIT_CONFIG_GLOBAL: join(fixtures.root, 'empty.gitconfig'),
+      GIT_CONFIG_NOSYSTEM: '1',
+      ...env,
+    },
+  })
   window = await app.firstWindow()
 }
 
@@ -87,12 +101,24 @@ test.describe('with git installed', () => {
     await expect(diffViewer()).toContainText('Describe the sample')
   })
 
-  test('is read-only: no Fetch, Pull, Push, or Checkout on another branch', async () => {
+  test('offers Checkout on another branch, but no Fetch, Pull or Push yet', async () => {
     await sidebar().getByRole('button', { name: 'feature/search', exact: true }).click()
     await expect(diffViewer()).toContainText('Add search')
-    for (const label of ['Fetch', 'Pull', 'Push', 'Checkout']) {
+    await expect(sidebar().getByRole('button', { name: 'Checkout', exact: true })).toBeVisible()
+    for (const label of ['Fetch', 'Pull', 'Push']) {
       await expect(window.getByRole('button', { name: label, exact: true })).toHaveCount(0)
     }
+  })
+
+  test('refuses to check out a branch that would overwrite uncommitted changes, naming the file', async () => {
+    // The sample has README.md edited but not committed, and feature/search has another README.
+    await sidebar().getByRole('button', { name: 'feature/search', exact: true }).click()
+    await sidebar().getByRole('button', { name: 'Checkout', exact: true }).click()
+    await expect(status()).toHaveText(
+      'Failed: your changes to README.md would be overwritten by switching to feature/search. Commit or stash them first.',
+    )
+    await expect(window.getByTestId('header-branch')).toHaveText('main')
+    expect((await fixtureGit(fixtures.sample, 'symbolic-ref', '--short', 'HEAD')).trim()).toBe('main')
   })
 
   test('adds a repository chosen in the folder picker, opens it and remembers it', async () => {
@@ -260,6 +286,92 @@ test('shows a renamed and edited file as one rename, diffed against its old self
   const diff = window.getByTestId('unified-diff')
   await expect(diff.locator('[data-kind="del"]')).toHaveText([/note 3/])
   await expect(diff.locator('[data-kind="add"]')).toHaveText([/note three, edited/])
+})
+
+test.describe('checking out branches', () => {
+  let repo: string
+  let repositories = 0
+  const checkoutButton = () => sidebar().getByRole('button', { name: 'Checkout', exact: true })
+  const headInGit = async () => (await fixtureGit(repo, 'rev-parse', '--abbrev-ref', 'HEAD')).trim()
+
+  test.beforeEach(async () => {
+    repo = await createRepositoryWithRemote(fixtures, `checkout-e2e-${++repositories}`)
+  })
+
+  test('switches to a local branch', async () => {
+    await launch([{ id: 'repo', path: repo }])
+    await sidebar().getByRole('button', { name: 'feature/local', exact: true }).click()
+    await checkoutButton().click()
+    await expect(status()).toHaveText('Switched to feature/local')
+    await expect(window.getByTestId('header-branch')).toHaveText('feature/local')
+    await expect(sidebar().getByRole('button', { name: /^feature\/local\s*HEAD/ })).toBeVisible()
+    expect(await headInGit()).toBe('feature/local')
+  })
+
+  test('checks out a remote branch as a new local branch that tracks it', async () => {
+    await launch([{ id: 'repo', path: repo }])
+    await sidebar().getByRole('button', { name: 'origin/feature/remote', exact: true }).click()
+    await checkoutButton().click()
+    await expect(status()).toHaveText('Switched to a new branch feature/remote, tracking origin/feature/remote')
+    await expect(window.getByTestId('header-branch')).toHaveText('feature/remote')
+    await expect(sidebar().getByRole('button', { name: /^feature\/remote\s*HEAD/ })).toBeVisible()
+    expect((await fixtureGit(repo, 'rev-parse', '--abbrev-ref', 'feature/remote@{upstream}')).trim()).toBe('origin/feature/remote')
+  })
+
+  test('asks before leaving a detached HEAD’s commits behind; Esc keeps them, Switch anyway leaves', async () => {
+    await gitInFixture(fixtures, repo, 'switch', '--quiet', '--detach', 'main')
+    await commitInFixture(fixtures, repo, 'a.txt', 'a\n', 'Detached one')
+    await commitInFixture(fixtures, repo, 'b.txt', 'b\n', 'Detached two')
+    await launch([{ id: 'repo', path: repo }])
+    await expect(window.getByTestId('header-branch')).toHaveText('detached HEAD')
+
+    await sidebar().getByRole('button', { name: 'main', exact: true }).click()
+    await checkoutButton().click()
+    const dialog = window.getByRole('dialog', { name: 'Leave 2 commits behind?' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog).toContainText('After switching to main')
+    await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused()
+
+    await window.keyboard.press('Escape')
+    await expect(dialog).toBeHidden()
+    await expect(status()).toHaveText('Checkout cancelled; nothing changed')
+    expect(await headInGit()).toBe('HEAD')
+
+    await checkoutButton().click()
+    await dialog.getByRole('button', { name: 'Switch anyway' }).click()
+    await expect(dialog).toBeHidden()
+    await expect(window.getByTestId('header-branch')).toHaveText('main')
+    expect(await headInGit()).toBe('main')
+  })
+})
+
+// Playwright's key presses reach the page through DevTools, not the window, so Electron's
+// menu shortcuts (Ctrl+R, Ctrl+Shift+I) can't be pressed here; the installer check tries them.
+test.describe('Electron’s default menu and DevTools', () => {
+  /** Whether there's a menu, and whether DevTools open when asked (they open asynchronously). */
+  const menuAndDevTools = () =>
+    app!.evaluate(async ({ BrowserWindow, Menu }) => {
+      const contents = BrowserWindow.getAllWindows()[0]!.webContents
+      const opened = new Promise<boolean>((resolve) => {
+        contents.once('devtools-opened', () => resolve(true))
+        setTimeout(() => resolve(false), 3000)
+      })
+      contents.openDevTools()
+      return { menu: Menu.getApplicationMenu() !== null, devTools: await opened }
+    })
+
+  test('are gone in the packaged app', async () => {
+    // GIT_MANAGER_NO_DEV_TOOLS gives this unpackaged run the packaged app's behaviour.
+    await launch(undefined, { GIT_MANAGER_NO_DEV_TOOLS: '1' })
+    await expect(status()).toHaveText('Ready')
+    expect(await menuAndDevTools()).toEqual({ menu: false, devTools: false })
+  })
+
+  test('stay for development (unpackaged runs)', async () => {
+    await launch()
+    await expect(status()).toHaveText('Ready')
+    expect(await menuAndDevTools()).toEqual({ menu: true, devTools: true })
+  })
 })
 
 test('the built desktop app contains none of the browser version’s sample data', async () => {

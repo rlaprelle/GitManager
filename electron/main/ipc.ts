@@ -1,5 +1,6 @@
 import type { GitDataSource } from '../../src/services/GitDataSource'
 import type { GitStatus, IpcResult } from '../../src/types/bridge'
+import type { CheckoutOptions, CheckoutTarget } from '../../src/types/git'
 import { IpcChannel } from '../shared/channels'
 
 /** The part of ipcMain the handlers need, so they can be tested without Electron. */
@@ -40,11 +41,37 @@ export function registerIpcHandlers(ipc: IpcRegistrar, { source, appVersion, che
   handle(IpcChannel.CompareFiles, (repoId, left, right) => source.compareFiles(text(repoId), text(left), text(right)))
   handle(IpcChannel.AddRepository, () => source.addRepository())
   handle(IpcChannel.RemoveRepository, (repoId) => source.removeRepository(text(repoId)))
+  handle(IpcChannel.Checkout, (repoId, target, options) =>
+    source.checkout(text(repoId), checkoutTarget(target), checkoutOptions(options)),
+  )
 }
 
 function text(value: unknown): string {
   if (typeof value !== 'string') throw new Error(`Expected text, got ${typeof value}`)
   return value
+}
+
+/** Exactly one of `local` or `remote`, as text: never both, so the source can't guess which was meant. */
+function checkoutTarget(value: unknown): CheckoutTarget {
+  const fields = Object.entries(plainObject(value) ?? {})
+  const [key, name] = fields[0] ?? []
+  if (fields.length !== 1 || typeof name !== 'string') throw new Error('Expected a branch to check out: { local } or { remote }')
+  if (key === 'local') return { local: name }
+  if (key === 'remote') return { remote: name }
+  throw new Error('Expected a branch to check out: { local } or { remote }')
+}
+
+/** Only the options the source knows, so nothing else rides along to it. */
+function checkoutOptions(value: unknown): CheckoutOptions {
+  if (value === undefined) return {}
+  const { leaveCommits, ...rest } = plainObject(value) ?? { unexpected: value }
+  const valid = Object.keys(rest).length === 0 && (leaveCommits === undefined || typeof leaveCommits === 'boolean')
+  if (!valid) throw new Error('Expected checkout options: { leaveCommits?: boolean }')
+  return leaveCommits === undefined ? {} : { leaveCommits }
+}
+
+function plainObject(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null
 }
 
 function count(value: unknown): number {

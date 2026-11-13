@@ -91,6 +91,25 @@ export interface OperationResult {
   message: string
 }
 
+/**
+ * The branch to check out: a local one, or a remote one to create a local branch from that
+ * tracks it. Separate fields, because a local branch may itself be named 'origin/x'.
+ */
+export type CheckoutTarget = { local: string } | { remote: string }
+
+export interface CheckoutOptions {
+  /** Switch even though commits on a detached HEAD would be left on no branch. */
+  leaveCommits?: boolean
+}
+
+/**
+ * What a checkout did. `confirm` means nothing happened yet: switching would leave commits that
+ * no branch contains, and only a checkout with `leaveCommits` goes ahead.
+ */
+export type CheckoutResult =
+  | { kind: 'switched'; branch: string; message: string }
+  | { kind: 'confirm'; commitsLeft: number }
+
 /** What adding a repository did: the repository (null when nothing was added) and what to tell the user. */
 export interface AddRepositoryResult {
   repository: Repository | null

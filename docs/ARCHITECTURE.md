@@ -31,7 +31,7 @@ Each layer depends only on the layers below it.
 
 `App.vue` is the only place that connects the composable to the components. It destructures what `useGitManager` returns and passes each value to the component that needs it.
 
-The same Vue app runs in two hosts, each with its own entry point. In a browser (`index.html` → `src/main.ts`: `npm run dev`, Vitest, the browser Playwright suite) it runs on `MockGitDataSource` and the sample repositories. In the Windows desktop app (`desktop.html` → `src/desktop.ts`, built by electron-vite) it runs on `IpcGitDataSource`, which reads the user's repositories with their installed git; see [Desktop shell](#desktop-shell-electron). The desktop entry never imports the sample data, and a test checks the built bundle, so an installed app can't fall back to it. The desktop app is read-only for now: it passes `writable: false`, which hides Fetch, Pull, Push and Checkout.
+The same Vue app runs in two hosts, each with its own entry point. In a browser (`index.html` → `src/main.ts`: `npm run dev`, Vitest, the browser Playwright suite) it runs on `MockGitDataSource` and the sample repositories. In the Windows desktop app (`desktop.html` → `src/desktop.ts`, built by electron-vite) it runs on `IpcGitDataSource`, which reads the user's repositories with their installed git; see [Desktop shell](#desktop-shell-electron). The desktop entry never imports the sample data, and a test checks the built bundle, so an installed app can't fall back to it. `App`'s `operations` prop lists the operations that change a repository the host offers (`RepositoryOperation`): the browser passes all four, the desktop app only `checkout`, which hides Fetch, Pull and Push until `GitCliDataSource` can do them.
 
 There is no router and no store library. The app is a single screen, and one composable is enough state management for it. If a second screen ever needs the same state, that would be the time to lift it into Pinia.
 
@@ -81,7 +81,7 @@ scripts/
 index.html, desktop.html     browser and desktop entry pages
 src/
   main.ts                    browser entry: App on MockGitDataSource and the sample data
-  desktop.ts                 desktop entry: git check, then App on IpcGitDataSource (read-only)
+  desktop.ts                 desktop entry: git check, then App on IpcGitDataSource (Checkout only)
   mountApp.ts                mounts App (or the git-required screen); fonts and styles
   App.vue                    page layout; wires useGitManager to the components
   style.css                  Tailwind import, @theme colour/font tokens, base styles
@@ -109,7 +109,8 @@ src/
   components/
     AppHeader.vue            repo name, branch chip, Fetch / Pull / Push
     RepositoryList.vue       repository list, "N changed" badge, problem, Add / Remove
-    BranchList.vue           local and remote branches, HEAD badge, Checkout
+    BranchList.vue           local and remote branches, HEAD badge, Checkout (remote: creates the tracking branch)
+    ConfirmDialog.vue        native <dialog>: title, text, Cancel (focused) and a warning-coloured confirm
     CommitHistory.vue        commit table with the lane graph column
     CommitGraphCell.vue      one row of the graph as inline SVG
     RefBadge.vue             branch labels on a commit (head / local / remote)
@@ -179,14 +180,16 @@ Decisions that shape this model:
 | `compareFiles(repoId, left, right)` | `Hunk[]` | Always `sampleCompareDiff`, inverted when the sample paths are swapped. | `diff --no-index` on two paths relative to the repository, refused outside its folder. |
 | `addRepository()` | `AddRepositoryResult` | Explains what the desktop app would ask for. | Native folder picker; the chosen folder's top folder (`rev-parse --show-toplevel`) is added, or the listed entry returned. |
 | `removeRepository(repoId)` | `OperationResult` | Hides it for the session. | Removes it from `repositories.json`; the folder is never touched. |
-| `checkout(repoId, branch)` | `OperationResult` | `Switched to branch X` | Rejects: not available yet. |
+| `checkout(repoId, target, options?)` | `CheckoutResult` | Really switches, in its own copy of the samples (or in repositories passed to it); a remote target adds the local branch. Never asks to confirm. | `git switch --no-guess <name>`, or `git switch --track <remote>/<name>` for `{ remote }`, after checking the name is one `for-each-ref` lists (so it can't be read as an option) and, for a remote, that no local branch has its name (`localNameOf`, longest remote name wins). From a detached HEAD whose commits no branch, remote branch or tag contains (`rev-list --count HEAD --not --branches --remotes --tags`) it answers `confirm` unless `options.leaveCommits`. Git's "would be overwritten" refusals become one line naming the files (`checkoutRefusal`). |
 | `fetch(repoId)` | `OperationResult` | `Fetched origin: no new commits` | Rejects: not available yet. |
 | `pull(repoId, branch)` | `OperationResult` | `Pulled origin/X: already up to date` | Rejects: not available yet. |
 | `push(repoId, branch)` | `OperationResult` | `Pushed X to origin/X` | Rejects: not available yet. |
 
 Every method is async and reports failure by rejecting, including when it's given a repository, commit or file it doesn't know. Results are copies: callers may change them without touching the source. `OperationResult.message` is shown in the status bar exactly as returned.
 
-**Contract tests.** `src/services/__tests__/gitDataSourceContract.ts` exports `describeGitDataSourceContract(name, createSubject)`, a suite of rules any data source must follow whatever repositories it serves: unique ids, branch names and hashes; the checked-out branch is a local branch (unless HEAD is detached, or the repository has no commits yet); a limited history page is the start of the whole history (graph rows aside, since layout depends on what the page holds), and `hasMore` agrees; dates are ISO timestamps; commits are labelled only with existing branches; every changed file has a diff, an added file's diff is all `+` and a deleted file's all `-`; `problem` is null for a readable repository; removing takes a repository off the list; unknown ids reject; and swapping the compare paths inverts the diff (ignoring git's function-name labels, which come from the left file). It runs against the mock (`src/services/__tests__/MockGitDataSource.spec.ts`) and against real git on fixture repositories (`electron/main/git/__tests__/GitCliDataSource.spec.ts`), so the two can't drift apart.
+**Checkout.** The target is `{ local: name }` or `{ remote: name }`, never a bare string: a local branch may itself be named `origin/x`. The result is `{ kind: 'switched', branch, message }` or `{ kind: 'confirm', commitsLeft }`; `confirm` means nothing happened yet. Both sources word the message with `switchedMessage` (`src/lib/checkout.ts`): "Switched to *branch*", "…to a new branch *x*, tracking *origin/x*", plus "; *n* uncommitted changes came along" when `git status` shows any afterwards. `IpcGitDataSource` sends plain copies of the target and options, because IPC clones its arguments and a waiting checkout lives in a Vue ref (a proxy).
+
+**Contract tests.** `src/services/__tests__/gitDataSourceContract.ts` exports `describeGitDataSourceContract(name, createSubject, createCheckoutSubject)`, a suite of rules any data source must follow whatever repositories it serves: unique ids, branch names and hashes; the checked-out branch is a local branch (unless HEAD is detached, or the repository has no commits yet); a limited history page is the start of the whole history (graph rows aside, since layout depends on what the page holds), and `hasMore` agrees; dates are ISO timestamps; commits are labelled only with existing branches; every changed file has a diff, an added file's diff is all `+` and a deleted file's all `-`; `problem` is null for a readable repository; removing takes a repository off the list; unknown ids reject; and swapping the compare paths inverts the diff (ignoring git's function-name labels, which come from the left file). Checkout rules run on a fresh repository per test (`createCheckoutSubject`): a local checkout makes the branch current; a remote one adds a local branch level with it; unknown and option-like names (`-f`, `--orphan=x`) and unknown repositories reject and change nothing; and a remote branch whose local twin exists rejects with "A local branch *x* already exists". It runs against the mock (`src/services/__tests__/MockGitDataSource.spec.ts`) and against real git on fixture repositories (`electron/main/git/__tests__/GitCliDataSource.spec.ts`), so the two can't drift apart.
 
 `App.vue` wraps the source in `toRaw` before handing it to the composable. The data source is a service, not state. If a parent passes it through reactive props, unwrapping it keeps calls such as `structuredClone` working on the raw object.
 
@@ -194,7 +197,7 @@ Every method is async and reports failure by rejecting, including when it's give
 
 `useGitManager(source, { comparePaths })` returns refs, computeds and action functions. Hosting choices (whether the app may write) are `App` props, not composable state.
 
-**State:** `repositories`, `loading`, `status`, `selectedBranch`, `selectedCommitIndex`, `selectedFileIndex`, `compareOpen`, `leftPath`, `rightPath`, and the loading flags `historyLoading`, `filesLoading`, `diffLoading`. The selected repository id and the user's chosen diff mode are kept internally.
+**State:** `repositories`, `loading`, `status`, `selectedBranch`, `selectedCommitIndex`, `selectedFileIndex`, `compareOpen`, `leftPath`, `rightPath`, the loading flags `historyLoading`, `filesLoading`, `diffLoading`, `operationRunning` (an operation is running), and `pendingCheckout` (a checkout waiting for the user to agree to leave commits behind: target, branch, destination, `commitsLeft`). The selected repository id and the user's chosen diff mode are kept internally.
 
 **Loading in pieces.** Opening a repository loads its branches and history together, then the newest commit's files, then the first file's diff. Selecting a commit loads its files and then the first diff; selecting a file loads its diff. Each of these areas is a `latestLoad` (`src/composables/latestLoad.ts`): it holds the area's value and its loading and failed flags, and only its most recent load may change it. A slow response for something the user has already clicked away from is dropped, and its failure isn't reported. History asks for `HISTORY_LIMIT` (200) commits at first; `showMoreHistory()` asks for 200 more each time (re-reading the longer page quietly, keeping the selection) while `loadingMoreHistory` is true. The longer history lasts through refreshes; opening a repository starts again at 200. The selection actions return promises that settle when their loads finish.
 
@@ -204,6 +207,7 @@ Every method is async and reports failure by rejecting, including when it's give
 |---|---|
 | `repository` | The selected repository, or the first one if nothing is selected. |
 | `branches` | The open repository's local and remote branches. |
+| `checkoutableRemotes` | Remote branches with no local branch of their name (`remotesToCheckOut`: the first segment is taken as the remote, which only decides which buttons show). |
 | `commits`, `historyHasMore` | The loaded history page, and whether the repository has older commits. |
 | `commit`, `files`, `file` | The selected commit, its changed files and the selected file. Indexes are clamped to the list length. |
 | `currentBranch`, `headLabel` | The checked-out branch ('' when detached), and what the header calls HEAD ('detached HEAD' then). |
@@ -219,10 +223,11 @@ Behavioural rules the composable enforces. Tests cover each of them, so change t
 3. **Responses can't arrive out of order.** History, branches, files, diff and compare each apply only the response to their latest request (`latestLoad`).
 4. **A failed load empties only its own area.** The status shows `Couldn't load history: <reason>` (or branches, changed files, diff), the area shows nothing, and the rest of the screen keeps working.
 5. **Remote operations report through `status`.** On success the status shows the source's message. On failure it shows `Failed: <reason>`, and no local state changes.
-6. **Local state changes only after the source succeeds.** `checkoutBranch` sets `currentBranch`, and `fetchRemote` sets `lastFetch` to now. Both edit the repository summary in place, which is the composable's own copy from `listRepositories`.
+6. **Local state changes only after the source succeeds.** A checkout sets `currentBranch` and `selectedBranch` to the branch it ended on, and `fetchRemote` sets `lastFetch` to now. Both edit the repository summary in place, which is the composable's own copy from `listRepositories`.
 7. **Adding opens the repository; removing opens the next.** `addRepository` shows the source's message, appends a new repository (or finds the listed one) and opens it; a cancelled picker changes nothing. `removeRepository` takes it off the list and, if it was open, opens the first one left, or closes everything when none is left.
 8. **Refresh never disturbs the view.** `refresh()` re-reads the repository list, then reloads the open repository's branches and history with `latestLoad.refresh`, which keeps the current value on screen (no "Loading history…") until the new one arrives. The selected commit stays selected by hash, its files and diff untouched (a commit never changes); if it's gone (amended, rebased) the newest commit opens. One refresh runs at a time. `App` calls it silently when the window regains focus and with `{ announce: true }` on F5 ("Refreshed *name*").
 9. **Compare waits for both paths.** The desktop app starts with both inputs empty; nothing is asked of the source until both are filled in.
+10. **One operation at a time.** `checkoutBranch`, `checkoutRemoteBranch` and the remote operations do nothing while `operationRunning`; refresh (focus, F5) is skipped then too. A checkout first waits for a refresh already running (so what it read before the switch can't land after it), says "Switching to *branch*…", and once git has switched re-reads everything as a refresh does, keeping the selected commit. When the source answers `confirm`, `pendingCheckout` holds the request: `confirmCheckout()` sends it again with `leaveCommits`, `cancelCheckout()` drops it ("Checkout cancelled; nothing changed"), and opening a repository drops it too. `App` shows it in `ConfirmDialog`.
 
 ## Rendering
 
@@ -300,18 +305,19 @@ Each history row is 32px tall. Lane *n* is at x = 14 + 18·n, and the graph colu
 | Components | `src/components/**/__tests__/` | Each component renders its props and emits the right events |
 | Wiring | `src/__tests__/App.spec.ts` | `App` connects composable and components (clicks reach the source; results reach the screen) |
 | Acceptance | `e2e/git-manager.spec.ts` | Each capability driven through the real UI in Chromium, including the phone-width and smallest-desktop layouts |
-| Desktop acceptance | `e2e-electron/app.spec.ts` | The built app on a fixture repository: browsing a merge, a binary file, a diff and a branch through the UI; a commit and a branch switch made outside the app appearing on F5 and on focus; adding (with Electron's folder dialog stubbed in main), removing, first run and a missing folder, with the saved list checked; read-only (no write buttons); the git-required screen with no git on the PATH; no sample data in the bundle; plus the bridge, no Node globals, the minimum window, offline fonts and the strict CSP |
+| Desktop acceptance | `e2e-electron/app.spec.ts` | The built app on a fixture repository: browsing a merge, a binary file, a diff and a branch through the UI; a commit and a branch switch made outside the app appearing on F5 and on focus; adding (with Electron's folder dialog stubbed in main), removing, first run and a missing folder, with the saved list checked; checking out a local branch, a remote one (tracking checked in git) and a refusal over uncommitted changes, and the leave-commits dialog (Cancel focused, Esc, Switch anyway); Checkout but no Fetch, Pull or Push; no menu and no DevTools with `GIT_MANAGER_NO_DEV_TOOLS=1`, both present otherwise; the git-required screen with no git on the PATH; no sample data in the bundle; plus the bridge, no Node globals, the minimum window, offline fonts and the strict CSP |
 | Icon packer | `scripts/__tests__/ico.spec.ts` | The .ico layout Windows reads, and that the committed `build/icon.ico` has every size as a PNG |
 
 The browser suite also checks that the page loads nothing from other hosts, renders in the bundled fonts, has the favicon, and that its dev policy blocks injected scripts with no violations. Playwright can't check that `eval` is blocked: its own evaluations go through DevTools, which the policy exempts, so the tests assert the `script-src` directive instead.
 
-The browser suite runs against Vite; the desktop suite runs against `out/`, so `npm run test:e2e:app` builds first. Each desktop test gets its own data folder (`GIT_MANAGER_USER_DATA`) listing the fixtures; the fixtures are built with an empty global git config so the developer's own settings can't change them. Playwright starts its own Vite server on port 4317 with `--strictPort` and `reuseExistingServer: false`. That way it fails loudly instead of testing some other app that happens to be on the port.
+The browser suite runs against Vite; the desktop suite runs against `out/`, so `npm run test:e2e:app` builds first. Each desktop test gets its own data folder (`GIT_MANAGER_USER_DATA`) listing the fixtures; the fixtures are built, and the app under test runs git, with an empty global git config so the developer's own settings (hooks, aliases) can't change them. Playwright's key presses reach the page through DevTools, not the window, so Electron's menu shortcuts (Ctrl+R, Ctrl+Shift+I) can't be pressed in a test; the suite checks the menu and DevTools directly, and the installer check tries the keys. Playwright starts its own Vite server on port 4317 with `--strictPort` and `reuseExistingServer: false`. That way it fails loudly instead of testing some other app that happens to be on the port.
 
 Stable selectors for the tests are roles and labels first, then `data-testid`. A repository's button name starts with its name and its Remove button's with "Remove", so match repository buttons with an anchored pattern (`/^name/`). The `data-testid`s are `header-repo`, `header-branch`, `unified-diff`, `side-by-side-diff`, `left-label`, `right-label`, `commit-description`. Diff rows also expose `data-kind`, and side-by-side cells expose `data-side` and `data-cell`.
 
 ## Known limitations
 
-- The desktop app is read-only: Fetch, Pull, Push and Checkout are hidden until they're built (credentials, a dirty working tree and conflicts need handling first).
+- Fetch, Pull and Push are hidden in the desktop app until they're built (credentials and conflicts need handling first).
+- Checkout has no timeout: a slow `post-checkout` hook or an LFS download shows "Switching…" until git finishes, since killing a checkout halfway is worse. Git's prompts are off, so an LFS download that needs to sign in fails. Submodules aren't updated on a switch (git's default). Git's refusal is reworded only in English; in another language its first line is shown as is.
 - The history loads 200 commits at a time ("Show more commits"), and the list isn't virtualized, so thousands of rows get slow. Each page re-reads the whole history from the top, since the lane layout depends on everything above. `git status` on a very large working tree can still be slow.
 - A merge shows only what it brought into its first parent. Copies aren't detected (only renames).
 - Branches beyond 8 lanes share the last lane.

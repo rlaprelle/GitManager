@@ -13,11 +13,73 @@ export interface ContractSubject {
   comparePaths: { left: string; right: string }
 }
 
+/**
+ * A repository the checkout rules may change: a fresh one per call. It has a remote 'origin',
+ * a branch checked out, another local branch, and a remote branch with no local twin.
+ */
+export interface CheckoutSubject {
+  source: GitDataSource
+  repoId: string
+  /** A local branch that isn't checked out. */
+  otherLocal: string
+  /** A remote branch ('origin/…') with no local branch of the same name. */
+  remoteOnly: string
+}
+
 /** Enough to cover every sample commit while keeping real-git runs quick. */
 const COMMITS_CHECKED_PER_REPOSITORY = 25
 const WHOLE_HISTORY = 10_000
 
-export function describeGitDataSourceContract(name: string, createSubject: () => Promise<ContractSubject>): void {
+export function describeGitDataSourceContract(
+  name: string,
+  createSubject: () => Promise<ContractSubject>,
+  createCheckoutSubject: () => Promise<CheckoutSubject>,
+): void {
+  describe(`${name} follows the GitDataSource contract for checkout`, () => {
+    const currentBranchOf = async ({ source, repoId }: CheckoutSubject) =>
+      (await source.listRepositories()).find((repo) => repo.id === repoId)!.currentBranch
+
+    it('switches to a local branch', async () => {
+      const subject = await createCheckoutSubject()
+      const result = await subject.source.checkout(subject.repoId, { local: subject.otherLocal })
+      expect(result).toMatchObject({ kind: 'switched', branch: subject.otherLocal })
+      if (result.kind === 'switched') expect(result.message).toMatch(new RegExp(`^Switched to ${subject.otherLocal}\\b`))
+      expect(await currentBranchOf(subject)).toBe(subject.otherLocal)
+    })
+
+    it('checks out a remote branch as a new local branch level with it', async () => {
+      const subject = await createCheckoutSubject()
+      const localName = subject.remoteOnly.slice('origin/'.length)
+      const result = await subject.source.checkout(subject.repoId, { remote: subject.remoteOnly })
+      expect(result).toMatchObject({ kind: 'switched', branch: localName })
+      expect(await currentBranchOf(subject)).toBe(localName)
+      const { local, remote } = await subject.source.getBranches(subject.repoId)
+      const tip = remote.find((branch) => branch.name === subject.remoteOnly)!.tipHash
+      expect(local.find((branch) => branch.name === localName)).toEqual({ name: localName, ahead: 0, behind: 0, tipHash: tip })
+    })
+
+    it('rejects a branch the repository doesn’t have, or that looks like an option, and changes nothing', async () => {
+      const subject = await createCheckoutSubject()
+      const before = await currentBranchOf(subject)
+      for (const target of [{ local: 'no-such-branch' }, { local: '-f' }, { local: '--orphan=x' }, { remote: 'origin/no-such' }, { remote: '-f' }]) {
+        await expect(subject.source.checkout(subject.repoId, target), JSON.stringify(target)).rejects.toThrow()
+      }
+      await expect(subject.source.checkout('no-such-repository', { local: subject.otherLocal })).rejects.toThrow()
+      expect(await currentBranchOf(subject)).toBe(before)
+    })
+
+    it('rejects a remote branch that already has a local branch of its name', async () => {
+      const subject = await createCheckoutSubject()
+      await subject.source.checkout(subject.repoId, { remote: subject.remoteOnly })
+      await subject.source.checkout(subject.repoId, { local: subject.otherLocal })
+      const localName = subject.remoteOnly.slice('origin/'.length)
+      await expect(subject.source.checkout(subject.repoId, { remote: subject.remoteOnly })).rejects.toThrow(
+        `A local branch ${localName} already exists`,
+      )
+      expect(await currentBranchOf(subject)).toBe(subject.otherLocal)
+    })
+  })
+
   describe(`${name} follows the GitDataSource contract`, () => {
     async function eachRepository(check: (source: GitDataSource, repo: Repository) => Promise<void>) {
       const { source } = await createSubject()

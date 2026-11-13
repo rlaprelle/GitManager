@@ -3,6 +3,14 @@ import { execFile } from 'node:child_process'
 /** A git command failed; the message is git's own explanation, without its "fatal:" prefix. */
 export class GitError extends Error {
   override name = 'GitError'
+
+  /** All git wrote to stderr, for callers that turn a known failure into a better message. */
+  readonly stderr: string
+
+  constructor(message: string, stderr = '') {
+    super(message)
+    this.stderr = stderr
+  }
 }
 
 export interface RunGitOptions {
@@ -37,7 +45,7 @@ export function runGit(cwd: string, args: string[], options: RunGitOptions = {})
         if (!error) return resolve(stdout)
         if (typeof error.code === 'number' && options.okExitCodes?.includes(error.code)) return resolve(stdout)
         if (error.code === 'ENOENT') return reject(new GitError('Git is not installed, or not on the PATH'))
-        reject(new GitError(gitMessage(stderr) || error.message))
+        reject(new GitError(gitMessage(stderr) || error.message, stderr))
       },
     )
   })
