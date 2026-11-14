@@ -14,19 +14,25 @@ const APP_USER_MODEL_ID = 'com.echel.gitmanager'
 // Same as --color-gm-window, so no white flash before the renderer paints.
 const WINDOW_BACKGROUND = '#0e1015'
 
+// Window sizes are the web page's, not the outer frame's (useContentSize).
+const START_WIDTH = 1440
+const START_HEIGHT = 900
+// The smallest size the layout fits without scrolling. Change together with min-h-[640px] on the
+// root of App.vue and GitRequired.vue, and both e2e suites, which check there's no page scroll here.
+const MIN_WIDTH = 1024
+const MIN_HEIGHT = 640
+
 const preloadPath = fileURLToPath(new URL('../preload/index.cjs', import.meta.url))
 const rendererHtmlPath = fileURLToPath(new URL('../renderer/desktop.html', import.meta.url))
 
 function createMainWindow(): BrowserWindow {
   const window = new BrowserWindow({
     title: 'Git Manager',
-    // Sizes below are the web page's, not the outer frame's. The minimum is the
-    // smallest size the layout fits without scrolling (e2e checks both modes).
     useContentSize: true,
-    width: 1440,
-    height: 900,
-    minWidth: 1024,
-    minHeight: 640,
+    width: START_WIDTH,
+    height: START_HEIGHT,
+    minWidth: MIN_WIDTH,
+    minHeight: MIN_HEIGHT,
     show: false,
     backgroundColor: WINDOW_BACKGROUND,
     autoHideMenuBar: true,

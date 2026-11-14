@@ -56,7 +56,7 @@ export class RepositoryStore implements RepositoryCatalog {
       return parseStoreFile(text)
     } catch {
       // Starting over would silently lose the user's list; make them look at the file instead.
-      throw new Error(`Can't read ${basename(this.file)} in ${dirname(this.file)}`)
+      throw new Error(`Can’t read ${basename(this.file)} in ${dirname(this.file)}`)
     }
   }
 

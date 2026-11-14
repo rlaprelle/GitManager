@@ -23,21 +23,28 @@ export function localNameOf(remoteBranch: string, remotes: string[]): string | n
 
 /** The branch a checkout ends on, by the same first-segment rule as remotesToCheckOut. */
 export function destinationOf(target: CheckoutTarget): string {
-  return 'local' in target ? target.local : target.remote.slice(target.remote.indexOf('/') + 1)
+  return 'local' in target ? target.local : (withoutRemote(target.remote) ?? target.remote)
 }
 
 /**
  * The remote branches the sidebar offers to check out: those with no local branch of their
- * name. The UI doesn't know the remotes' names, so it takes the first segment as the remote
- * ('origin/feature/x' → 'feature/x'); this only decides which buttons show, and the data
- * source checks the target properly.
+ * name. This only decides which buttons show, and the data source checks the target properly.
  */
 export function remotesToCheckOut({ local, remote }: Branches): string[] {
   const localNames = new Set(local.map((branch) => branch.name))
   return remote
     .map((branch) => branch.name)
     .filter((name) => {
-      const slash = name.indexOf('/')
-      return slash > 0 && slash < name.length - 1 && !localNames.has(name.slice(slash + 1))
+      const localName = withoutRemote(name)
+      return localName !== null && !localNames.has(localName)
     })
+}
+
+/**
+ * A remote branch's name without its remote ('origin/feature/x' → 'feature/x'). The UI doesn't
+ * know the remotes' names, so it takes the first segment as the remote; null when either part is empty.
+ */
+function withoutRemote(remoteBranch: string): string | null {
+  const slash = remoteBranch.indexOf('/')
+  return slash > 0 && slash < remoteBranch.length - 1 ? remoteBranch.slice(slash + 1) : null
 }

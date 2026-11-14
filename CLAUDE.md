@@ -84,7 +84,7 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
   - selection change resets file index + closes compare;
   - compare forces `diffMode = 'simple'` and ignores `setDiffMode`;
   - every async area (branches, history, files, diff, compare) goes through `latestLoad`, so stale responses are dropped;
-  - a failed load → `status = "Couldn't load <area>: …"` and only that area empties;
+  - a failed load → `status = "Couldn’t load <area>: …"` and only that area empties;
   - local state (`currentBranch`, `lastFetch`) changes only after the source resolves;
   - operation failures → `status = "Failed: …"` (so git refusals are worded to follow "Failed: ");
   - one operation at a time (`runningOperation` says which; its button says "Fetching…" etc.), and every operation waits for a running refresh;

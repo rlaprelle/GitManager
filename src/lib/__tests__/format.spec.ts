@@ -90,6 +90,12 @@ describe('lastFetchLabel', () => {
   it('switches to a date after a week', () => {
     expect(lastFetchLabel(local(2026, 10, 30, 11, 22).toISOString(), now)).toBe('Oct 30')
   })
+
+  it('counts days until a full week has passed', () => {
+    const week = 60 * 24 * 7
+    expect(lastFetchLabel(ago(week - 1), now)).toBe('6 days ago')
+    expect(lastFetchLabel(ago(week), now)).not.toMatch(/ago$/)
+  })
 })
 
 describe('renameLabel', () => {

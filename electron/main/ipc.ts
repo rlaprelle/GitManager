@@ -55,14 +55,16 @@ function text(value: unknown): string {
   return value
 }
 
+const NOT_A_CHECKOUT_TARGET = 'Expected a branch to check out: { local } or { remote }'
+
 /** Exactly one of `local` or `remote`, as text: never both, so the source can't guess which was meant. */
 function checkoutTarget(value: unknown): CheckoutTarget {
   const fields = Object.entries(plainObject(value) ?? {})
   const [key, name] = fields[0] ?? []
-  if (fields.length !== 1 || typeof name !== 'string') throw new Error('Expected a branch to check out: { local } or { remote }')
+  if (fields.length !== 1 || typeof name !== 'string') throw new Error(NOT_A_CHECKOUT_TARGET)
   if (key === 'local') return { local: name }
   if (key === 'remote') return { remote: name }
-  throw new Error('Expected a branch to check out: { local } or { remote }')
+  throw new Error(NOT_A_CHECKOUT_TARGET)
 }
 
 /** Only the options the source knows, so nothing else rides along to it. */

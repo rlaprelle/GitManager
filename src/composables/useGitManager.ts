@@ -67,7 +67,6 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   const historyLimit = ref(HISTORY_LIMIT)
   const loadingMoreHistory = ref(false)
 
-  /** True while a repository operation runs; only one runs at a time. */
   /** The operation running now (one at a time), or null. */
   const runningOperation = ref<RepositoryOperation | null>(null)
   const operationRunning = computed(() => runningOperation.value !== null)
@@ -140,7 +139,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
       repositories.value = await source.listRepositories()
       return true
     } catch (error) {
-      status.value = `Couldn't load repositories: ${errorMessage(error)}`
+      status.value = `Couldn’t load repositories: ${errorMessage(error)}`
       return false
     } finally {
       loading.value = false
@@ -149,7 +148,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
 
   function reportFailure(what: string): (error: unknown) => void {
     return (error) => {
-      status.value = `Couldn't load ${what}: ${errorMessage(error)}`
+      status.value = `Couldn’t load ${what}: ${errorMessage(error)}`
     }
   }
 
@@ -260,7 +259,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     await compareLoad.run(
       () => source.compareFiles(repo.id, leftPath.value, rightPath.value),
       (error) => {
-        status.value = `Couldn't compare files: ${errorMessage(error)}`
+        status.value = `Couldn’t compare files: ${errorMessage(error)}`
       },
     )
   }
