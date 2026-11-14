@@ -75,7 +75,10 @@ export function runGit(cwd: string, args: string[], options: RunGitOptions = {})
 }
 
 function environmentFor(network: NetworkAccess | undefined): NodeJS.ProcessEnv {
-  return { ...process.env, ...ENVIRONMENT, ...(network ? network.env : NO_SIGN_IN) }
+  if (!network) return { ...process.env, ...ENVIRONMENT, ...NO_SIGN_IN }
+  // Started from a shell that sets GCM_INTERACTIVE=never, the app would pass it on and sign-in could never show.
+  const { GCM_INTERACTIVE: _inherited, ...inherited } = process.env
+  return { ...inherited, ...ENVIRONMENT, ...network.env }
 }
 
 /**
