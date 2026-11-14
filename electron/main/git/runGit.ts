@@ -35,7 +35,15 @@ export interface NetworkAccess {
  * Settings that keep output machine-readable whatever the user's git config says. The user's
  * config otherwise still applies, so their credential helper and SSH setup keep working later.
  */
-const FIXED_SETTINGS = ['-c', 'color.ui=never', '-c', 'core.quotepath=false', '-c', 'log.showSignature=false']
+const FIXED_SETTINGS = [
+  ...['-c', 'color.ui=never'],
+  ...['-c', 'core.quotepath=false'],
+  ...['-c', 'log.showSignature=false'],
+  // 'full' would label commits 'refs/heads/main' instead of 'main'.
+  ...['-c', 'log.decorate=short'],
+  // 'true' would print a blank context line as an empty line, without its leading space.
+  ...['-c', 'diff.suppressBlankEmpty=false'],
+]
 
 const ENVIRONMENT = {
   // Never wait for a username/password prompt in a terminal nobody can see.
