@@ -37,17 +37,23 @@ export class RepositoryStore implements RepositoryCatalog {
   }
 
   private async read(): Promise<StoreFile> {
-    let text: string
+    const text = await this.readText()
+    return text === null ? { version: 1, repositories: [] } : this.parse(text)
+  }
+
+  /** The file's text, or null before the first repository is added. */
+  private async readText(): Promise<string | null> {
     try {
-      text = await readFile(this.file, 'utf8')
+      return await readFile(this.file, 'utf8')
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { version: 1, repositories: [] }
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
       throw error
     }
+  }
+
+  private parse(text: string): StoreFile {
     try {
-      const parsed = JSON.parse(text) as StoreFile
-      if (!Array.isArray(parsed.repositories)) throw new Error('no repository list')
-      return parsed
+      return parseStoreFile(text)
     } catch {
       // Starting over would silently lose the user's list; make them look at the file instead.
       throw new Error(`Can't read ${basename(this.file)} in ${dirname(this.file)}`)
@@ -61,6 +67,12 @@ export class RepositoryStore implements RepositoryCatalog {
     await writeFile(temporary, JSON.stringify(contents, null, 2) + '\n')
     await rename(temporary, this.file)
   }
+}
+
+function parseStoreFile(text: string): StoreFile {
+  const parsed = JSON.parse(text) as StoreFile
+  if (!Array.isArray(parsed.repositories)) throw new Error('no repository list')
+  return parsed
 }
 
 /** Windows paths: case-insensitive, either slash, trailing slashes ignored. */

@@ -1,3 +1,4 @@
+import { errorMessage } from '../../src/lib/errorMessage'
 import type { GitDataSource } from '../../src/services/GitDataSource'
 import type { GitStatus, IpcResult } from '../../src/types/bridge'
 import type { CheckoutOptions, CheckoutTarget } from '../../src/types/git'
@@ -27,7 +28,7 @@ export function registerIpcHandlers(ipc: IpcRegistrar, { source, appVersion, che
       try {
         return { ok: true, value: await answer(...args) }
       } catch (error) {
-        return { ok: false, message: error instanceof Error ? error.message : String(error) }
+        return { ok: false, message: errorMessage(error) }
       }
     })
 

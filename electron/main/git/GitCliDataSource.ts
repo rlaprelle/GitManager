@@ -1,6 +1,7 @@
 import { readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { basename, isAbsolute, normalize, relative, resolve } from 'node:path'
 import { localNameOf, switchedMessage } from '../../../src/lib/checkout'
+import { errorMessage } from '../../../src/lib/errorMessage'
 import { layoutLanes, primaryBranchTip } from '../../../src/lib/laneLayout'
 import { parseUnifiedDiff } from '../../../src/lib/parseDiff'
 import { fetchedMessage, publishedMessage, pulledMessage, pushedMessage, remoteChanges } from '../../../src/lib/remoteOperations'
@@ -253,26 +254,11 @@ export class GitCliDataSource implements GitDataSource {
   }
 
   /** One repository's list entry. A repository git can't read is still listed, with the problem. */
-  private async summarize({ id, path }: StoredRepository): Promise<Repository> {
-    const unreadable = (problem: string): Repository => ({
-      id,
-      name: basename(path),
-      path,
-      currentBranch: null,
-      changedFileCount: 0,
-      lastFetch: null,
-      problem,
-    })
-    if (!(await isFolder(path))) return unreadable(FOLDER_NOT_FOUND)
+  private async summarize(stored: StoredRepository): Promise<Repository> {
     try {
-      const [currentBranch, changes, lastFetch] = await Promise.all([
-        checkedOutBranch(path),
-        git(path, STATUS),
-        lastFetchTime(path),
-      ])
-      return { ...unreadable(''), currentBranch, changedFileCount: countStatusEntries(changes), lastFetch, problem: null }
+      return await readSummary(stored)
     } catch (error) {
-      return unreadable(error instanceof Error ? error.message : String(error))
+      return unreadableRepository(stored, errorMessage(error))
     }
   }
 
@@ -295,6 +281,20 @@ export class GitCliDataSource implements GitDataSource {
     if (!(await isFolder(repo.path))) throw new GitError(`${FOLDER_NOT_FOUND}: ${repo.path}`)
     return repo.path
   }
+}
+
+async function readSummary({ id, path }: StoredRepository): Promise<Repository> {
+  if (!(await isFolder(path))) throw new GitError(FOLDER_NOT_FOUND)
+  const [currentBranch, changes, lastFetch] = await Promise.all([
+    checkedOutBranch(path),
+    git(path, STATUS),
+    lastFetchTime(path),
+  ])
+  return { id, name: basename(path), path, currentBranch, changedFileCount: countStatusEntries(changes), lastFetch, problem: null }
+}
+
+function unreadableRepository({ id, path }: StoredRepository, problem: string): Repository {
+  return { id, name: basename(path), path, currentBranch: null, changedFileCount: 0, lastFetch: null, problem }
 }
 
 async function isFolder(path: string): Promise<boolean> {
