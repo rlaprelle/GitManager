@@ -45,6 +45,7 @@ const {
   repository,
   branches,
   checkoutableRemotes,
+  remoteBranchNames,
   commits,
   historyHasMore,
   commit,
@@ -55,6 +56,7 @@ const {
   historyMessage,
   diffMode,
   activeHunks,
+  diffMessage,
   load,
   selectRepository,
   selectBranch,
@@ -172,6 +174,7 @@ onUnmounted(() => {
             :message="historyMessage"
             :selected-index="selectedCommitIndex"
             :current-branch="currentBranch"
+            :remote-branch-names="remoteBranchNames"
             :now="now"
             @select="selectCommit"
             @show-more="showMoreHistory"
@@ -186,6 +189,7 @@ onUnmounted(() => {
             :compare-open="compareOpen"
             :diff-mode="diffMode"
             :hunks="activeHunks"
+            :diff-message="diffMessage"
             :left-path="leftPath"
             :right-path="rightPath"
             @select-file="selectFile"

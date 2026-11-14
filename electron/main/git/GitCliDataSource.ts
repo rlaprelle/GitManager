@@ -1,5 +1,5 @@
 import { stat } from 'node:fs/promises'
-import { basename, isAbsolute, normalize, relative, resolve } from 'node:path'
+import { basename, isAbsolute, normalize, relative, resolve, sep } from 'node:path'
 import { localNameOf, switchedMessage } from '../../../src/lib/checkout'
 import { errorMessage } from '../../../src/lib/errorMessage'
 import { layoutLanes, primaryBranchTip } from '../../../src/lib/laneLayout'
@@ -48,10 +48,16 @@ export interface StoredRepository {
 }
 
 /** The user's list of repositories (RepositoryStore keeps it in repositories.json). */
+/** What adding a folder found: its entry, and whether the folder was new to the list. */
+export interface AddedRepository {
+  repository: StoredRepository
+  added: boolean
+}
+
 export interface RepositoryCatalog {
   list(): Promise<StoredRepository[]>
-  /** Adds a folder, or returns the existing entry for it. */
-  add(path: string): Promise<StoredRepository>
+  /** Adds a folder, or finds the existing entry for it. */
+  add(path: string): Promise<AddedRepository>
   remove(id: string): Promise<void>
 }
 
@@ -98,10 +104,9 @@ export class GitCliDataSource implements GitDataSource {
     const topFolder = await git(chosen, ['rev-parse', '--show-toplevel']).catch(() => {
       throw new GitError(`${chosen} isn’t inside a git repository`)
     })
-    const path = normalize(topFolder.trim())
-    const alreadyListed = (await this.repositories.list()).some((repo) => repo.path.toLowerCase() === path.toLowerCase())
-    const repository = await this.summarize(await this.repositories.add(path))
-    return { repository, message: alreadyListed ? `${repository.name} is already in the list` : `Added ${repository.name}` }
+    const { repository: stored, added } = await this.repositories.add(normalize(topFolder.trim()))
+    const repository = await this.summarize(stored)
+    return { repository, message: added ? `Added ${repository.name}` : `${repository.name} is already in the list` }
   }
 
   async removeRepository(repoId: string): Promise<OperationResult> {
@@ -159,11 +164,12 @@ export class GitCliDataSource implements GitDataSource {
   async getFileDiff(repoId: string, hash: string, path: string): Promise<Hunk[]> {
     const folder = await this.folderOf(repoId)
     const range = await comparedRange(folder, hash)
+    const changed = (await this.changedFiles(folder, range)).find((file) => file.path === checkedPath(path))
+    if (!changed) throw new GitError(`${path} is not changed in ${hash.slice(0, 7)}`)
     // A renamed file needs both paths in the pathspec, or git sees a deletion and an addition.
-    const renamedFrom = (await this.changedFiles(folder, range)).find((file) => file.path === path)?.oldPath
-    const paths = renamedFrom ? [renamedFrom, checkedPath(path)] : [checkedPath(path)]
-    const diff = await git(folder, ['diff-tree', '-p', '--no-ext-diff', '-M', ...range, '--', ...paths])
-    if (!diff.trim()) throw new GitError(`${path} is not changed in ${hash.slice(0, 7)}`)
+    const paths = changed.oldPath ? [changed.oldPath, changed.path] : [changed.path]
+    // Literal, so a name like '[id].txt' or ':!a.txt' is a file name, not a wildcard or pathspec magic.
+    const diff = await git(folder, ['--literal-pathspecs', 'diff-tree', '-p', '--no-ext-diff', '-M', ...range, '--', ...paths])
     return parseUnifiedDiff(diff)
   }
 
@@ -372,9 +378,14 @@ function checkedPath(path: string): string {
 /** Resolves a path typed by the user against the repository, refusing anything outside its folder. */
 function insideFolder(folder: string, path: string): string {
   const absolute = resolve(folder, checkedPath(path.trim()))
-  const fromFolder = relative(folder, absolute)
-  if (fromFolder.startsWith('..') || isAbsolute(fromFolder)) throw new GitError(`${path} is outside the repository`)
+  if (!isInside(relative(folder, absolute))) throw new GitError(`${path} is outside the repository`)
   return absolute
+}
+
+/** A path relative to the repository names something in it: not the folder itself, and not above it ('..foo' is a file). */
+function isInside(fromFolder: string): boolean {
+  const goesUp = fromFolder === '..' || fromFolder.startsWith(`..${sep}`)
+  return fromFolder !== '' && !goesUp && !isAbsolute(fromFolder)
 }
 
 /** Runs a command that talks to a remote: git may show its sign-in windows, and stalls fail. */

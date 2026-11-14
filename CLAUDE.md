@@ -40,6 +40,7 @@ src/composables/latestLoad.ts    one async area: value + loading, only the lates
 src/composables/useGitManager.ts ALL state, derived state, actions
 src/lib/{diff,graph,format}.ts   pure functions (diff rows, graph geometry, labels)
 src/lib/checkout.ts              checkout wording + names (switchedMessage, localNameOf, remotesToCheckOut, destinationOf)
+src/lib/refs.ts                  remote branch names: splitRemoteBranch, remoteNamesOf, refKind (badge: head/remote/local by the branch list)
 src/lib/remoteOperations.ts      fetch/pull/push wording (both sources) + remoteChanges (before/after a fetch)
 src/lib/laneLayout.ts            parents → GraphRow (lane 0 = primary branch line; ≤ 8 lanes)
 src/lib/laneTable.ts             LaneTable: which commits each lane is heading to, while layoutLanes runs
@@ -81,7 +82,7 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - Graph layout (`GraphRow`) is supplied by the data source via `layoutLanes`; the UI never assigns lanes. Up to `MAX_LANES` (8); `LANE_COLORS` has one colour per lane. Layout depends on the page, so compare commits without `graph` across pages.
 - Branch → commit lookup is by `tipHash`, never index.
 - Composable invariants (tested; change deliberately):
-  - selection change resets file index + closes compare;
+  - selection change resets file index + closes compare; a refresh doesn't close it (it re-reads the compared files), even when the selected commit has gone;
   - compare forces `diffMode = 'simple'` and ignores `setDiffMode`;
   - every async area (branches, history, files, diff, compare) goes through `latestLoad`, so stale responses are dropped;
   - a failed load → `status = "Couldn’t load <area>: …"` and only that area empties;
@@ -89,7 +90,8 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
   - operation failures → `status = "Failed: …"` (so git refusals are worded to follow "Failed: ");
   - one operation at a time (`runningOperation` says which; its button says "Fetching…" etc.), and every operation waits for a running refresh;
   - fetch/pull/push re-read everything afterwards, after a failure too (a refused pull has still fetched);
-  - a refresh reads the selection when its history arrives, so a click made meanwhile is kept.
+  - a refresh reads the selection when its history arrives, so a click made meanwhile is kept;
+  - a refresh is skipped while a repository opens (its reload would replace the opening one), and loads the selected commit's files or diff again only if they failed.
 - Never load a whole repository: add a narrow `GitDataSource` call per new view area, add its rules to the contract suite, and load it through `latestLoad`. History starts at `HISTORY_LIMIT` and grows by it per `showMoreHistory`; the data source always re-reads from the newest commit (layout depends on the whole page).
 - Refresh (window focus, F5) uses `latestLoad.refresh`, which keeps the value on screen; never `run` for reloading what the user is looking at, or the pane flashes "Loading…". Keep selection by hash, not index.
 - Composable tests that need slow or out-of-order responses use `heldSource()` (`src/composables/__tests__/heldSource.ts`).
@@ -104,7 +106,7 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - Monospace (`font-mono`, JetBrains Mono) for hashes, paths, code; Inter for UI. Both are bundled Fontsource variable fonts (families `'Inter Variable'`, `'JetBrains Mono Variable'`) imported in `src/main.ts`. Never load anything from another host.
 - Responsive: `max-[860px]:` variant is the narrow breakpoint. Page must never scroll horizontally (e2e enforces at phone width); wide content scrolls inside its own pane.
 - Smallest desktop size is 1024×640 content (Electron `minWidth`/`minHeight` with `useContentSize`; root `min-h-[640px]`). Both e2e suites assert no page scroll there — change all three together.
-- Test selectors: role/label first; repository buttons by anchored name (`/^name/`), since each row's Remove button is named "Remove name from the list"; then `data-testid` (`header-repo`, `header-branch`, `unified-diff`, `side-by-side-diff`, `left-label`, `right-label`, `commit-description`); diff rows expose `data-kind`, side-by-side cells `data-side`/`data-cell`.
+- Test selectors: role/label first; repository buttons by anchored name (`/^name/`), since each row's Remove button is named "Remove name from the list"; then `data-testid` (`header-repo`, `header-branch`, `unified-diff`, `side-by-side-diff`, `left-label`, `right-label`, `commit-description`); diff rows and branch badges expose `data-kind`, side-by-side cells `data-side`/`data-cell`.
 - Every new capability gets: lib/composable unit test, component test, `src/__tests__/App.spec.ts` wiring test if it crosses components, and a Playwright test that drives the UI.
 
 ## Constraints / quirks

@@ -179,7 +179,7 @@ describe('pullRefusal', () => {
 })
 
 describe('parseUpstream', () => {
-  // UPSTREAM_FORMAT: refname, upstream, upstream:short, remotename, remoteref, track; NUL-separated.
+  // UPSTREAM_FORMAT: refname, upstream, upstream:short, remotename, remoteref, track,nobracket; NUL-separated.
   const line = (...fields: string[]) => fields.join(NUL)
 
   it('reads the upstream’s ref, name, remote and branch there', () => {

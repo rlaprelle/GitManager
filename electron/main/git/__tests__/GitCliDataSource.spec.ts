@@ -62,10 +62,10 @@ function memoryCatalog(initial: StoredRepository[]): RepositoryCatalog {
     list: async () => repositories,
     add: async (path) => {
       const existing = repositories.find((repo) => repo.path.toLowerCase() === path.toLowerCase())
-      if (existing) return existing
-      const added = { id: `added-${repositories.length}`, path }
-      repositories = [...repositories, added]
-      return added
+      if (existing) return { repository: existing, added: false }
+      const repository = { id: `added-${repositories.length}`, path }
+      repositories = [...repositories, repository]
+      return { repository, added: true }
     },
     remove: async (id) => {
       repositories = repositories.filter((repo) => repo.id !== id)
@@ -227,6 +227,53 @@ describe('GitCliDataSource reading the fixture repositories', () => {
     await expect(source.getCommitFiles('sample', '--output=C:/evil.txt')).rejects.toThrow('Not a commit hash')
     await expect(source.compareFiles('sample', '../outside.txt', 'config/left.yml')).rejects.toThrow('outside the repository')
     await expect(source.compareFiles('sample', 'C:/Windows/win.ini', 'config/left.yml')).rejects.toThrow('outside the repository')
+    await expect(source.compareFiles('sample', '.', 'config/left.yml')).rejects.toThrow('outside the repository')
+  })
+
+  it('takes a file path literally, never as git pathspec magic', async () => {
+    const folder = await createScratchRepository(fixtures, 'magic')
+    await commitInFixture(fixtures, folder, 'a.txt', 'a\n', 'Add a.txt')
+    await commitInFixture(fixtures, folder, 'b.txt', 'b\n', 'Add b.txt')
+    const source = sourceFor({ id: 'magic', path: folder })
+    const { commits } = await source.getHistory('magic', 10)
+    // To git, ':!a.txt' means "everything but a.txt", which would be b.txt's diff; here it names no file.
+    await expect(source.getFileDiff('magic', commits[0]!.hash, ':!a.txt')).rejects.toThrow('is not changed')
+  })
+
+  it('compares files whose names start with two dots', async () => {
+    const folder = await createScratchRepository(fixtures, 'dotted')
+    await commitInFixture(fixtures, folder, '..left.txt', 'a\n', 'Add left')
+    await commitInFixture(fixtures, folder, '..right.txt', 'b\n', 'Add right')
+    const hunks = await sourceFor({ id: 'dotted', path: folder }).compareFiles('dotted', '..left.txt', '..right.txt')
+    expect(hunks.flatMap((hunk) => hunk.lines)).toEqual(['-a', '+b'])
+  })
+
+  it('shows the diff of a file whose name looks like a wildcard', async () => {
+    const folder = await createScratchRepository(fixtures, 'bracketed')
+    await commitInFixture(fixtures, folder, '[id].txt', 'one\n', 'Add the bracketed file')
+    // As a wildcard, '[id].txt' also matches i.txt, which the same commit adds.
+    await writeFile(join(folder, '[id].txt'), 'two\n')
+    await writeFile(join(folder, 'i.txt'), 'i\n')
+    await gitInFixture(fixtures, folder, 'add', '--all')
+    await gitInFixture(fixtures, folder, 'commit', '--quiet', '-m', 'Edit the bracketed file and add i.txt')
+    const source = sourceFor({ id: 'bracketed', path: folder })
+    const { commits } = await source.getHistory('bracketed', 10)
+    const hunks = await source.getFileDiff('bracketed', commits[0]!.hash, '[id].txt')
+    expect(hunks.flatMap((hunk) => hunk.lines)).toEqual(['-one', '+two'])
+  })
+
+  it('reads labels and blank lines the same whatever the repository’s log.decorate and diff.suppressBlankEmpty say', async () => {
+    const folder = await createScratchRepository(fixtures, 'configured')
+    await gitInFixture(fixtures, folder, 'config', 'log.decorate', 'full')
+    await gitInFixture(fixtures, folder, 'config', 'diff.suppressBlankEmpty', 'true')
+    await commitInFixture(fixtures, folder, 'text.txt', 'first\n\nmiddle\n\nlast\n', 'Add text')
+    await commitInFixture(fixtures, folder, 'text.txt', 'first\n\nchanged\n\nlast\n', 'Edit text')
+    const source = sourceFor({ id: 'configured', path: folder })
+
+    const { commits } = await source.getHistory('configured', 10)
+    expect(commits[0]!.refs).toEqual(['main'])
+    const hunks = await source.getFileDiff('configured', commits[0]!.hash, 'text.txt')
+    expect(hunks[0]!.lines).toEqual([' first', ' ', '-middle', '+changed', ' ', ' last'])
   })
 
   it('says which folder is missing when a repository was moved or deleted', async () => {
@@ -487,6 +534,16 @@ describe('GitCliDataSource talking to a remote', () => {
     const { source } = await checkoutRepository()
     await source.checkout('repo', { local: 'feature/local' })
     await expect(source.pull('repo', 'feature/local')).rejects.toThrow('feature/local has no upstream branch to pull from')
+  })
+
+  it('says when the upstream branch was deleted on the remote, and pushes it back when asked', async () => {
+    const { source, folder, name, colleague } = await withColleague()
+    await source.checkout('repo', { remote: 'origin/feature/remote' })
+    await gitInFixture(fixtures, colleague, 'push', '--quiet', 'origin', '--delete', 'feature/remote')
+
+    await expect(source.pull('repo', 'feature/remote')).rejects.toThrow('origin/feature/remote no longer exists on origin')
+    expect(await source.push('repo', 'feature/remote')).toEqual({ message: 'Pushed 1 commit to origin/feature/remote' })
+    expect(await tipOf(originOf(fixtures, name), 'feature/remote')).toBe(await tipOf(folder, 'feature/remote'))
   })
 
   it('pushes the branch’s new commits to its upstream', async () => {

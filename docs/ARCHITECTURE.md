@@ -81,7 +81,7 @@ scripts/
 index.html, desktop.html     browser and desktop entry pages
 src/
   main.ts                    browser entry: App on MockGitDataSource and the sample data
-  desktop.ts                 desktop entry: git check, then App on IpcGitDataSource (Checkout only)
+  desktop.ts                 desktop entry: git check, then App on IpcGitDataSource
   mountApp.ts                mounts App (or the git-required screen); fonts and styles
   App.vue                    page layout; wires useGitManager to the components
   style.css                  Tailwind import, @theme colour/font tokens, base styles
@@ -107,6 +107,7 @@ src/
     laneTable.ts             the lanes' state while laneLayout works down a page
     parseDiff.ts             `git diff` output → hunks
     format.ts                labels: dates, last fetch, short hash, sync, paths, plurals
+    refs.ts                  remote branch names: their remotes, and how a commit's branch label shows
   components/
     AppHeader.vue            repo name, branch chip, Fetch / Pull / Push
     RepositoryList.vue       repository list, "N changed" badge, problem, Add / Remove
@@ -221,6 +222,7 @@ Every method is async and reports failure by rejecting, including when it's give
 | `currentBranch`, `headLabel` | The checked-out branch ('' when detached), and what the header calls HEAD ('detached HEAD' then). |
 | `headerSyncLabel` | `'↑2 vs origin'` for the checked-out branch, or `null` when it's in sync. |
 | `historyMessage` | What the history pane says instead of rows: 'Loading history…', 'Couldn’t load history' or 'No commits yet'; `null` when it has rows. |
+| `diffMessage` | What the diff area says instead of lines: no text changes to show (a binary file, an empty one, a move without edits), 'The two files are the same', or that the diff or comparison couldn’t load; `null` while loading or when there are lines. Empty lines alone can't tell these apart. |
 | `diffMode` | `'simple'` whenever compare is open, otherwise the mode the user chose. |
 | `activeHunks` | The compare result while comparing, otherwise the selected file's diff. |
 
@@ -233,7 +235,7 @@ Behavioural rules the composable enforces. Tests cover each of them, so change t
 5. **Remote operations report through `status`.** On success the status shows the source's message. On failure it shows `Failed: <reason>`, and no local state changes.
 6. **Local state changes only after the source answers.** A checkout sets `currentBranch` and `selectedBranch` to the branch it ended on, editing the repository summary in place (the composable's own copy from `listRepositories`). Fetch, pull and push change nothing locally: they re-read everything afterwards, so `lastFetch` and the ↑/↓ counts come from the source.
 7. **Adding opens the repository; removing opens the next.** `addRepository` shows the source's message, appends a new repository (or finds the listed one) and opens it; a cancelled picker changes nothing. `removeRepository` takes it off the list and, if it was open, opens the first one left, or closes everything when none is left.
-8. **Refresh never disturbs the view.** `refresh()` re-reads the repository list, then reloads the open repository's branches and history with `latestLoad.refresh`, which keeps the current value on screen (no "Loading history…") until the new one arrives. The selected commit stays selected by hash, its files and diff untouched (a commit never changes); if it's gone (amended, rebased) the newest commit opens. The selection is read when the new history arrives, so a commit or branch the user picked while git was reading is the one kept. One refresh runs at a time. `App` calls it silently when the window regains focus and with `{ announce: true }` on F5 ("Refreshed *name*").
+8. **Refresh never disturbs the view.** `refresh()` re-reads the repository list, then reloads the open repository's branches and history with `latestLoad.refresh`, which keeps the current value on screen (no "Loading history…") until the new one arrives. The selected commit stays selected by hash, its files and diff untouched (a commit never changes) unless loading them had failed, in which case they're loaded again; if it's gone (amended, rebased) the newest commit opens. An open compare stays open, even then, and its files are re-read: they're the working tree's, which is what changes while the window is away. The selection is read when the new history arrives, so a commit or branch the user picked while git was reading is the one kept. One refresh runs at a time, and none while a repository is opening: it would replace the opening load, and a branch picked meanwhile would be lost. `App` calls it silently when the window regains focus and with `{ announce: true }` on F5 ("Refreshed *name*").
 9. **Compare waits for both paths.** The desktop app starts with both inputs empty; nothing is asked of the source until both are filled in.
 10. **One operation at a time.** `checkoutBranch`, `checkoutRemoteBranch` and the remote operations do nothing while `operationRunning`; refresh (focus, F5) is skipped then too. A checkout first waits for a refresh already running (so what it read before the switch can't land after it), says "Switching to *branch*…", and once git has switched re-reads everything as a refresh does, keeping the selected commit. When the source answers `confirm`, `pendingCheckout` holds the request: `confirmCheckout()` sends it again with `leaveCommits`, `cancelCheckout()` drops it ("Checkout cancelled; nothing changed"), and opening a repository drops it too. `App` shows it in `ConfirmDialog`. `fetchRemote`, `pull` and `push` also wait for a running refresh, say "Fetching…", "Pulling…" or "Pushing…" (the header button says it too), and then re-read everything as a refresh does, keeping the selection. They re-read after a failure as well: a pull refused after fetching, or a fetch that failed for one remote of several, still moved remote branches. Pull and push send the checked-out branch, and fail with "no branch is checked out" on a detached HEAD.
 
@@ -322,7 +324,7 @@ The browser suite also checks that the page loads nothing from other hosts, rend
 
 The browser suite runs against Vite; the desktop suite runs against `out/`, so `npm run test:e2e:app` builds first. Each desktop test gets its own data folder (`GIT_MANAGER_USER_DATA`) listing the fixtures; the fixtures are built, and the app under test runs git, with an empty global git config so the developer's own settings (hooks, aliases) can't change them. Playwright's key presses reach the page through DevTools, not the window, so Electron's menu shortcuts (Ctrl+R, Ctrl+Shift+I) can't be pressed in a test; the suite checks the menu and DevTools directly, and the installer check tries the keys. Playwright starts its own Vite server on port 4317 with `--strictPort` and `reuseExistingServer: false`. That way it fails loudly instead of testing some other app that happens to be on the port.
 
-Stable selectors for the tests are roles and labels first, then `data-testid`. A repository's button name starts with its name and its Remove button's with "Remove", so match repository buttons with an anchored pattern (`/^name/`). The `data-testid`s are `header-repo`, `header-branch`, `unified-diff`, `side-by-side-diff`, `left-label`, `right-label`, `commit-description`. Diff rows also expose `data-kind`, and side-by-side cells expose `data-side` and `data-cell`.
+Stable selectors for the tests are roles and labels first, then `data-testid`. A repository's button name starts with its name and its Remove button's with "Remove", so match repository buttons with an anchored pattern (`/^name/`). The `data-testid`s are `header-repo`, `header-branch`, `unified-diff`, `side-by-side-diff`, `left-label`, `right-label`, `commit-description`. Diff rows and branch badges also expose `data-kind`, and side-by-side cells expose `data-side` and `data-cell`.
 
 ## Known limitations
 

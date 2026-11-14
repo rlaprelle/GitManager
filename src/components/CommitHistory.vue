@@ -16,6 +16,8 @@ const props = defineProps<{
   message: string | null
   selectedIndex: number
   currentBranch: string
+  /** Remote branches' names, which tell a remote branch's badge from a local one's. */
+  remoteBranchNames: string[]
   /** The clock dates are labelled against ('Today', 'Yesterday'). */
   now: Date
 }>()
@@ -67,7 +69,7 @@ const columnTemplate = computed(() => ({
         >
           <CommitGraphCell :row="commit.graph" :selected="index === selectedIndex" :width="graphColumnWidth" />
           <span data-testid="commit-description" class="flex min-w-0 items-center gap-1.5 overflow-hidden">
-            <RefBadge v-for="ref in commit.refs" :key="ref" :name="ref" :current-branch="currentBranch" />
+            <RefBadge v-for="ref in commit.refs" :key="ref" :name="ref" :current-branch="currentBranch" :remote-branch-names="remoteBranchNames" />
             <span class="min-w-[8ch] shrink-[1000] truncate">{{ commit.message }}</span>
           </span>
           <span class="truncate text-[12px] text-gm-muted">{{ commit.author }}</span>

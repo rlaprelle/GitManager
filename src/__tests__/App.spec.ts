@@ -46,6 +46,27 @@ describe('App', () => {
     expect(wrapper.text()).toContain('5 commits · all branches')
   })
 
+  it('tells the history which branches are remote, from the branch list', async () => {
+    const source = new MockGitDataSource()
+    const getBranches = source.getBranches.bind(source)
+    // A remote branch the list doesn't have is styled as local: the badge goes by the list, not the name.
+    source.getBranches = async (repoId) => ({ ...(await getBranches(repoId)), remote: [] })
+    const wrapper = await mountApp(source)
+    const badge = wrapper.findAll('[data-kind]').find((candidate) => candidate.text() === 'origin/main')!
+    expect(badge.attributes('data-kind')).toBe('local')
+
+    const listed = await mountApp()
+    const remote = listed.findAll('[data-kind]').find((candidate) => candidate.text() === 'origin/main')!
+    expect(remote.attributes('data-kind')).toBe('remote')
+  })
+
+  it('says so in the diff area when a changed file has no text changes', async () => {
+    const source = new MockGitDataSource()
+    source.getFileDiff = async () => []
+    const wrapper = await mountApp(source)
+    expect(wrapper.get('[aria-label="Diff viewer"]').text()).toContain('No text changes to show')
+  })
+
   it('selecting a commit updates the diff panel', async () => {
     const wrapper = await mountApp()
     await buttonByText(wrapper, 'Paginate GET /items').trigger('click')

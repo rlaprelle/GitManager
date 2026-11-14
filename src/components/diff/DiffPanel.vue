@@ -24,6 +24,8 @@ const props = defineProps<{
   hunks: Hunk[]
   leftPath: string
   rightPath: string
+  /** Shown instead of the diff: no text changes, files that are the same, or a failed load. */
+  diffMessage?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -118,6 +120,7 @@ const toolbarButton =
           class="min-h-0 flex-auto overflow-auto bg-gm-code font-mono text-[12px] leading-5 max-[860px]:max-h-[440px]"
         >
           <p v-if="(filesLoading || diffLoading) && !compareOpen" class="m-0 px-4 py-3 font-sans text-gm-muted">Loading diff…</p>
+          <p v-else-if="diffMessage" class="m-0 px-4 py-3 font-sans text-gm-muted">{{ diffMessage }}</p>
           <UnifiedDiff v-else-if="diffMode === 'git'" :hunks="hunks" />
           <SideBySideDiff v-else :hunks="hunks" :left-label="leftLabel" :right-label="rightLabel" />
         </div>

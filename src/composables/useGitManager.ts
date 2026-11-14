@@ -21,6 +21,9 @@ export type DiffMode = 'git' | 'simple'
 /** How many of a repository's newest commits the history shows at first, and how many more each "show more" adds. */
 export const HISTORY_LIMIT = 200
 
+/** A changed file whose diff has no lines: git shows none for a binary file, an empty one, or a move without edits. */
+export const NO_TEXT_CHANGES = 'No text changes to show: a binary file, an empty one, or moved without edits'
+
 export interface GitManagerOptions {
   comparePaths: { left: string; right: string }
 }
@@ -85,6 +88,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   const branches = computed(() => branchesLoad.value.value)
   /** Remote branches the sidebar offers to check out (those with no local branch of their name). */
   const checkoutableRemotes = computed(() => remotesToCheckOut(branches.value))
+  const remoteBranchNames = computed(() => branches.value.remote.map((branch) => branch.name))
   const commits = computed<Commit[]>(() => historyLoad.value.value.commits)
   const historyHasMore = computed(() => historyLoad.value.value.hasMore)
 
@@ -124,6 +128,24 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   const diffMode = computed<DiffMode>(() => (compareOpen.value ? 'simple' : chosenDiffMode.value))
 
   const activeHunks = computed<Hunk[]>(() => (compareOpen.value ? compareLoad.value.value : diffLoad.value.value))
+
+  /**
+   * What the diff area says instead of lines; null when it has lines, or while they load. Empty
+   * lines mean "nothing to show" only when the load worked: a failed one leaves them empty too.
+   */
+  const diffMessage = computed<string | null>(() => (compareOpen.value ? compareMessage() : commitDiffMessage()))
+
+  function commitDiffMessage(): string | null {
+    if (filesLoad.loading.value || diffLoad.loading.value || !file.value) return null
+    if (diffLoad.failed.value) return 'Couldn’t load this diff'
+    return diffLoad.value.value.length === 0 ? NO_TEXT_CHANGES : null
+  }
+
+  function compareMessage(): string | null {
+    if (compareLoad.loading.value || !leftPath.value.trim() || !rightPath.value.trim()) return null
+    if (compareLoad.failed.value) return 'Couldn’t compare these files'
+    return compareLoad.value.value.length === 0 ? 'The two files are the same' : null
+  }
 
   // ---- loading ----
 
@@ -256,12 +278,11 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
       compareLoad.clear()
       return
     }
-    await compareLoad.run(
-      () => source.compareFiles(repo.id, leftPath.value, rightPath.value),
-      (error) => {
-        status.value = `Couldn’t compare files: ${errorMessage(error)}`
-      },
-    )
+    await compareLoad.run(() => source.compareFiles(repo.id, leftPath.value, rightPath.value), reportCompareFailure)
+  }
+
+  function reportCompareFailure(error: unknown): void {
+    status.value = `Couldn’t compare files: ${errorMessage(error)}`
   }
 
   async function openCompare(): Promise<void> {
@@ -455,16 +476,22 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
    * uncommitted files) without disturbing the view: the history stays on screen while it
    * reloads, and the selected commit stays selected if it still exists. `announce` reports it
    * in the status bar (an explicit refresh); otherwise it's silent (the window regaining focus).
-   * Skipped while an operation runs, since it reloads what it changed itself.
+   * Skipped while an operation runs, since it reloads what it changed itself, and while a
+   * repository opens, since its reload would replace the opening one and lose a branch picked meanwhile.
    */
   async function refresh(options: { announce?: boolean } = {}): Promise<void> {
-    if (refreshInFlight || loading.value || operationRunning.value) return
+    if (refreshInFlight || loading.value || operationRunning.value || openingRepository()) return
     refreshInFlight = reload(options.announce)
     try {
       await refreshInFlight
     } finally {
       refreshInFlight = null
     }
+  }
+
+  /** openRepository's first reads are still running (a refresh keeps `loading` false). */
+  function openingRepository(): boolean {
+    return branchesLoad.loading.value || historyLoad.loading.value
   }
 
   async function reload(announce = false): Promise<void> {
@@ -490,7 +517,14 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     await Promise.all([
       branchesLoad.refresh(() => source.getBranches(open.id), reportFailure('branches')),
       reloadHistoryKeepingSelection(open.id),
+      rereadComparedFiles(open.id),
     ])
+  }
+
+  /** The compared files are the working tree's, so they may have changed while the window was away. */
+  async function rereadComparedFiles(repoId: string): Promise<void> {
+    if (!compareOpen.value || !leftPath.value.trim() || !rightPath.value.trim()) return
+    await compareLoad.refresh(() => source.compareFiles(repoId, leftPath.value, rightPath.value), reportCompareFailure)
   }
 
   /**
@@ -508,13 +542,25 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     // while git was reading, and that choice is the one to keep.
     const selectedHash = shown[selectedCommitIndex.value]?.hash
     const stillThere = commits.value.findIndex((candidate) => candidate.hash === selectedHash)
-    if (stillThere >= 0) {
-      // A commit never changes, so its files and diff on screen are still right.
-      selectedCommitIndex.value = stillThere
-      return
-    }
-    resetCommitView()
+    if (stillThere < 0) return showNewestCommit()
+    selectedCommitIndex.value = stillThere
+    await retryFailedCommitLoads()
+  }
+
+  /**
+   * The selected commit has gone (amended or rebased away). Unlike picking a commit, this leaves
+   * compare open: a refresh happens just by coming back to the window, and mustn't close what the user is looking at.
+   */
+  async function showNewestCommit(): Promise<void> {
+    selectedCommitIndex.value = 0
+    selectedFileIndex.value = 0
     await openCommit()
+  }
+
+  /** A commit never changes, so its files and diff on screen are still right; only a failed load needs reading again. */
+  async function retryFailedCommitLoads(): Promise<void> {
+    if (filesLoad.failed.value) return openCommit()
+    if (diffLoad.failed.value) return openFile()
   }
 
   // ---- showing more history ----
@@ -561,6 +607,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     repository,
     branches,
     checkoutableRemotes,
+    remoteBranchNames,
     commits,
     historyHasMore,
     commit,
@@ -572,6 +619,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     historyMessage,
     diffMode,
     activeHunks,
+    diffMessage,
     // actions
     load,
     selectRepository,

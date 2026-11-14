@@ -181,11 +181,11 @@ function changesRefusal(files: string[], doing: string): string {
 }
 
 /**
- * `for-each-ref --format=%(refname)%00%(upstream)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream:remoteref)%00%(upstream:track)`
+ * `for-each-ref --format=%(refname)%00%(upstream)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream:remoteref)%00%(upstream:track,nobracket)`
  * for one branch.
  */
 export const UPSTREAM_FORMAT =
-  '%(refname)%00%(upstream)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream:remoteref)%00%(upstream:track)'
+  '%(refname)%00%(upstream)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream:remoteref)%00%(upstream:track,nobracket)'
 
 /** The branch a local branch tracks. */
 export interface Upstream {

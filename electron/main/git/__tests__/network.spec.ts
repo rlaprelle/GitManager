@@ -90,6 +90,9 @@ describe('running git for the network', () => {
     vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1')
     vi.stubEnv('GIT_SSH', '')
     vi.stubEnv('GIT_SSH_COMMAND', '')
+    // As in a shell (or a parent app) that tells Git Credential Manager to stay hidden: the app
+    // starts with it when run from there, and must not pass it on to fetch, pull or push.
+    vi.stubEnv('GCM_INTERACTIVE', 'never')
     repo = await createScratchRepository(fixtures, 'network')
   })
 
