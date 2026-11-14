@@ -24,23 +24,68 @@ export type SideBySideRow =
 
 const EMPTY_CELL: SideCell = { no: null, text: '', kind: 'empty' }
 
+/** The first character of each line in a hunk. */
+const MARKER = { context: ' ', removed: '-', added: '+', note: '\\' } as const
+
+/** The next line number on each side of a hunk, advanced as its lines are read. */
+interface LineCursor {
+  oldNo: number
+  newNo: number
+}
+
+interface ContextRun {
+  kind: 'context'
+  text: string
+}
+
+/** A block of changed lines: git lists its removals, then its additions. */
+interface ChangeRun {
+  kind: 'change'
+  removed: string[]
+  added: string[]
+}
+
+/** Changed lines held back while inverting, until the block they belong to ends. */
+interface PendingChange {
+  removed: string[]
+  added: string[]
+  /** The side the previous changed line went to, which a "\" note follows. */
+  previous?: string[]
+}
+
 function marker(line: string): string {
-  return line[0] ?? ' '
+  return line[0] ?? MARKER.context
 }
 
 function body(line: string): string {
   return line.slice(1)
 }
 
+function isContext(line: string): boolean {
+  return marker(line) === MARKER.context
+}
+
+function isRemoved(line: string): boolean {
+  return marker(line) === MARKER.removed
+}
+
+function isAdded(line: string): boolean {
+  return marker(line) === MARKER.added
+}
+
 /** git's "\ No newline at end of file", which belongs to the line before it. */
 function isNote(line: string): boolean {
-  return marker(line) === '\\'
+  return marker(line) === MARKER.note
+}
+
+function cursorAt(hunk: Hunk): LineCursor {
+  return { oldNo: hunk.oldStart, newNo: hunk.newStart }
 }
 
 export function hunkHeader(hunk: Hunk): string {
-  const fileLines = hunk.lines.filter((l) => !isNote(l))
-  const oldCount = fileLines.filter((l) => marker(l) !== '+').length
-  const newCount = fileLines.filter((l) => marker(l) !== '-').length
+  const fileLines = hunk.lines.filter((line) => !isNote(line))
+  const oldCount = fileLines.filter((line) => !isAdded(line)).length
+  const newCount = fileLines.filter((line) => !isRemoved(line)).length
   const suffix = hunk.context ? ` ${hunk.context}` : ''
   return `@@ -${hunk.oldStart},${oldCount} +${hunk.newStart},${newCount} @@${suffix}`
 }
@@ -51,23 +96,17 @@ export function toUnifiedLines(hunks: Hunk[]): UnifiedLine[] {
 }
 
 function unifiedLinesOfHunk(hunk: Hunk): UnifiedLine[] {
-  const out: UnifiedLine[] = [{ kind: 'hunk', oldNo: null, newNo: null, text: hunkHeader(hunk) }]
-  let oldNo = hunk.oldStart
-  let newNo = hunk.newStart
+  const header: UnifiedLine = { kind: 'hunk', oldNo: null, newNo: null, text: hunkHeader(hunk) }
+  const cursor = cursorAt(hunk)
+  return [header, ...hunk.lines.map((line) => unifiedLine(line, cursor))]
+}
 
-  for (const line of hunk.lines) {
-    const text = body(line)
-    if (isNote(line)) {
-      out.push({ kind: 'note', oldNo: null, newNo: null, text: text.trim() })
-    } else if (marker(line) === '-') {
-      out.push({ kind: 'del', oldNo: oldNo++, newNo: null, text })
-    } else if (marker(line) === '+') {
-      out.push({ kind: 'add', oldNo: null, newNo: newNo++, text })
-    } else {
-      out.push({ kind: 'context', oldNo: oldNo++, newNo: newNo++, text })
-    }
-  }
-  return out
+function unifiedLine(line: string, cursor: LineCursor): UnifiedLine {
+  const text = body(line)
+  if (isNote(line)) return { kind: 'note', oldNo: null, newNo: null, text: text.trim() }
+  if (isRemoved(line)) return { kind: 'del', oldNo: cursor.oldNo++, newNo: null, text }
+  if (isAdded(line)) return { kind: 'add', oldNo: null, newNo: cursor.newNo++, text }
+  return { kind: 'context', oldNo: cursor.oldNo++, newNo: cursor.newNo++, text }
 }
 
 /**
@@ -88,42 +127,52 @@ function separatorFor(hunk: Hunk): SideBySideRow {
 }
 
 function sideBySideRowsOfHunk(hunk: Hunk): SideBySideRow[] {
-  const rows: SideBySideRow[] = []
-  let oldNo = hunk.oldStart
-  let newNo = hunk.newStart
-  let i = 0
+  const cursor = cursorAt(hunk)
   // Notes describe a line ending, not a line; two columns of text have nowhere to put them.
   const lines = hunk.lines.filter((line) => !isNote(line))
+  return runsOf(lines).flatMap((run) => (run.kind === 'context' ? [contextRow(run, cursor)] : changeRows(run, cursor)))
+}
 
-  while (i < lines.length) {
-    const line = lines[i]!
-    if (marker(line) === ' ') {
-      const text = body(line)
-      rows.push({
-        kind: 'line',
-        left: { no: oldNo++, text, kind: 'context' },
-        right: { no: newNo++, text, kind: 'context' },
-      })
-      i++
-      continue
-    }
+function runsOf(lines: string[]): (ContextRun | ChangeRun)[] {
+  const runs: (ContextRun | ChangeRun)[] = []
+  for (const line of lines) addToRuns(runs, line)
+  return runs
+}
 
-    const deletions: string[] = []
-    const additions: string[] = []
-    while (i < lines.length && marker(lines[i]!) !== ' ') {
-      const changed = lines[i]!
-      ;(marker(changed) === '-' ? deletions : additions).push(body(changed))
-      i++
-    }
-
-    const height = Math.max(deletions.length, additions.length)
-    for (let k = 0; k < height; k++) {
-      const left: SideCell = k < deletions.length ? { no: oldNo++, text: deletions[k]!, kind: 'del' } : EMPTY_CELL
-      const right: SideCell = k < additions.length ? { no: newNo++, text: additions[k]!, kind: 'add' } : EMPTY_CELL
-      rows.push({ kind: 'line', left, right })
-    }
+/** A context line is a run of its own; a changed line joins the change block before it, or starts one. */
+function addToRuns(runs: (ContextRun | ChangeRun)[], line: string): void {
+  if (isContext(line)) {
+    runs.push({ kind: 'context', text: body(line) })
+    return
   }
-  return rows
+  const last = runs.at(-1)
+  const change = last?.kind === 'change' ? last : startChange(runs)
+  ;(isRemoved(line) ? change.removed : change.added).push(body(line))
+}
+
+function startChange(runs: (ContextRun | ChangeRun)[]): ChangeRun {
+  const change: ChangeRun = { kind: 'change', removed: [], added: [] }
+  runs.push(change)
+  return change
+}
+
+function contextRow({ text }: ContextRun, cursor: LineCursor): SideBySideRow {
+  return {
+    kind: 'line',
+    left: { no: cursor.oldNo++, text, kind: 'context' },
+    right: { no: cursor.newNo++, text, kind: 'context' },
+  }
+}
+
+function changeRows({ removed, added }: ChangeRun, cursor: LineCursor): SideBySideRow[] {
+  const left = removed.map((text): SideCell => ({ no: cursor.oldNo++, text, kind: 'del' }))
+  const right = added.map((text): SideCell => ({ no: cursor.newNo++, text, kind: 'add' }))
+  const height = Math.max(left.length, right.length)
+  return Array.from({ length: height }, (_, row): SideBySideRow => ({
+    kind: 'line',
+    left: left[row] ?? EMPTY_CELL,
+    right: right[row] ?? EMPTY_CELL,
+  }))
 }
 
 /** The same change seen from the other direction (right → left). */
@@ -143,31 +192,35 @@ export function invertHunks(hunks: Hunk[]): Hunk[] {
  */
 function removalsFirst(lines: string[]): string[] {
   const result: string[] = []
-  const removed: string[] = []
-  const added: string[] = []
-  /** The side the previous changed line went to, which a "\" note follows. */
-  let previous: string[] | undefined
-  const flush = () => {
-    result.push(...removed.splice(0), ...added.splice(0))
-    previous = undefined
-  }
+  const pending: PendingChange = { removed: [], added: [] }
   for (const line of lines) {
-    const kind = marker(line)
-    const side = kind === '-' ? removed : kind === '+' ? added : kind === '\\' ? previous : undefined
+    const side = pendingSideOf(line, pending)
     if (side) {
       side.push(line)
-      previous = side
+      pending.previous = side
       continue
     }
-    flush()
-    result.push(line)
+    result.push(...takePending(pending), line)
   }
-  flush()
+  result.push(...takePending(pending))
   return result
 }
 
+/** Where a changed line waits: its own side, or for a note, the side of the line it describes. */
+function pendingSideOf(line: string, pending: PendingChange): string[] | undefined {
+  if (isRemoved(line)) return pending.removed
+  if (isAdded(line)) return pending.added
+  return isNote(line) ? pending.previous : undefined
+}
+
+/** The held-back block in git's order, leaving nothing pending. */
+function takePending(pending: PendingChange): string[] {
+  pending.previous = undefined
+  return [...pending.removed.splice(0), ...pending.added.splice(0)]
+}
+
 function invertLine(line: string): string {
-  if (marker(line) === '-') return '+' + body(line)
-  if (marker(line) === '+') return '-' + body(line)
+  if (isRemoved(line)) return MARKER.added + body(line)
+  if (isAdded(line)) return MARKER.removed + body(line)
   return line
 }
