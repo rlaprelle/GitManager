@@ -489,6 +489,16 @@ describe('GitCliDataSource talking to a remote', () => {
     await expect(source.pull('repo', 'feature/local')).rejects.toThrow('feature/local has no upstream branch to pull from')
   })
 
+  it('says when the upstream branch was deleted on the remote, and pushes it back when asked', async () => {
+    const { source, folder, name, colleague } = await withColleague()
+    await source.checkout('repo', { remote: 'origin/feature/remote' })
+    await gitInFixture(fixtures, colleague, 'push', '--quiet', 'origin', '--delete', 'feature/remote')
+
+    await expect(source.pull('repo', 'feature/remote')).rejects.toThrow('origin/feature/remote no longer exists on origin')
+    expect(await source.push('repo', 'feature/remote')).toEqual({ message: 'Pushed 1 commit to origin/feature/remote' })
+    expect(await tipOf(originOf(fixtures, name), 'feature/remote')).toBe(await tipOf(folder, 'feature/remote'))
+  })
+
   it('pushes the branch’s new commits to its upstream', async () => {
     const { source, folder, name } = await checkoutRepository()
     await commitInFixture(fixtures, folder, 'a.txt', 'a\n', 'A')
