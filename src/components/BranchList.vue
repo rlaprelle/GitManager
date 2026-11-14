@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { LocalBranch, RemoteBranch } from '@/types/git'
 import { syncLabel } from '@/lib/format'
+import { remoteNamesOf } from '@/lib/refs'
 import GmIcon from './GmIcon.vue'
 
 const props = withDefaults(
@@ -31,6 +33,8 @@ function offersLocalCheckout(name: string): boolean {
 function offersRemoteCheckout(name: string): boolean {
   return props.canCheckout && name === props.selectedBranch && props.checkoutableRemotes.includes(name)
 }
+
+const remoteNames = computed(() => remoteNamesOf(props.remoteBranches).join(', '))
 
 const checkoutButton =
   'mr-1 h-7 flex-none cursor-pointer rounded-md border border-gm-checkout-line bg-gm-checkout px-2.5 text-[12px] text-gm-chip-text disabled:cursor-default disabled:text-gm-disabled'
@@ -76,7 +80,7 @@ const checkoutButton =
       </div>
     </div>
 
-    <h3 v-if="remoteBranches.length" class="mt-3.5 mb-1 px-2 text-[12px] font-semibold text-gm-soft">Remote · origin</h3>
+    <h3 v-if="remoteBranches.length" class="mt-3.5 mb-1 px-2 text-[12px] font-semibold text-gm-soft">Remote · {{ remoteNames }}</h3>
     <div class="flex flex-col gap-0.5">
       <div
         v-for="branch in remoteBranches"

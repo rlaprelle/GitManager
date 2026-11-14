@@ -1,5 +1,6 @@
 import type { Branches, CheckoutTarget } from '@/types/git'
 import { pluralize } from './format'
+import { splitRemoteBranch } from './refs'
 
 /** What a successful checkout tells the user; both data sources word it the same way. */
 export function switchedMessage(branch: string, changesCarried: number, tracking?: string): string {
@@ -40,11 +41,6 @@ export function remotesToCheckOut({ local, remote }: Branches): string[] {
     })
 }
 
-/**
- * A remote branch's name without its remote ('origin/feature/x' → 'feature/x'). The UI doesn't
- * know the remotes' names, so it takes the first segment as the remote; null when either part is empty.
- */
 function withoutRemote(remoteBranch: string): string | null {
-  const slash = remoteBranch.indexOf('/')
-  return slash > 0 && slash < remoteBranch.length - 1 ? remoteBranch.slice(slash + 1) : null
+  return splitRemoteBranch(remoteBranch)?.branch ?? null
 }

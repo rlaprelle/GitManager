@@ -10,7 +10,13 @@ const inventoryCommits = sampleHistoryPage(inventory, 200).commits
 
 function mountHistory(
   selectedIndex = 0,
-  overrides: { hasMore?: boolean; loadingMore?: boolean; message?: string | null; commits?: Commit[] } = {},
+  overrides: {
+    hasMore?: boolean
+    loadingMore?: boolean
+    message?: string | null
+    commits?: Commit[]
+    remoteBranchNames?: string[]
+  } = {},
 ) {
   const message = overrides.message ?? null
   return mount(CommitHistory, {
@@ -21,6 +27,7 @@ function mountHistory(
       message,
       selectedIndex,
       currentBranch: inventory.currentBranch!,
+      remoteBranchNames: overrides.remoteBranchNames ?? inventory.remoteBranches.map((branch) => branch.name),
       now: new Date(),
     },
   })
@@ -61,6 +68,16 @@ describe('CommitHistory', () => {
     expect(rows(wrapper)[0]!.text()).toContain('HEAD → feature/stock-reservations')
     expect(rows(wrapper)[2]!.text()).not.toContain('HEAD')
     expect(rows(wrapper)[2]!.text()).toContain('origin/main')
+  })
+
+  it('styles a remote branch as remote whatever its remote is called, and a local one as local', () => {
+    const [newest, ...rest] = inventoryCommits
+    const commits = [{ ...newest!, refs: ['upstream/main', 'feature/x'] }, ...rest]
+    const badges = rows(mountHistory(0, { commits, remoteBranchNames: ['upstream/main'] }))[0]!.findAll('[data-kind]')
+    expect(badges.map((badge) => [badge.text(), badge.attributes('data-kind')])).toEqual([
+      ['upstream/main', 'remote'],
+      ['feature/x', 'local'],
+    ])
   })
 
   it('gives every ref badge its full name as a tooltip, since narrow rows truncate it', () => {

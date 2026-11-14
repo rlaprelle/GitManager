@@ -38,6 +38,15 @@ describe('BranchList', () => {
     expect(text).toContain('origin/release/2.4')
   })
 
+  it('names the remote section after the remotes the branches come from', () => {
+    expect(mountList().text()).toContain('Remote · origin')
+    const remoteBranches = [
+      { name: 'upstream/main', tipHash: 'a'.repeat(40) },
+      { name: 'origin/main', tipHash: 'b'.repeat(40) },
+    ]
+    expect(mountList('main', { remoteBranches }).text()).toContain('Remote · upstream, origin')
+  })
+
   it('tags the checked-out branch with HEAD and its sync state', () => {
     const current = branchButton(mountList(), 'feature/stock-reservations')
     expect(current.text()).toContain('HEAD')

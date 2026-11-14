@@ -45,6 +45,7 @@ const {
   repository,
   branches,
   checkoutableRemotes,
+  remoteBranchNames,
   commits,
   historyHasMore,
   commit,
@@ -172,6 +173,7 @@ onUnmounted(() => {
             :message="historyMessage"
             :selected-index="selectedCommitIndex"
             :current-branch="currentBranch"
+            :remote-branch-names="remoteBranchNames"
             :now="now"
             @select="selectCommit"
             @show-more="showMoreHistory"

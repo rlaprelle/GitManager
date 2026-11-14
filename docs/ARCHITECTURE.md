@@ -107,6 +107,7 @@ src/
     laneTable.ts             the lanes' state while laneLayout works down a page
     parseDiff.ts             `git diff` output → hunks
     format.ts                labels: dates, last fetch, short hash, sync, paths, plurals
+    refs.ts                  remote branch names: their remotes, and how a commit's branch label shows
   components/
     AppHeader.vue            repo name, branch chip, Fetch / Pull / Push
     RepositoryList.vue       repository list, "N changed" badge, problem, Add / Remove
@@ -322,7 +323,7 @@ The browser suite also checks that the page loads nothing from other hosts, rend
 
 The browser suite runs against Vite; the desktop suite runs against `out/`, so `npm run test:e2e:app` builds first. Each desktop test gets its own data folder (`GIT_MANAGER_USER_DATA`) listing the fixtures; the fixtures are built, and the app under test runs git, with an empty global git config so the developer's own settings (hooks, aliases) can't change them. Playwright's key presses reach the page through DevTools, not the window, so Electron's menu shortcuts (Ctrl+R, Ctrl+Shift+I) can't be pressed in a test; the suite checks the menu and DevTools directly, and the installer check tries the keys. Playwright starts its own Vite server on port 4317 with `--strictPort` and `reuseExistingServer: false`. That way it fails loudly instead of testing some other app that happens to be on the port.
 
-Stable selectors for the tests are roles and labels first, then `data-testid`. A repository's button name starts with its name and its Remove button's with "Remove", so match repository buttons with an anchored pattern (`/^name/`). The `data-testid`s are `header-repo`, `header-branch`, `unified-diff`, `side-by-side-diff`, `left-label`, `right-label`, `commit-description`. Diff rows also expose `data-kind`, and side-by-side cells expose `data-side` and `data-cell`.
+Stable selectors for the tests are roles and labels first, then `data-testid`. A repository's button name starts with its name and its Remove button's with "Remove", so match repository buttons with an anchored pattern (`/^name/`). The `data-testid`s are `header-repo`, `header-branch`, `unified-diff`, `side-by-side-diff`, `left-label`, `right-label`, `commit-description`. Diff rows and branch badges also expose `data-kind`, and side-by-side cells expose `data-side` and `data-cell`.
 
 ## Known limitations
 

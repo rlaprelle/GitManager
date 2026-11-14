@@ -85,6 +85,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   const branches = computed(() => branchesLoad.value.value)
   /** Remote branches the sidebar offers to check out (those with no local branch of their name). */
   const checkoutableRemotes = computed(() => remotesToCheckOut(branches.value))
+  const remoteBranchNames = computed(() => branches.value.remote.map((branch) => branch.name))
   const commits = computed<Commit[]>(() => historyLoad.value.value.commits)
   const historyHasMore = computed(() => historyLoad.value.value.hasMore)
 
@@ -585,6 +586,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     repository,
     branches,
     checkoutableRemotes,
+    remoteBranchNames,
     commits,
     historyHasMore,
     commit,
