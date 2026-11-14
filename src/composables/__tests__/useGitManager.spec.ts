@@ -506,6 +506,77 @@ describe('useGitManager', () => {
       expect(gm.repository.value?.name).toBe('inventory-service')
     })
 
+    it('re-reads the compared files, and keeps compare open', async () => {
+      const source = new MockGitDataSource()
+      const gm = await loadedManager(source)
+      await gm.openCompare()
+      const edited = [{ oldStart: 1, newStart: 1, context: '', lines: ['-old', '+edited outside the app'] }]
+      source.compareFiles = async () => edited
+
+      await gm.refresh()
+      expect(gm.compareOpen.value).toBe(true)
+      expect(gm.activeHunks.value).toEqual(edited)
+    })
+
+    it('keeps compare open when the selected commit has gone, and shows the newest commit behind it', async () => {
+      const { source, inventory } = changeableSource()
+      const gm = await loadedManager(source)
+      await gm.openCompare()
+      inventory.commits[0] = { ...newCommit('bbbb222', '4e7b0d9'), message: 'Amended while comparing' }
+
+      await gm.refresh()
+      expect(gm.compareOpen.value).toBe(true)
+      expect(gm.activeHunks.value).toEqual(sampleCompareDiff)
+      gm.closeCompare()
+      expect(gm.commit.value?.hash).toBe('bbbb222')
+      expect(gm.files.value.map((file) => file.path)).toEqual(['NOTES.md'])
+    })
+
+    it('tries the changed files again when they failed to load', async () => {
+      const source = new MockGitDataSource()
+      const getCommitFiles = source.getCommitFiles.bind(source)
+      source.getCommitFiles = async () => {
+        throw new Error('disk busy')
+      }
+      const gm = await loadedManager(source)
+      expect(gm.files.value).toEqual([])
+
+      source.getCommitFiles = getCommitFiles
+      await gm.refresh()
+      expect(gm.files.value).toHaveLength(2)
+      expect(gm.activeHunks.value).toEqual(expiryJobDiff)
+    })
+
+    it('tries the diff again when it failed to load', async () => {
+      const source = new MockGitDataSource()
+      const getFileDiff = source.getFileDiff.bind(source)
+      source.getFileDiff = async () => {
+        throw new Error('disk busy')
+      }
+      const gm = await loadedManager(source)
+      expect(gm.activeHunks.value).toEqual([])
+
+      source.getFileDiff = getFileDiff
+      await gm.refresh()
+      expect(gm.activeHunks.value).toEqual(expiryJobDiff)
+    })
+
+    it('waits for a repository to finish opening, so a branch picked meanwhile still opens', async () => {
+      const held = heldSource()
+      const opening = manager(held.source)
+      held.hold('getHistory')
+      const loading = opening.load()
+      await settle()
+      await opening.selectBranch('main')
+      // The window regains focus before git has answered.
+      const refreshing = opening.refresh()
+      await settle()
+
+      for (const call of held.callsTo('getHistory')) await call.release()
+      await Promise.all([loading, refreshing])
+      expect(opening.commit.value?.hash).toBe('c81f5a3')
+    })
+
     it('runs one refresh at a time', async () => {
       const held = heldSource()
       const gm = await loadedManager(held.source)

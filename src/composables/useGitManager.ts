@@ -256,12 +256,11 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
       compareLoad.clear()
       return
     }
-    await compareLoad.run(
-      () => source.compareFiles(repo.id, leftPath.value, rightPath.value),
-      (error) => {
-        status.value = `Couldn’t compare files: ${errorMessage(error)}`
-      },
-    )
+    await compareLoad.run(() => source.compareFiles(repo.id, leftPath.value, rightPath.value), reportCompareFailure)
+  }
+
+  function reportCompareFailure(error: unknown): void {
+    status.value = `Couldn’t compare files: ${errorMessage(error)}`
   }
 
   async function openCompare(): Promise<void> {
@@ -455,16 +454,22 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
    * uncommitted files) without disturbing the view: the history stays on screen while it
    * reloads, and the selected commit stays selected if it still exists. `announce` reports it
    * in the status bar (an explicit refresh); otherwise it's silent (the window regaining focus).
-   * Skipped while an operation runs, since it reloads what it changed itself.
+   * Skipped while an operation runs, since it reloads what it changed itself, and while a
+   * repository opens, since its reload would replace the opening one and lose a branch picked meanwhile.
    */
   async function refresh(options: { announce?: boolean } = {}): Promise<void> {
-    if (refreshInFlight || loading.value || operationRunning.value) return
+    if (refreshInFlight || loading.value || operationRunning.value || openingRepository()) return
     refreshInFlight = reload(options.announce)
     try {
       await refreshInFlight
     } finally {
       refreshInFlight = null
     }
+  }
+
+  /** openRepository's first reads are still running (a refresh keeps `loading` false). */
+  function openingRepository(): boolean {
+    return branchesLoad.loading.value || historyLoad.loading.value
   }
 
   async function reload(announce = false): Promise<void> {
@@ -490,7 +495,14 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     await Promise.all([
       branchesLoad.refresh(() => source.getBranches(open.id), reportFailure('branches')),
       reloadHistoryKeepingSelection(open.id),
+      rereadComparedFiles(open.id),
     ])
+  }
+
+  /** The compared files are the working tree's, so they may have changed while the window was away. */
+  async function rereadComparedFiles(repoId: string): Promise<void> {
+    if (!compareOpen.value || !leftPath.value.trim() || !rightPath.value.trim()) return
+    await compareLoad.refresh(() => source.compareFiles(repoId, leftPath.value, rightPath.value), reportCompareFailure)
   }
 
   /**
@@ -508,13 +520,25 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     // while git was reading, and that choice is the one to keep.
     const selectedHash = shown[selectedCommitIndex.value]?.hash
     const stillThere = commits.value.findIndex((candidate) => candidate.hash === selectedHash)
-    if (stillThere >= 0) {
-      // A commit never changes, so its files and diff on screen are still right.
-      selectedCommitIndex.value = stillThere
-      return
-    }
-    resetCommitView()
+    if (stillThere < 0) return showNewestCommit()
+    selectedCommitIndex.value = stillThere
+    await retryFailedCommitLoads()
+  }
+
+  /**
+   * The selected commit has gone (amended or rebased away). Unlike picking a commit, this leaves
+   * compare open: a refresh happens just by coming back to the window, and mustn't close what the user is looking at.
+   */
+  async function showNewestCommit(): Promise<void> {
+    selectedCommitIndex.value = 0
+    selectedFileIndex.value = 0
     await openCommit()
+  }
+
+  /** A commit never changes, so its files and diff on screen are still right; only a failed load needs reading again. */
+  async function retryFailedCommitLoads(): Promise<void> {
+    if (filesLoad.failed.value) return openCommit()
+    if (diffLoad.failed.value) return openFile()
   }
 
   // ---- showing more history ----
