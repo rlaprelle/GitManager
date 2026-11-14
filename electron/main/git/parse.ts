@@ -1,3 +1,4 @@
+import { pluralWord } from '../../../src/lib/format'
 import type { Branches, FileChange, FileStatus } from '../../../src/types/git'
 
 // Parsers for the machine-readable git output GitCliDataSource asks for. Each documents the
@@ -129,7 +130,7 @@ function overwriteRefusal(stderr: string, command: string, doing: string): strin
   const untracked = /untracked working tree files/.test(lines[heading]!)
   const named = fileList(files)
   return untracked
-    ? `untracked ${files.length === 1 ? 'file' : 'files'} ${named} would be overwritten by ${doing}. Move or remove ${files.length === 1 ? 'it' : 'them'} first.`
+    ? `untracked ${pluralWord(files.length, 'file', 'files')} ${named} would be overwritten by ${doing}. Move or remove ${files.length === 1 ? 'it' : 'them'} first.`
     : `your changes to ${named} would be overwritten by ${doing}. Commit or stash them first.`
 }
 

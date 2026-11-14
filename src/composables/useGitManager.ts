@@ -12,7 +12,7 @@ import type {
   Repository,
 } from '@/types/git'
 import { destinationOf, remotesToCheckOut } from '@/lib/checkout'
-import { headLabel as describeHead, shortHash, syncLabel } from '@/lib/format'
+import { headLabel as describeHead, pluralize, shortHash, syncLabel } from '@/lib/format'
 import { latestLoad } from './latestLoad'
 
 export type DiffMode = 'git' | 'simple'
@@ -315,7 +315,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
       const result = await source.checkout(repo.id, target, options)
       if (result.kind === 'confirm') {
         pendingCheckout.value = { target, branch, destination: destinationOf(target), commitsLeft: result.commitsLeft }
-        status.value = `Switching to ${branch} would leave ${commitCount(result.commitsLeft)} on no branch`
+        status.value = `Switching to ${branch} would leave ${pluralize(result.commitsLeft, 'commit', 'commits')} on no branch`
         return
       }
       repo.currentBranch = result.branch
@@ -556,10 +556,6 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
 function checkedOutBranch(repo: Repository): string {
   if (repo.currentBranch === null) throw new Error('no branch is checked out')
   return repo.currentBranch
-}
-
-function commitCount(count: number): string {
-  return count === 1 ? '1 commit' : `${count} commits`
 }
 
 function messageOf(error: unknown): string {

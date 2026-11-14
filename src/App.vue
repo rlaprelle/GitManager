@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, toRaw } from 'vue'
 import { ALL_OPERATIONS, type GitDataSource, type RepositoryOperation } from '@/services/GitDataSource'
 import { useGitManager } from '@/composables/useGitManager'
 import { useNow } from '@/composables/useNow'
+import { pluralize } from '@/lib/format'
 import AppHeader from '@/components/AppHeader.vue'
 import BranchList from '@/components/BranchList.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
@@ -87,10 +88,7 @@ const diffEmptyMessage = computed(() => (historyLoading.value ? '' : (historyMes
 
 const canCheckout = computed(() => props.operations.includes('checkout'))
 
-const pendingCommits = computed(() => {
-  const count = pendingCheckout.value?.commitsLeft ?? 0
-  return count === 1 ? '1 commit' : `${count} commits`
-})
+const pendingCommits = computed(() => pluralize(pendingCheckout.value?.commitsLeft ?? 0, 'commit', 'commits'))
 
 const accentStyle = computed(() => (props.accent ? { '--color-gm-accent': props.accent } : {}))
 

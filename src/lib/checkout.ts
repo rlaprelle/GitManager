@@ -1,10 +1,11 @@
 import type { Branches, CheckoutTarget } from '@/types/git'
+import { pluralize } from './format'
 
 /** What a successful checkout tells the user; both data sources word it the same way. */
 export function switchedMessage(branch: string, changesCarried: number, tracking?: string): string {
   const switched = tracking ? `Switched to a new branch ${branch}, tracking ${tracking}` : `Switched to ${branch}`
   if (changesCarried === 0) return switched
-  const changes = changesCarried === 1 ? '1 uncommitted change' : `${changesCarried} uncommitted changes`
+  const changes = pluralize(changesCarried, 'uncommitted change', 'uncommitted changes')
   return `${switched}; ${changes} came along`
 }
 

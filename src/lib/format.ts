@@ -35,8 +35,14 @@ export function headLabel(branch: string | null): string {
   return branch ?? 'detached HEAD'
 }
 
+/** '1 commit', '3 commits', '0 commits'. */
 export function pluralize(count: number, singular: string, plural: string): string {
-  return `${count} ${count === 1 ? singular : plural}`
+  return `${count} ${pluralWord(count, singular, plural)}`
+}
+
+/** The word alone ('file' / 'files'), for sentences that give the count elsewhere or not at all. */
+export function pluralWord(count: number, singular: string, plural: string): string {
+  return count === 1 ? singular : plural
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
