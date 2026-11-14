@@ -8,6 +8,7 @@ Vue 3 + TypeScript + Vite + Tailwind v4 single-screen git client UI, hosted two 
 npm install
 npm run dev            # Vite dev server (http://localhost:5173 by default)
 npm test               # Vitest, jsdom — unit + component + App wiring
+npm run test:watch     # Vitest in watch mode
 npm run test:e2e       # Playwright; starts its own Vite on 4317 (--strictPort)
 npm run typecheck      # vue-tsc -b (app, vitest, node, electron project references)
 npm run build          # vue-tsc -b && vite build → dist/
@@ -19,6 +20,7 @@ npm run icon           # node scripts/build-icon.ts: build/icon*.svg → build/i
 ```
 
 - First e2e run on a machine: `npx playwright install chromium`.
+- One desktop e2e test without the full suite: `npx electron-vite build`, then `npx playwright test -c playwright.electron.config.ts -g "<title>"` (add `--repeat-each 20` to chase a flake). `test:e2e:app` always rebuilds first.
 - `.claude/launch.json` config `git-manager-ui` = dev server on 5173 (`--strictPort`) for the preview pane.
 - "Done" = typecheck + `npm test` + `npm run test:e2e` + `npm run test:e2e:app` all green, plus a visual spot-check for UI changes.
 - Stop dev-mode Electron by command-line match: `Get-CimInstance Win32_Process | Where-Object CommandLine -match 'GitManager[^\\]*\\node_modules' | Stop-Process`.
@@ -76,7 +78,16 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - Checkout targets are `{ local }` / `{ remote }`, checked against `for-each-ref`'s list before reaching git. `confirm` results (leaving a detached HEAD's commits) go through `pendingCheckout` + `ConfirmDialog`; one operation at a time (`operationRunning`, refresh skipped meanwhile). Anything crossing IPC must be a plain object: Vue refs hold proxies, which IPC can't clone.
 - Graph layout (`GraphRow`) is supplied by the data source via `layoutLanes`; the UI never assigns lanes. Up to `MAX_LANES` (8); `LANE_COLORS` has one colour per lane. Layout depends on the page, so compare commits without `graph` across pages.
 - Branch → commit lookup is by `tipHash`, never index.
-- Composable invariants (tested; change deliberately): selection change resets file index + closes compare; compare forces `diffMode = 'simple'` and ignores `setDiffMode`; every async area (branches, history, files, diff, compare) goes through `latestLoad`, so stale responses are dropped; a failed load → `status = "Couldn't load <area>: …"` and only that area empties; local state (`currentBranch`, `lastFetch`) changes only after the source resolves; operation failures → `status = "Failed: …"` (so git refusals are worded to follow "Failed: "); one operation at a time (`runningOperation` says which; its button says "Fetching…" etc.), and every operation waits for a running refresh; fetch/pull/push re-read everything afterwards, after a failure too (a refused pull has still fetched); a refresh reads the selection when its history arrives, so a click made meanwhile is kept.
+- Composable invariants (tested; change deliberately):
+  - selection change resets file index + closes compare;
+  - compare forces `diffMode = 'simple'` and ignores `setDiffMode`;
+  - every async area (branches, history, files, diff, compare) goes through `latestLoad`, so stale responses are dropped;
+  - a failed load → `status = "Couldn't load <area>: …"` and only that area empties;
+  - local state (`currentBranch`, `lastFetch`) changes only after the source resolves;
+  - operation failures → `status = "Failed: …"` (so git refusals are worded to follow "Failed: ");
+  - one operation at a time (`runningOperation` says which; its button says "Fetching…" etc.), and every operation waits for a running refresh;
+  - fetch/pull/push re-read everything afterwards, after a failure too (a refused pull has still fetched);
+  - a refresh reads the selection when its history arrives, so a click made meanwhile is kept.
 - Never load a whole repository: add a narrow `GitDataSource` call per new view area, add its rules to the contract suite, and load it through `latestLoad`. History starts at `HISTORY_LIMIT` and grows by it per `showMoreHistory`; the data source always re-reads from the newest commit (layout depends on the whole page).
 - Refresh (window focus, F5) uses `latestLoad.refresh`, which keeps the value on screen; never `run` for reloading what the user is looking at, or the pane flashes "Loading…". Keep selection by hash, not index.
 - Composable tests that need slow or out-of-order responses use `heldSource()` (`src/composables/__tests__/heldSource.ts`).
@@ -105,6 +116,8 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - **Window security is tested** (`e2e-electron`): `contextIsolation`, `sandbox`, no `nodeIntegration`, navigation and pop-ups denied. Don't relax these to make something work; add a bridge method instead.
 - **Packaged builds have no menu and no DevTools** (`Menu.setApplicationMenu(null)` before ready, `devTools: false`); unpackaged runs keep both. `GIT_MANAGER_NO_DEV_TOOLS=1` gives an unpackaged run the packaged behaviour (e2e uses it). Playwright key presses don't reach Electron's menu accelerators, so Ctrl+R/Ctrl+Shift+I are checked by hand on the installer.
 - **jsdom has no `HTMLDialogElement.showModal`/`close`**: component tests stub them; the real modal behaviour is covered in Playwright.
+- Specs under `electron/` start with `// @vitest-environment node` (Vitest's default is jsdom, from the shared config).
+- **Status starts as "Ready" before anything loads**, so waiting for it in e2e doesn't mean the history is on screen. Wait for content (the diff viewer's commit heading) before clicking things that need it.
 - **All npm packages are devDependencies**, Vue included: electron-vite bundles everything into `out/`, and electron-builder packages only `out/**` + `package.json`.
 - **appId `com.echel.gitmanager`** in `electron-builder.yml` must match `APP_USER_MODEL_ID` in `electron/main/index.ts`.
 - **Content-Security-Policy is a `<meta>` tag** (file:// has no headers), injected by `config/contentSecurityPolicy.ts`. Build: `default-src 'none'`, everything else `'self'`, no `unsafe-*`. Dev adds only `style-src 'unsafe-inline'` (Vite's injected CSS). Both e2e suites assert no violations; a new resource type or host means widening the policy deliberately.
