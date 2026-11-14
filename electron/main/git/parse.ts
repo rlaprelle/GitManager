@@ -172,6 +172,9 @@ export interface PushedRef {
   summary: string
 }
 
+/** The `PushedRef` flags the data source acts on. */
+export const PUSH_FLAG = { rejected: '!', upToDate: '=' } as const
+
 /** `push --porcelain` stdout: 'To <url>', then '<flag>\t<from>:<to>\t<summary>' per ref, then 'Done'. */
 export function parsePushPorcelain(stdout: string): PushedRef[] {
   return stdout

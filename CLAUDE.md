@@ -52,6 +52,7 @@ electron/main/ipc.ts             handler per channel: type checks, IpcResult env
 electron/main/repositoryStore.ts repositories.json in userData
 electron/main/git/               GitCliDataSource, runGit, parsers, git version check; __tests__/fixtures.ts
 electron/main/git/network.ts     how fetch/pull/push run: askpass + GCM allowed, stall limits, user's ssh respected
+electron/main/git/fetchHead.ts   last fetch time (FETCH_HEAD's), and putting FETCH_HEAD back after a failed fetch
 electron/preload/index.ts        contextBridge → window.gitManager
 electron/shared/channels.ts      IPC channel names (main + preload)
 electron.vite.config.ts         desktop build; renderer spreads vite.config.ts
@@ -128,7 +129,7 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - **Unpackaged runs use a separate data folder** (`%APPDATA%\git-manager-dev`, or `GIT_MANAGER_USER_DATA`), never the installed app's `repositories.json`. e2e-electron gives each test its own temp folder; stub the folder picker with `app.evaluate(({ dialog }) => { dialog.showOpenDialog = ... })`.
 - **Git test fixtures** (`electron/main/git/__tests__/fixtures.ts`; `createScratchRepository`, `createRepositoryWithRemote` (fresh repo + bare origin, for checkout), `commitInFixture`, `gitInFixture`, `switchToNewBranchInFixture` for changes "outside the app") build throwaway repos with an empty global config (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`) so the developer's git settings can't change them. The real-git spec and e2e-electron also run the app's own git with that config (checkout runs hooks). Each `git` call is a process: give real-git specs long timeouts.
 - **Only fetch, pull and push may sign in** (`runGit(…, { network })`, built by `networkAccessFor`): everything else keeps `GCM_INTERACTIVE=never`. Never put network access on a read. Tests can't see the sign-in windows; `network.spec.ts` checks what git receives (a `!env` alias) and GitCliDataSource.spec uses a stand-in `core.sshCommand` script that records its environment. Remote fixtures: `createRepositoryWithRemote` + `cloneOriginInFixture` (a colleague) + `originOf`; origin already has `feature/local` (cloned from the repo).
-- **A failed fetch puts FETCH_HEAD back** (`fetchKeepingLastFetch`): git empties it before connecting, and `lastFetch` is its time.
+- **A failed fetch puts FETCH_HEAD back** (`preservingFetchHead` in `fetchHead.ts`): git empties it before connecting, and `lastFetch` is its time.
 - **On Windows a missing working folder fails like missing git** (`spawn git ENOENT`): check the folder exists before running git in it.
 - **Git's diff lists a change's removals before its additions**; `invertHunks` keeps that order, so a swapped compare matches real git.
 - In `page.evaluate` callbacks in e2e-electron, the page variable is named `window`; use `globalThis` for the browser's window.
