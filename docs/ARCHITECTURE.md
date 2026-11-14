@@ -104,6 +104,7 @@ src/
     diff.ts                  hunks → unified lines, side-by-side rows; invertHunks
     graph.ts                 GraphRow → SVG segments, curves and dot; lane colours and width
     laneLayout.ts            parents → GraphRow per commit (lane assignment)
+    laneTable.ts             the lanes' state while laneLayout works down a page
     parseDiff.ts             `git diff` output → hunks
     format.ts                labels: dates, last fetch, short hash, sync, paths, plurals
   components/

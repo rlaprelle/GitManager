@@ -42,6 +42,7 @@ src/lib/{diff,graph,format}.ts   pure functions (diff rows, graph geometry, labe
 src/lib/checkout.ts              checkout wording + names (switchedMessage, localNameOf, remotesToCheckOut, destinationOf)
 src/lib/remoteOperations.ts      fetch/pull/push wording (both sources) + remoteChanges (before/after a fetch)
 src/lib/laneLayout.ts            parents → GraphRow (lane 0 = primary branch line; ≤ 8 lanes)
+src/lib/laneTable.ts             LaneTable: which commits each lane is heading to, while layoutLanes runs
 src/lib/parseDiff.ts             git diff output → Hunk[]
 src/components/**                presentational: props in, emits out
 src/App.vue                      wires composable ↔ components; layout
