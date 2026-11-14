@@ -48,10 +48,16 @@ export interface StoredRepository {
 }
 
 /** The user's list of repositories (RepositoryStore keeps it in repositories.json). */
+/** What adding a folder found: its entry, and whether the folder was new to the list. */
+export interface AddedRepository {
+  repository: StoredRepository
+  added: boolean
+}
+
 export interface RepositoryCatalog {
   list(): Promise<StoredRepository[]>
-  /** Adds a folder, or returns the existing entry for it. */
-  add(path: string): Promise<StoredRepository>
+  /** Adds a folder, or finds the existing entry for it. */
+  add(path: string): Promise<AddedRepository>
   remove(id: string): Promise<void>
 }
 
@@ -98,10 +104,9 @@ export class GitCliDataSource implements GitDataSource {
     const topFolder = await git(chosen, ['rev-parse', '--show-toplevel']).catch(() => {
       throw new GitError(`${chosen} isn’t inside a git repository`)
     })
-    const path = normalize(topFolder.trim())
-    const alreadyListed = (await this.repositories.list()).some((repo) => repo.path.toLowerCase() === path.toLowerCase())
-    const repository = await this.summarize(await this.repositories.add(path))
-    return { repository, message: alreadyListed ? `${repository.name} is already in the list` : `Added ${repository.name}` }
+    const { repository: stored, added } = await this.repositories.add(normalize(topFolder.trim()))
+    const repository = await this.summarize(stored)
+    return { repository, message: added ? `Added ${repository.name}` : `${repository.name} is already in the list` }
   }
 
   async removeRepository(repoId: string): Promise<OperationResult> {

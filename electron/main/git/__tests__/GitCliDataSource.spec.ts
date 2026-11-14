@@ -62,10 +62,10 @@ function memoryCatalog(initial: StoredRepository[]): RepositoryCatalog {
     list: async () => repositories,
     add: async (path) => {
       const existing = repositories.find((repo) => repo.path.toLowerCase() === path.toLowerCase())
-      if (existing) return existing
-      const added = { id: `added-${repositories.length}`, path }
-      repositories = [...repositories, added]
-      return added
+      if (existing) return { repository: existing, added: false }
+      const repository = { id: `added-${repositories.length}`, path }
+      repositories = [...repositories, repository]
+      return { repository, added: true }
     },
     remove: async (id) => {
       repositories = repositories.filter((repo) => repo.id !== id)

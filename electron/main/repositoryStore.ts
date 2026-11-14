@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { basename, dirname, normalize } from 'node:path'
-import type { RepositoryCatalog, StoredRepository } from './git/GitCliDataSource'
+import type { AddedRepository, RepositoryCatalog, StoredRepository } from './git/GitCliDataSource'
 
 interface StoreFile {
   version: 1
@@ -14,26 +14,44 @@ interface StoreFile {
  * exists.
  */
 export class RepositoryStore implements RepositoryCatalog {
+  /** The last change to the file; the next one waits for it, so two quick clicks can't overwrite each other. */
+  private lastChange: Promise<unknown> = Promise.resolve()
+
   constructor(private readonly file: string) {}
 
   async list(): Promise<StoredRepository[]> {
     return (await this.read()).repositories
   }
 
-  /** Adds a folder, or returns the existing entry when that folder is already in the list. */
-  async add(path: string): Promise<StoredRepository> {
-    const contents = await this.read()
-    const existing = contents.repositories.find((repo) => sameFolder(repo.path, path))
-    if (existing) return existing
-    const added = { id: randomUUID(), path: withoutTrailingSlash(normalize(path)) }
-    await this.write({ ...contents, repositories: [...contents.repositories, added] })
-    return added
+  /** Adds a folder, or finds the existing entry when that folder is already in the list. */
+  add(path: string): Promise<AddedRepository> {
+    return this.afterLastChange(() => this.addNow(path))
   }
 
   /** Forgets a repository. Never touches the folder itself. */
-  async remove(id: string): Promise<void> {
+  remove(id: string): Promise<void> {
+    return this.afterLastChange(() => this.removeNow(id))
+  }
+
+  private async addNow(path: string): Promise<AddedRepository> {
+    const contents = await this.read()
+    const existing = contents.repositories.find((repo) => sameFolder(repo.path, path))
+    if (existing) return { repository: existing, added: false }
+    const repository = { id: randomUUID(), path: withoutTrailingSlash(normalize(path)) }
+    await this.write({ ...contents, repositories: [...contents.repositories, repository] })
+    return { repository, added: true }
+  }
+
+  private async removeNow(id: string): Promise<void> {
     const contents = await this.read()
     await this.write({ ...contents, repositories: contents.repositories.filter((repo) => repo.id !== id) })
+  }
+
+  /** Runs `change` once the previous change has finished, whether or not that one failed. */
+  private afterLastChange<T>(change: () => Promise<T>): Promise<T> {
+    const result = this.lastChange.then(change, change)
+    this.lastChange = result
+    return result
   }
 
   private async read(): Promise<StoreFile> {
@@ -81,6 +99,10 @@ function sameFolder(a: string, b: string): boolean {
   return key(a) === key(b)
 }
 
+/** A drive root keeps its backslash: 'D:' alone means the current folder on drive D, not its root. */
+const DRIVE_ROOT = /^[a-zA-Z]:[\\/]+$/
+
 function withoutTrailingSlash(path: string): string {
+  if (DRIVE_ROOT.test(path)) return `${path.slice(0, 2)}\\`
   return path.replace(/[\\/]+$/, '')
 }
