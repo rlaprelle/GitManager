@@ -22,6 +22,7 @@ import { lastFetchTime, preservingFetchHead } from './fetchHead'
 import { networkAccessFor } from './network'
 import {
   BRANCH_FORMAT,
+  BRANCH_REFS,
   LOG_FORMAT,
   PUSH_FLAG,
   type PushedRef,
@@ -29,6 +30,7 @@ import {
   type Upstream,
   checkoutRefusal,
   countStatusEntries,
+  localBranchRef,
   parseBranches,
   parseCommitLog,
   parseNameStatus,
@@ -237,7 +239,7 @@ export class GitCliDataSource implements GitDataSource {
     if (!upstream) return publish(folder, branch)
 
     const pushing = await commitsToPush(folder, branch, upstream)
-    const refspec = `refs/heads/${branch}:${upstream.remoteRef}`
+    const refspec = `${localBranchRef(branch)}:${upstream.remoteRef}`
     const pushed = await pushRef(folder, { remote: upstream.remote, refspec, branch, upstreamName: upstream.name })
     return { message: pushedMessage(pushed.flag === PUSH_FLAG.upToDate ? 0 : pushing, upstream.name) }
   }
@@ -252,7 +254,7 @@ export class GitCliDataSource implements GitDataSource {
   }
 
   private async branchesAt(folder: string): Promise<Branches> {
-    return parseBranches(await git(folder, ['for-each-ref', `--format=${BRANCH_FORMAT}`, 'refs/heads', 'refs/remotes']))
+    return parseBranches(await git(folder, ['for-each-ref', `--format=${BRANCH_FORMAT}`, ...BRANCH_REFS]))
   }
 
   private async stored(repoId: string): Promise<StoredRepository> {
@@ -391,7 +393,7 @@ async function remotesOf(folder: string): Promise<string[]> {
 
 /** The upstream of a branch git listed (so its name is safe in a ref pattern). */
 async function upstreamOf(folder: string, branch: string): Promise<Upstream | null> {
-  return parseUpstream(await git(folder, ['for-each-ref', `--format=${UPSTREAM_FORMAT}`, `refs/heads/${branch}`]), branch)
+  return parseUpstream(await git(folder, ['for-each-ref', `--format=${UPSTREAM_FORMAT}`, localBranchRef(branch)]), branch)
 }
 
 /** How many commits `rev-list --count` finds in `range`, leaving out those `exclude` reaches. */
@@ -406,7 +408,7 @@ async function publish(folder: string, branch: string): Promise<OperationResult>
   if (remotes.length === 0) throw new GitError('this repository has no remote to push to')
   const remote = publishRemoteOf(remotes)
   if (remote === null) throw new GitError(`${branch} tracks no branch yet, and there’s no remote called origin to publish it to`)
-  const refspec = `refs/heads/${branch}:refs/heads/${branch}`
+  const refspec = `${localBranchRef(branch)}:${localBranchRef(branch)}`
   await pushRef(folder, { remote, refspec, branch, upstreamName: `${remote}/${branch}`, options: ['--set-upstream'] })
   return { message: publishedMessage(branch, remote) }
 }
@@ -420,8 +422,8 @@ function publishRemoteOf(remotes: string[]): string | null {
 /** Commits the push will send. A deleted upstream is pushed again, so count what the remote has on no branch. */
 async function commitsToPush(folder: string, branch: string, upstream: Upstream): Promise<number> {
   return upstream.gone
-    ? commitCount(folder, `refs/heads/${branch}`, `--remotes=${upstream.remote}`)
-    : commitCount(folder, `${upstream.ref}..refs/heads/${branch}`)
+    ? commitCount(folder, localBranchRef(branch), `--remotes=${upstream.remote}`)
+    : commitCount(folder, `${upstream.ref}..${localBranchRef(branch)}`)
 }
 
 /** One refspec to push, and what a refusal of it names. */
