@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import type { RepositoryOperation } from '@/services/GitDataSource'
 import AppHeader from '../AppHeader.vue'
 
-function mountHeader(syncLabel: string | null = '↑2 vs origin', more: { operations?: RepositoryOperation[]; busy?: boolean } = {}) {
+function mountHeader(syncLabel: string | null = '↑2 vs origin', more: { operations?: RepositoryOperation[]; running?: RepositoryOperation | null } = {}) {
   return mount(AppHeader, { props: { repoName: 'inventory-service', currentBranch: 'main', syncLabel, ...more } })
 }
 
@@ -28,14 +28,22 @@ describe('AppHeader', () => {
     expect(labels(mountHeader(null))).toEqual(['Fetch', 'Pull', 'Push'])
   })
 
-  it('disables its buttons while an operation runs', async () => {
-    const wrapper = mountHeader(null, { busy: true })
+  it.each(['checkout', 'fetch', 'pull', 'push'] as const)('disables its buttons while %s runs', async (running) => {
+    const wrapper = mountHeader(null, { running })
     for (const button of wrapper.findAll('button')) {
       expect(button.attributes('disabled'), button.text()).toBeDefined()
       await button.trigger('click')
     }
     expect(wrapper.emitted()).not.toHaveProperty('fetch')
+    expect(wrapper.emitted()).not.toHaveProperty('pull')
     expect(wrapper.emitted()).not.toHaveProperty('push')
+  })
+
+  it('says which operation is running on its button', () => {
+    expect(labels(mountHeader(null, { running: 'fetch' }))).toEqual(['Fetching…', 'Pull', 'Push'])
+    expect(labels(mountHeader(null, { running: 'pull' }))).toEqual(['Fetch', 'Pulling…', 'Push'])
+    expect(labels(mountHeader(null, { running: 'push' }))).toEqual(['Fetch', 'Pull', 'Pushing…'])
+    expect(labels(mountHeader(null, { running: 'checkout' }))).toEqual(['Fetch', 'Pull', 'Push'])
   })
 
   it.each(['Fetch', 'Pull', 'Push'])('emits %s when its button is clicked', async (label) => {

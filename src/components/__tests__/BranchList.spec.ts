@@ -82,15 +82,22 @@ describe('BranchList', () => {
     expect(wrapper.emitted('checkout')).toBeUndefined()
   })
 
-  it('disables Checkout, saying it’s switching, while an operation runs', async () => {
+  it('disables Checkout while an operation runs', async () => {
     for (const selected of ['main', 'origin/release/2.4']) {
       const wrapper = mountList(selected, { busy: true })
       const [button] = checkoutButtons(wrapper)
-      expect(button!.text()).toBe('Switching…')
+      expect(button!.text()).toBe('Checkout')
       expect(button!.attributes('disabled')).toBeDefined()
       await button!.trigger('click')
       expect(wrapper.emitted('checkout')).toBeUndefined()
       expect(wrapper.emitted('checkoutRemote')).toBeUndefined()
+    }
+  })
+
+  it('says it’s switching while a checkout runs', () => {
+    for (const selected of ['main', 'origin/release/2.4']) {
+      const [button] = checkoutButtons(mountList(selected, { busy: true, switching: true }))
+      expect(button!.text()).toBe('Switching…')
     }
   })
 })

@@ -1,8 +1,9 @@
-import { stat } from 'node:fs/promises'
+import { readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { basename, isAbsolute, normalize, relative, resolve } from 'node:path'
 import { localNameOf, switchedMessage } from '../../../src/lib/checkout'
 import { layoutLanes, primaryBranchTip } from '../../../src/lib/laneLayout'
 import { parseUnifiedDiff } from '../../../src/lib/parseDiff'
+import { fetchedMessage, publishedMessage, pulledMessage, pushedMessage, remoteChanges } from '../../../src/lib/remoteOperations'
 import type { GitDataSource } from '../../../src/services/GitDataSource'
 import type {
   AddRepositoryResult,
@@ -16,14 +17,22 @@ import type {
   OperationResult,
   Repository,
 } from '../../../src/types/git'
+import { networkAccessFor } from './network'
 import {
   BRANCH_FORMAT,
   LOG_FORMAT,
+  type PushedRef,
+  UPSTREAM_FORMAT,
+  type Upstream,
   checkoutRefusal,
   countStatusEntries,
   parseBranches,
   parseCommitLog,
   parseNameStatus,
+  parsePushPorcelain,
+  parseUpstream,
+  pullRefusal,
+  pushRefusal,
 } from './parse'
 import { GitError, runGit } from './runGit'
 
@@ -53,8 +62,8 @@ const STATUS = ['status', '--porcelain=v1', '-z', '--no-renames', '--untracked-f
 const COMMIT_HASH = /^[0-9a-f]{4,64}$/i
 
 /**
- * Reads repositories with the user's installed git, and switches branches. Fetch, Pull and
- * Push reject for now, and the desktop app hides their buttons.
+ * Reads repositories with the user's installed git; switches branches, fetches, pulls and
+ * pushes. Commands that talk to a remote may show git's own sign-in windows (`network.ts`).
  *
  * Every argument that comes from the renderer is checked before it reaches git: repositories
  * are looked up by id (the renderer never supplies a folder), hashes must look like hashes,
@@ -176,16 +185,71 @@ export class GitCliDataSource implements GitDataSource {
     return { kind: 'switched', branch: plan.branch, message: switchedMessage(plan.branch, changes, plan.tracking) }
   }
 
-  async fetch(): Promise<OperationResult> {
-    throw notYetAvailable('Fetch')
+  /**
+   * `git fetch --all --prune`: every remote, dropping branches deleted there. The message comes
+   * from comparing the remote branches before and after, not from git's (translated) output.
+   */
+  async fetch(repoId: string): Promise<OperationResult> {
+    const folder = await this.folderOf(repoId)
+    if ((await remotesOf(folder)).length === 0) throw new GitError('this repository has no remote to fetch from')
+    const before = (await this.branchesAt(folder)).remote
+    await fetchKeepingLastFetch(folder, ['--all', '--prune', '--quiet'])
+    const after = (await this.branchesAt(folder)).remote
+    return { message: fetchedMessage(remoteChanges(before, after)) }
   }
 
-  async pull(): Promise<OperationResult> {
-    throw notYetAvailable('Pull')
+  /**
+   * Fast-forwards the checked-out branch to its upstream, after fetching the upstream's remote.
+   * Never merges or rebases: when both sides have new commits it refuses, changing nothing but
+   * the fetched remote branches. Done as fetch + `merge --ff-only` rather than `git pull`, so
+   * the user's pull.rebase setting can't change what happens.
+   */
+  async pull(repoId: string, branch: string): Promise<OperationResult> {
+    const folder = await this.folderOf(repoId)
+    const current = await checkedOutBranch(folder)
+    if (current === null) throw new GitError('no branch is checked out')
+    if (current !== branch) throw new GitError(`${branch} isn’t checked out; ${current} is`)
+    const upstream = await upstreamOf(folder, branch)
+    if (!upstream) throw new GitError(`${branch} has no upstream branch to pull from`)
+
+    if (upstream.remote !== '.') await fetchKeepingLastFetch(folder, ['--prune', '--quiet', '--', upstream.remote])
+    const fetched = await upstreamOf(folder, branch)
+    if (!fetched || fetched.gone) throw new GitError(`${upstream.name} no longer exists on ${upstream.remote}`)
+
+    const [behind, ahead] = await Promise.all([
+      commitCount(folder, `HEAD..${fetched.ref}`),
+      commitCount(folder, `${fetched.ref}..HEAD`),
+    ])
+    if (behind === 0) return { message: pulledMessage(0, fetched.name) }
+    if (ahead > 0) {
+      throw new GitError(`can’t fast-forward: ${branch} and ${fetched.name} both have new commits. Merge or rebase them in a terminal.`)
+    }
+    await git(folder, ['merge', '--ff-only', '--quiet', fetched.ref]).catch((error: unknown) => {
+      const refusal = error instanceof GitError ? pullRefusal(error.stderr, fetched.name) : null
+      throw refusal ? new GitError(refusal, (error as GitError).stderr) : error
+    })
+    return { message: pulledMessage(behind, fetched.name) }
   }
 
-  async push(): Promise<OperationResult> {
-    throw notYetAvailable('Push')
+  /**
+   * Pushes a branch to its upstream, by explicit refspec so push.default can't send it anywhere
+   * else; never forced. A branch without an upstream is published to origin (or the only
+   * remote) and tracks it from then on.
+   */
+  async push(repoId: string, branch: string): Promise<OperationResult> {
+    const folder = await this.folderOf(repoId)
+    if (!(await this.branchesAt(folder)).local.some((candidate) => candidate.name === branch)) {
+      throw new GitError(`Unknown branch: ${branch}`)
+    }
+    const upstream = await upstreamOf(folder, branch)
+    if (!upstream) return publish(folder, branch)
+
+    // A deleted upstream is pushed again: count what the remote has on no branch.
+    const pushing = upstream.gone
+      ? await commitCount(folder, `refs/heads/${branch}`, `--remotes=${upstream.remote}`)
+      : await commitCount(folder, `${upstream.ref}..refs/heads/${branch}`)
+    const pushed = await pushRef(folder, upstream.remote, `refs/heads/${branch}:${upstream.remoteRef}`, branch, upstream.name)
+    return { message: pushedMessage(pushed.flag === '=' ? 0 : pushing, upstream.name) }
   }
 
   /** One repository's list entry. A repository git can't read is still listed, with the problem. */
@@ -260,9 +324,52 @@ async function hasCommits(folder: string): Promise<boolean> {
 
 /** When FETCH_HEAD was last written, which git does on every fetch; null if never. */
 async function lastFetchTime(folder: string): Promise<string | null> {
-  const fetchHead = (await git(folder, ['rev-parse', '--git-path', 'FETCH_HEAD'])).trim()
-  const found = await stat(resolve(folder, fetchHead)).catch(() => null)
+  const found = await stat(await fetchHeadPath(folder)).catch(() => null)
   return found ? found.mtime.toISOString() : null
+}
+
+async function fetchHeadPath(folder: string): Promise<string> {
+  return resolve(folder, (await git(folder, ['rev-parse', '--git-path', 'FETCH_HEAD'])).trim())
+}
+
+/**
+ * `git fetch` with `args`, leaving FETCH_HEAD as it was when the fetch fails. Git empties
+ * FETCH_HEAD before it connects, so a fetch that fails would otherwise look like one that
+ * succeeded just now (the last fetch time is FETCH_HEAD's), and lose what the last good fetch
+ * recorded. When some remotes answered (`--all`), git keeps what they sent, and so does this.
+ */
+async function fetchKeepingLastFetch(folder: string, args: string[]): Promise<void> {
+  const fetchHead = await fetchHeadPath(folder)
+  const before = await snapshotOf(fetchHead)
+  try {
+    await networkGit(folder, ['fetch', ...args])
+  } catch (error) {
+    const after = await stat(fetchHead).catch(() => null)
+    if (after?.size === 0) await restore(fetchHead, before)
+    throw error
+  }
+}
+
+interface FileSnapshot {
+  content: Buffer
+  accessed: Date
+  modified: Date
+}
+
+async function snapshotOf(path: string): Promise<FileSnapshot | null> {
+  const found = await stat(path).catch(() => null)
+  if (!found) return null
+  return { content: await readFile(path), accessed: found.atime, modified: found.mtime }
+}
+
+/** Puts a file back as `snapshot` recorded it, or removes it if there was none. */
+async function restore(path: string, snapshot: FileSnapshot | null): Promise<void> {
+  if (!snapshot) {
+    await rm(path, { force: true })
+    return
+  }
+  await writeFile(path, snapshot.content)
+  await utimes(path, snapshot.accessed, snapshot.modified)
 }
 
 /**
@@ -293,8 +400,7 @@ async function switchPlan(folder: string, branches: Branches, target: CheckoutTa
     return { args: ['--no-guess', target.local], branch: target.local }
   }
   if (!branches.remote.some((branch) => branch.name === target.remote)) throw new GitError(`Unknown branch: ${target.remote}`)
-  const remotes = (await git(folder, ['remote'])).split('\n').map((line) => line.trim()).filter(Boolean)
-  const name = localNameOf(target.remote, remotes)
+  const name = localNameOf(target.remote, await remotesOf(folder))
   if (name === null) throw new GitError(`${target.remote} belongs to no remote`)
   if (branches.local.some((branch) => branch.name === name)) throw new GitError(`A local branch ${name} already exists`)
   return { args: ['--track', target.remote], branch: name, tracking: target.remote }
@@ -320,6 +426,55 @@ function insideFolder(folder: string, path: string): string {
   return absolute
 }
 
-function notYetAvailable(operation: string): GitError {
-  return new GitError(`${operation} isn't available in this version yet`)
+/** Runs a command that talks to a remote: git may show its sign-in windows, and stalls fail. */
+async function networkGit(folder: string, args: string[]): Promise<string> {
+  return runGit(folder, args, { network: await networkAccessFor(folder) })
+}
+
+async function remotesOf(folder: string): Promise<string[]> {
+  return (await git(folder, ['remote'])).split('\n').map((line) => line.trim()).filter(Boolean)
+}
+
+/** The upstream of a branch git listed (so its name is safe in a ref pattern). */
+async function upstreamOf(folder: string, branch: string): Promise<Upstream | null> {
+  return parseUpstream(await git(folder, ['for-each-ref', `--format=${UPSTREAM_FORMAT}`, `refs/heads/${branch}`]), branch)
+}
+
+/** How many commits `rev-list --count` finds in `range`, leaving out those `exclude` reaches. */
+async function commitCount(folder: string, range: string, ...exclude: string[]): Promise<number> {
+  const args = exclude.length > 0 ? [range, '--not', ...exclude] : [range]
+  return Number((await git(folder, ['rev-list', '--count', ...args])).trim())
+}
+
+/** Pushes a branch that tracks nothing yet to origin, or to the only remote, and makes it track that. */
+async function publish(folder: string, branch: string): Promise<OperationResult> {
+  const remotes = await remotesOf(folder)
+  if (remotes.length === 0) throw new GitError('this repository has no remote to push to')
+  const remote = remotes.includes('origin') ? 'origin' : remotes.length === 1 ? remotes[0]! : null
+  if (remote === null) throw new GitError(`${branch} tracks no branch yet, and there’s no remote called origin to publish it to`)
+  await pushRef(folder, remote, `refs/heads/${branch}:refs/heads/${branch}`, branch, `${remote}/${branch}`, ['--set-upstream'])
+  return { message: publishedMessage(branch, remote) }
+}
+
+/**
+ * `git push --porcelain` of one refspec, answering git's report for it. A refusal (the remote
+ * has commits the branch lacks, or a hook declined) becomes one line naming the branch.
+ */
+async function pushRef(
+  folder: string,
+  remote: string,
+  refspec: string,
+  branch: string,
+  upstreamName: string,
+  options: string[] = [],
+): Promise<PushedRef> {
+  const stdout = await networkGit(folder, ['push', '--porcelain', ...options, '--', remote, refspec]).catch((error: unknown) => {
+    if (!(error instanceof GitError)) throw error
+    const [report] = parsePushPorcelain(error.stdout)
+    const refusal = report?.flag === '!' ? pushRefusal(report.summary, branch, upstreamName) : null
+    throw refusal ? new GitError(refusal, error.stderr, error.stdout) : error
+  })
+  const [report] = parsePushPorcelain(stdout)
+  if (!report) throw new GitError(`git didn’t say whether ${branch} was pushed`)
+  return report
 }

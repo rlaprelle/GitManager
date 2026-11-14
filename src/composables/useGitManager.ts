@@ -1,5 +1,5 @@
 import { computed, ref } from 'vue'
-import type { GitDataSource } from '@/services/GitDataSource'
+import type { GitDataSource, RepositoryOperation } from '@/services/GitDataSource'
 import type {
   Branches,
   CheckoutOptions,
@@ -60,7 +60,9 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   const loadingMoreHistory = ref(false)
 
   /** True while a repository operation runs; only one runs at a time. */
-  const operationRunning = ref(false)
+  /** The operation running now (one at a time), or null. */
+  const runningOperation = ref<RepositoryOperation | null>(null)
+  const operationRunning = computed(() => runningOperation.value !== null)
   const pendingCheckout = ref<PendingCheckout | null>(null)
 
   const compareOpen = ref(false)
@@ -151,7 +153,19 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
       branchesLoad.run(() => source.getBranches(repo.id), reportFailure('branches')),
       historyLoad.run(() => source.getHistory(repo.id, historyLimit.value), reportFailure('history')),
     ])
-    if (historyLoaded) await openCommit()
+    if (!historyLoaded) return
+    // A branch picked while the history was loading had no commits to jump to yet: jump now.
+    if (selectedBranch.value !== repo.currentBranch) selectedCommitIndex.value = tipIndexOf(selectedBranch.value)
+    await openCommit()
+  }
+
+  /** Where a branch's tip is in the history; the newest commit when it isn't there. */
+  function tipIndexOf(name: string | null): number {
+    const tipHash = [...branches.value.local, ...branches.value.remote].find((b) => b.name === name)?.tipHash
+    return Math.max(
+      commits.value.findIndex((c) => c.hash === tipHash),
+      0,
+    )
   }
 
   /** Loads the selected commit's files, then the selected file's diff. */
@@ -192,9 +206,8 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
 
   async function selectBranch(name: string): Promise<void> {
     const tipHash = [...branches.value.local, ...branches.value.remote].find((b) => b.name === name)?.tipHash
-    const tipIndex = commits.value.findIndex((c) => c.hash === tipHash)
     selectedBranch.value = name
-    resetCommitView(Math.max(tipIndex, 0))
+    resetCommitView(tipIndexOf(name))
     status.value = `Selected ${name} (tip ${tipHash ? shortHash(tipHash) : 'unknown'})`
     await openCommit()
   }
@@ -263,21 +276,6 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
 
   // ---- repository operations ----
 
-  async function runOperation(operation: (repo: Repository) => Promise<OperationResult>): Promise<boolean> {
-    const repo = repository.value
-    if (!repo || operationRunning.value) return false
-    operationRunning.value = true
-    try {
-      status.value = (await operation(repo)).message
-      return true
-    } catch (error) {
-      status.value = `Failed: ${messageOf(error)}`
-      return false
-    } finally {
-      operationRunning.value = false
-    }
-  }
-
   /** Switches to a local branch. */
   async function checkoutBranch(name: string): Promise<void> {
     await runCheckout({ local: name }, name)
@@ -310,7 +308,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     const repo = repository.value
     if (!repo || operationRunning.value) return
     pendingCheckout.value = null
-    operationRunning.value = true
+    runningOperation.value = 'checkout'
     status.value = `Switching to ${branch}…`
     try {
       await refreshInFlight
@@ -327,22 +325,50 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     } catch (error) {
       status.value = `Failed: ${messageOf(error)}`
     } finally {
-      operationRunning.value = false
+      runningOperation.value = null
     }
   }
 
   async function fetchRemote(): Promise<void> {
-    const repo = repository.value
-    const succeeded = await runOperation((r) => source.fetch(r.id))
-    if (succeeded && repo) repo.lastFetch = new Date().toISOString()
+    await runRemoteOperation('fetch', 'Fetching…', (repo) => source.fetch(repo.id))
   }
 
+  /** Brings the checked-out branch level with its upstream (fast-forward only; the source refuses otherwise). */
   async function pull(): Promise<void> {
-    await runOperation((r) => source.pull(r.id, checkedOutBranch(r)))
+    await runRemoteOperation('pull', 'Pulling…', (repo) => source.pull(repo.id, checkedOutBranch(repo)))
   }
 
   async function push(): Promise<void> {
-    await runOperation((r) => source.push(r.id, checkedOutBranch(r)))
+    await runRemoteOperation('push', 'Pushing…', (repo) => source.push(repo.id, checkedOutBranch(repo)))
+  }
+
+  /**
+   * Fetch, Pull and Push: one operation at a time, after a refresh already running. The source
+   * may take a while (git can be waiting for the user to sign in), so `progress` shows meanwhile.
+   * Everything is re-read afterwards even when it failed: a pull refused after fetching, or a
+   * fetch that failed for one remote of several, still moved remote branches. The last fetch
+   * time comes back from the source with the rest.
+   */
+  async function runRemoteOperation(
+    name: RepositoryOperation,
+    progress: string,
+    operation: (repo: Repository) => Promise<OperationResult>,
+  ): Promise<void> {
+    const repo = repository.value
+    if (!repo || operationRunning.value) return
+    runningOperation.value = name
+    status.value = progress
+    try {
+      await refreshInFlight
+      status.value = (await operation(repo)).message
+    } catch (error) {
+      status.value = `Failed: ${messageOf(error)}`
+    }
+    try {
+      await reload()
+    } finally {
+      runningOperation.value = null
+    }
   }
 
   // ---- the repository list ----
@@ -427,12 +453,15 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
    * on screen, then reselects the selected commit by hash; if it's gone, opens the newest.
    */
   async function reloadHistoryKeepingSelection(repoId: string): Promise<void> {
-    const selectedHash = commit.value?.hash
+    const shown = commits.value
     const loaded = await historyLoad.refresh(
       () => source.getHistory(repoId, historyLimit.value),
       reportFailure('history'),
     )
     if (!loaded) return
+    // Read only now: the user may have picked another commit or branch in the list on screen
+    // while git was reading, and that choice is the one to keep.
+    const selectedHash = shown[selectedCommitIndex.value]?.hash
     const stillThere = commits.value.findIndex((candidate) => candidate.hash === selectedHash)
     if (stillThere >= 0) {
       // A commit never changes, so its files and diff on screen are still right.
@@ -478,6 +507,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     rightPath,
     historyLoading: historyLoad.loading,
     loadingMoreHistory,
+    runningOperation,
     operationRunning,
     pendingCheckout,
     filesLoading: filesLoad.loading,

@@ -9,9 +9,11 @@ import {
   createFixtures,
   createLongRepository,
   createRepositoryWithRemote,
+  cloneOriginInFixture,
   createScratchRepository,
   fixtureGit,
   gitInFixture,
+  originOf,
   removeFixtures,
   renameInFixture,
   switchToNewBranchInFixture,
@@ -101,12 +103,12 @@ test.describe('with git installed', () => {
     await expect(diffViewer()).toContainText('Describe the sample')
   })
 
-  test('offers Checkout on another branch, but no Fetch, Pull or Push yet', async () => {
+  test('offers Checkout on another branch, and Fetch, Pull and Push', async () => {
     await sidebar().getByRole('button', { name: 'feature/search', exact: true }).click()
     await expect(diffViewer()).toContainText('Add search')
     await expect(sidebar().getByRole('button', { name: 'Checkout', exact: true })).toBeVisible()
     for (const label of ['Fetch', 'Pull', 'Push']) {
-      await expect(window.getByRole('button', { name: label, exact: true })).toHaveCount(0)
+      await expect(window.getByRole('banner').getByRole('button', { name: label, exact: true })).toBeEnabled()
     }
   })
 
@@ -371,6 +373,96 @@ test.describe('Electron’s default menu and DevTools', () => {
     await launch()
     await expect(status()).toHaveText('Ready')
     expect(await menuAndDevTools()).toEqual({ menu: true, devTools: true })
+  })
+})
+
+test.describe('fetching, pulling and pushing', () => {
+  let name: string
+  let repo: string
+  /** A colleague's clone of the same origin, who pushes the commits there is to fetch and pull. */
+  let colleague: string
+  let repositories = 0
+  const headerButton = (label: string) => window.getByRole('banner').getByRole('button', { name: label, exact: true })
+  const tipOf = async (folder: string, ref: string) => (await fixtureGit(folder, 'rev-parse', ref)).trim()
+  const colleaguePushes = async (...files: string[]) => {
+    for (const file of files) await commitInFixture(fixtures, colleague, file, `${file}\n`, `Colleague adds ${file}`)
+    await gitInFixture(fixtures, colleague, 'push', '--quiet', 'origin', 'main')
+  }
+
+  test.beforeEach(async () => {
+    name = `remote-e2e-${++repositories}`
+    repo = await createRepositoryWithRemote(fixtures, name)
+    colleague = await cloneOriginInFixture(fixtures, name)
+  })
+
+  test('Fetch brings in a colleague’s commit and shows the branch is behind', async () => {
+    await rm(join(repo, '.git', 'FETCH_HEAD'))
+    await launch([{ id: 'repo', path: repo }])
+    await expect(window.locator('footer')).toContainText('Last fetch: never')
+    await colleaguePushes('theirs.txt')
+
+    await headerButton('Fetch').click()
+    await expect(status()).toHaveText('Fetched: 1 branch updated')
+    await expect(window.getByRole('banner')).toContainText('↓1 vs origin')
+    await expect(window.locator('footer')).toContainText('Last fetch: just now')
+    expect(await tipOf(repo, 'origin/main')).toBe(await tipOf(colleague, 'main'))
+  })
+
+  test('Pull fast-forwards the checked-out branch, and the new commits show', async () => {
+    await launch([{ id: 'repo', path: repo }])
+    await colleaguePushes('one.txt', 'two.txt')
+
+    await headerButton('Pull').click()
+    await expect(status()).toHaveText('Pulled 2 commits from origin/main')
+    await expect(window.getByRole('button', { name: /Colleague adds two\.txt/ })).toBeVisible()
+    await expect(window.getByRole('banner')).not.toContainText('vs origin')
+    expect(await tipOf(repo, 'main')).toBe(await tipOf(colleague, 'main'))
+  })
+
+  test('Pull refuses when both sides have new commits, and shows both counts', async () => {
+    await commitInFixture(fixtures, repo, 'mine.txt', 'mine\n', 'Mine')
+    const mine = await tipOf(repo, 'main')
+    await launch([{ id: 'repo', path: repo }])
+    await colleaguePushes('theirs.txt')
+
+    await headerButton('Pull').click()
+    await expect(status()).toHaveText(
+      'Failed: can’t fast-forward: main and origin/main both have new commits. Merge or rebase them in a terminal.',
+    )
+    await expect(window.getByRole('banner')).toContainText('↑1 ↓1 vs origin')
+    expect(await tipOf(repo, 'main')).toBe(mine)
+  })
+
+  test('Push sends the branch’s commits, and the branch is level with origin again', async () => {
+    await commitInFixture(fixtures, repo, 'mine.txt', 'mine\n', 'Mine')
+    await launch([{ id: 'repo', path: repo }])
+    await expect(window.getByRole('banner')).toContainText('↑1 vs origin')
+
+    await headerButton('Push').click()
+    await expect(status()).toHaveText('Pushed 1 commit to origin/main')
+    await expect(window.getByRole('banner')).not.toContainText('vs origin')
+    expect(await tipOf(originOf(fixtures, name), 'main')).toBe(await tipOf(repo, 'main'))
+  })
+
+  test('Push refuses when origin has commits the branch lacks, and origin keeps them', async () => {
+    await commitInFixture(fixtures, repo, 'mine.txt', 'mine\n', 'Mine')
+    await launch([{ id: 'repo', path: repo }])
+    await colleaguePushes('theirs.txt')
+
+    await headerButton('Push').click()
+    await expect(status()).toHaveText('Failed: origin/main has commits that main doesn’t have. Pull them first, then push again.')
+    expect(await tipOf(originOf(fixtures, name), 'main')).toBe(await tipOf(colleague, 'main'))
+  })
+
+  test('Push publishes a new branch, which then tracks origin', async () => {
+    await gitInFixture(fixtures, repo, 'switch', '--quiet', '-c', 'feature/fresh')
+    await commitInFixture(fixtures, repo, 'fresh.txt', 'fresh\n', 'Fresh work')
+    await launch([{ id: 'repo', path: repo }])
+
+    await headerButton('Push').click()
+    await expect(status()).toHaveText('Published feature/fresh to origin; it now tracks origin/feature/fresh')
+    await expect(sidebar().getByRole('button', { name: 'origin/feature/fresh', exact: true })).toBeVisible()
+    expect((await fixtureGit(repo, 'rev-parse', '--abbrev-ref', 'feature/fresh@{upstream}')).trim()).toBe('origin/feature/fresh')
   })
 })
 

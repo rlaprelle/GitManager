@@ -15,7 +15,7 @@ import type { GitDataSource } from './GitDataSource'
 
 /**
  * The desktop app's data source: each call goes over the preload bridge to the main process,
- * which runs the installed git. Fetch, Pull and Push aren't built yet; the UI hides them.
+ * which runs the installed git.
  */
 export class IpcGitDataSource implements GitDataSource {
   constructor(private readonly git: GitBridge) {}
@@ -63,19 +63,15 @@ export class IpcGitDataSource implements GitDataSource {
     return this.git.checkout(repoId, plainTarget, plainOptions)
   }
 
-  fetch(_repoId: string): Promise<OperationResult> {
-    return notYetAvailable('Fetch')
+  fetch(repoId: string): Promise<OperationResult> {
+    return this.git.fetch(repoId)
   }
 
-  pull(_repoId: string, _branch: string): Promise<OperationResult> {
-    return notYetAvailable('Pull')
+  pull(repoId: string, branch: string): Promise<OperationResult> {
+    return this.git.pull(repoId, branch)
   }
 
-  push(_repoId: string, _branch: string): Promise<OperationResult> {
-    return notYetAvailable('Push')
+  push(repoId: string, branch: string): Promise<OperationResult> {
+    return this.git.push(repoId, branch)
   }
-}
-
-function notYetAvailable(operation: string): Promise<never> {
-  return Promise.reject(new Error(`${operation} isn't available in this version yet`))
 }
