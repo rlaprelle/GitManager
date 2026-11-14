@@ -1,4 +1,5 @@
 import type { Branches, GraphRow } from '@/types/git'
+import { LaneTable, PRIMARY_LANE } from './laneTable'
 
 export interface LayoutCommit {
   hash: string
@@ -21,52 +22,23 @@ export const MAX_LANES = 8
  */
 export function layoutLanes(commits: LayoutCommit[], primaryTip?: string, maxLanes = MAX_LANES): GraphRow[] {
   const primaryLine = primaryLineOf(commits, primaryTip)
-  // Each lane holds the commits its line is heading down to. Only the last lane, once lanes
-  // run out, ever holds more than one.
-  const lanes: Set<string>[] = []
-  const firstFreeLane = (): number => {
-    const reserved = primaryLine.size > 0 ? 1 : 0
-    for (let lane = reserved; lane < maxLanes; lane++) {
-      if (!lanes[lane]?.size) return lane
-    }
-    return maxLanes - 1
-  }
-  const occupied = (): number[] => lanes.flatMap((targets, lane) => (targets?.size ? [lane] : []))
-  const headTo = (lane: number, hash: string): void => {
-    ;(lanes[lane] ??= new Set()).add(hash)
-  }
-
-  return commits.map((commit) => {
-    const waiting = occupied().filter((lane) => lanes[lane]!.has(commit.hash))
-    const lane = primaryLine.has(commit.hash) ? 0 : (waiting[0] ?? firstFreeLane())
-
-    const top = occupied().filter((other) => other === lane ? waiting.includes(lane) : hasOtherTargets(lanes[other]!, commit.hash))
-    const curvesIn = waiting.filter((other) => other !== lane)
-    for (const other of waiting) lanes[other]!.delete(commit.hash)
-
-    const [firstParent, ...otherParents] = commit.parents
-    if (firstParent) headTo(lane, firstParent)
-    const curvesOut: number[] = []
-    const opened: number[] = []
-    for (const parent of otherParents) {
-      const existing = occupied().find((other) => other !== lane && lanes[other]!.has(parent))
-      if (existing !== undefined) {
-        curvesOut.push(existing)
-        continue
-      }
-      const target = firstFreeLane()
-      headTo(target, parent)
-      curvesOut.push(target)
-      opened.push(target)
-    }
-    const bottom = occupied().filter((other) => !opened.includes(other))
-
-    return { lane, top, bottom, curvesIn, curvesOut }
-  })
+  const table = new LaneTable(maxLanes, primaryLine.size > 0)
+  return commits.map((commit) => rowOf(commit, table, primaryLine))
 }
 
-function hasOtherTargets(targets: Set<string>, hash: string): boolean {
-  return targets.size > (targets.has(hash) ? 1 : 0)
+/** Places one commit in the table and reads its row's lines; rows must come newest first. */
+function rowOf(commit: LayoutCommit, table: LaneTable, primaryLine: Set<string>): GraphRow {
+  const waiting = table.lanesHeadingTo(commit.hash)
+  const lane = primaryLine.has(commit.hash) ? PRIMARY_LANE : (waiting[0] ?? table.firstFreeLane())
+  const top = table.linesIntoRow(commit.hash, lane)
+  table.arrive(commit.hash)
+
+  const [firstParent, ...otherParents] = commit.parents
+  if (firstParent) table.headTo(lane, firstParent)
+  const { curvesOut, opened } = table.connectExtraParents(lane, otherParents)
+  const bottom = table.occupied().filter((other) => !opened.includes(other))
+
+  return { lane, top, bottom, curvesIn: waiting.filter((other) => other !== lane), curvesOut }
 }
 
 /**

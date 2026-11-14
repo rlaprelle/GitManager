@@ -1,4 +1,5 @@
 import type { RemoteBranch } from '@/types/git'
+import { pluralWord, pluralize } from './format'
 
 /** What a fetch changed among the remote branches. */
 export interface RemoteChanges {
@@ -22,14 +23,14 @@ export function remoteChanges(before: RemoteBranch[], after: RemoteBranch[]): Re
 export function fetchedMessage({ updated, added, removed }: RemoteChanges): string {
   // Only the first part names the noun: '2 branches updated, 1 new', '1 new branch, 2 removed'.
   const parts: string[] = []
-  if (updated > 0) parts.push(`${updated} ${branches(updated)} updated`)
-  if (added > 0) parts.push(parts.length > 0 ? `${added} new` : `${added} new ${branches(added)}`)
-  if (removed > 0) parts.push(parts.length > 0 ? `${removed} removed` : `${removed} ${branches(removed)} removed`)
+  if (updated > 0) parts.push(`${branches(updated)} updated`)
+  if (added > 0) parts.push(parts.length > 0 ? `${added} new` : `${added} new ${pluralWord(added, 'branch', 'branches')}`)
+  if (removed > 0) parts.push(parts.length > 0 ? `${removed} removed` : `${branches(removed)} removed`)
   return parts.length === 0 ? 'Fetched: everything was up to date' : `Fetched: ${parts.join(', ')}`
 }
 
 function branches(count: number): string {
-  return count === 1 ? 'branch' : 'branches'
+  return pluralize(count, 'branch', 'branches')
 }
 
 export function pulledMessage(commitsPulled: number, upstream: string): string {
@@ -46,5 +47,5 @@ export function publishedMessage(branch: string, remote: string): string {
 }
 
 function commits(count: number): string {
-  return count === 1 ? '1 commit' : `${count} commits`
+  return pluralize(count, 'commit', 'commits')
 }

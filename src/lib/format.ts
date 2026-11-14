@@ -35,14 +35,21 @@ export function headLabel(branch: string | null): string {
   return branch ?? 'detached HEAD'
 }
 
+/** '1 commit', '3 commits', '0 commits'. */
 export function pluralize(count: number, singular: string, plural: string): string {
-  return `${count} ${count === 1 ? singular : plural}`
+  return `${count} ${pluralWord(count, singular, plural)}`
+}
+
+/** The word alone ('file' / 'files'), for sentences that give the count elsewhere or not at all. */
+export function pluralWord(count: number, singular: string, plural: string): string {
+  return count === 1 ? singular : plural
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
 const DAY = 24 * HOUR
+const WEEK = 7 * DAY
 
 const twoDigits = (value: number) => String(value).padStart(2, '0')
 const clock = (date: Date) => `${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}`
@@ -72,6 +79,6 @@ export function lastFetchLabel(iso: string | null, now: Date): string {
   if (elapsed < MINUTE) return 'just now'
   if (elapsed < HOUR) return `${Math.floor(elapsed / MINUTE)} min ago`
   if (elapsed < DAY) return `${Math.floor(elapsed / HOUR)} h ago`
-  if (elapsed < 7 * DAY) return pluralize(Math.floor(elapsed / DAY), 'day', 'days') + ' ago'
+  if (elapsed < WEEK) return pluralize(Math.floor(elapsed / DAY), 'day', 'days') + ' ago'
   return monthDay(date)
 }

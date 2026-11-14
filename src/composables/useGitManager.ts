@@ -12,7 +12,8 @@ import type {
   Repository,
 } from '@/types/git'
 import { destinationOf, remotesToCheckOut } from '@/lib/checkout'
-import { headLabel as describeHead, shortHash, syncLabel } from '@/lib/format'
+import { errorMessage } from '@/lib/errorMessage'
+import { headLabel as describeHead, pluralize, shortHash, syncLabel } from '@/lib/format'
 import { latestLoad } from './latestLoad'
 
 export type DiffMode = 'git' | 'simple'
@@ -32,6 +33,13 @@ export interface PendingCheckout {
   /** The branch HEAD would end on: 'main', or 'feature' for origin/feature. */
   destination: string
   commitsLeft: number
+}
+
+/** A checkout the user asked for: what to switch to, the branch as they clicked it, and how. */
+interface CheckoutRequest {
+  target: CheckoutTarget
+  branch: string
+  options: CheckoutOptions
 }
 
 const NO_BRANCHES: Branches = { local: [], remote: [] }
@@ -59,7 +67,6 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   const historyLimit = ref(HISTORY_LIMIT)
   const loadingMoreHistory = ref(false)
 
-  /** True while a repository operation runs; only one runs at a time. */
   /** The operation running now (one at a time), or null. */
   const runningOperation = ref<RepositoryOperation | null>(null)
   const operationRunning = computed(() => runningOperation.value !== null)
@@ -121,22 +128,27 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   // ---- loading ----
 
   async function load(): Promise<void> {
+    const listed = await readRepositoryList()
+    if (listed) await openFirstRepositoryOrClose()
+  }
+
+  /** The first read of the list, which `loading` covers. Resolves whether it succeeded. */
+  async function readRepositoryList(): Promise<boolean> {
     loading.value = true
     try {
       repositories.value = await source.listRepositories()
+      return true
     } catch (error) {
-      status.value = `Couldn't load repositories: ${messageOf(error)}`
-      return
+      status.value = `Couldn’t load repositories: ${errorMessage(error)}`
+      return false
     } finally {
       loading.value = false
     }
-    const first = repositories.value[0]
-    if (first) await openRepository(first)
   }
 
   function reportFailure(what: string): (error: unknown) => void {
     return (error) => {
-      status.value = `Couldn't load ${what}: ${messageOf(error)}`
+      status.value = `Couldn’t load ${what}: ${errorMessage(error)}`
     }
   }
 
@@ -159,9 +171,13 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     await openCommit()
   }
 
+  function tipHashOf(name: string | null): string | undefined {
+    return [...branches.value.local, ...branches.value.remote].find((b) => b.name === name)?.tipHash
+  }
+
   /** Where a branch's tip is in the history; the newest commit when it isn't there. */
   function tipIndexOf(name: string | null): number {
-    const tipHash = [...branches.value.local, ...branches.value.remote].find((b) => b.name === name)?.tipHash
+    const tipHash = tipHashOf(name)
     return Math.max(
       commits.value.findIndex((c) => c.hash === tipHash),
       0,
@@ -205,7 +221,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   }
 
   async function selectBranch(name: string): Promise<void> {
-    const tipHash = [...branches.value.local, ...branches.value.remote].find((b) => b.name === name)?.tipHash
+    const tipHash = tipHashOf(name)
     selectedBranch.value = name
     resetCommitView(tipIndexOf(name))
     status.value = `Selected ${name} (tip ${tipHash ? shortHash(tipHash) : 'unknown'})`
@@ -243,7 +259,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     await compareLoad.run(
       () => source.compareFiles(repo.id, leftPath.value, rightPath.value),
       (error) => {
-        status.value = `Couldn't compare files: ${messageOf(error)}`
+        status.value = `Couldn’t compare files: ${errorMessage(error)}`
       },
     )
   }
@@ -278,19 +294,19 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
 
   /** Switches to a local branch. */
   async function checkoutBranch(name: string): Promise<void> {
-    await runCheckout({ local: name }, name)
+    await runCheckout({ target: { local: name }, branch: name, options: {} })
   }
 
   /** Creates the local branch that tracks a remote one, and switches to it. */
   async function checkoutRemoteBranch(name: string): Promise<void> {
-    await runCheckout({ remote: name }, name)
+    await runCheckout({ target: { remote: name }, branch: name, options: {} })
   }
 
   /** Goes ahead with the checkout that was waiting, leaving the detached HEAD's commits behind. */
   async function confirmCheckout(): Promise<void> {
     const pending = pendingCheckout.value
     if (!pending) return
-    await runCheckout(pending.target, pending.branch, { leaveCommits: true })
+    await runCheckout({ target: pending.target, branch: pending.branch, options: { leaveCommits: true } })
   }
 
   function cancelCheckout(): void {
@@ -299,34 +315,34 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     status.value = 'Checkout cancelled; nothing changed'
   }
 
+  async function runCheckout(request: CheckoutRequest): Promise<void> {
+    await runOperation('checkout', `Switching to ${request.branch}…`, async (repo) => {
+      await attempt(() => switchBranch(repo, request))
+    })
+  }
+
   /**
    * Asks the source to switch, then reloads what the switch changed. The source decides
    * whether it needs the user's agreement first (pendingCheckout). A refresh already running
    * finishes first, so what it read before the switch can't land after it.
    */
-  async function runCheckout(target: CheckoutTarget, branch: string, options: CheckoutOptions = {}): Promise<void> {
-    const repo = repository.value
-    if (!repo || operationRunning.value) return
+  async function switchBranch(repo: Repository, request: CheckoutRequest): Promise<void> {
     pendingCheckout.value = null
-    runningOperation.value = 'checkout'
-    status.value = `Switching to ${branch}…`
-    try {
-      await refreshInFlight
-      const result = await source.checkout(repo.id, target, options)
-      if (result.kind === 'confirm') {
-        pendingCheckout.value = { target, branch, destination: destinationOf(target), commitsLeft: result.commitsLeft }
-        status.value = `Switching to ${branch} would leave ${commitCount(result.commitsLeft)} on no branch`
-        return
-      }
-      repo.currentBranch = result.branch
-      selectedBranch.value = result.branch
-      status.value = result.message
-      await reload()
-    } catch (error) {
-      status.value = `Failed: ${messageOf(error)}`
-    } finally {
-      runningOperation.value = null
+    await refreshInFlight
+    const result = await source.checkout(repo.id, request.target, request.options)
+    if (result.kind === 'confirm') {
+      askToLeaveCommits(request, result.commitsLeft)
+      return
     }
+    repo.currentBranch = result.branch
+    selectedBranch.value = result.branch
+    status.value = result.message
+    await reload()
+  }
+
+  function askToLeaveCommits({ target, branch }: CheckoutRequest, commitsLeft: number): void {
+    pendingCheckout.value = { target, branch, destination: destinationOf(target), commitsLeft }
+    status.value = `Switching to ${branch} would leave ${pluralize(commitsLeft, 'commit', 'commits')} on no branch`
   }
 
   async function fetchRemote(): Promise<void> {
@@ -354,20 +370,45 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     progress: string,
     operation: (repo: Repository) => Promise<OperationResult>,
   ): Promise<void> {
+    await runOperation(name, progress, async (repo) => {
+      await attempt(() => reportRemoteOperation(repo, operation))
+      await reload()
+    })
+  }
+
+  async function reportRemoteOperation(
+    repo: Repository,
+    operation: (repo: Repository) => Promise<OperationResult>,
+  ): Promise<void> {
+    await refreshInFlight
+    status.value = (await operation(repo)).message
+  }
+
+  /** Runs one repository operation, unless one is running already; `runningOperation` names it until `work` ends. */
+  async function runOperation(
+    name: RepositoryOperation,
+    progress: string,
+    work: (repo: Repository) => Promise<void>,
+  ): Promise<void> {
     const repo = repository.value
     if (!repo || operationRunning.value) return
     runningOperation.value = name
     status.value = progress
     try {
-      await refreshInFlight
-      status.value = (await operation(repo)).message
-    } catch (error) {
-      status.value = `Failed: ${messageOf(error)}`
-    }
-    try {
-      await reload()
+      await work(repo)
     } finally {
       runningOperation.value = null
+    }
+  }
+
+  /** Runs `work`; when it fails, the status bar says "Failed: …". Resolves whether it succeeded. */
+  async function attempt(work: () => Promise<void>): Promise<boolean> {
+    try {
+      await work()
+      return true
+    } catch (error) {
+      status.value = `Failed: ${errorMessage(error)}`
+      return false
     }
   }
 
@@ -375,30 +416,32 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
 
   /** Adds the repository the user picks (or explains, in the browser) and opens it. */
   async function addRepository(): Promise<void> {
-    try {
-      const { repository: added, message } = await source.addRepository()
-      if (message) status.value = message
-      if (!added) return
-      if (!repositories.value.some((repo) => repo.id === added.id)) repositories.value.push(added)
-      await openRepository(repositories.value.find((repo) => repo.id === added.id)!)
-    } catch (error) {
-      status.value = `Failed: ${messageOf(error)}`
-    }
+    await attempt(addChosenRepository)
+  }
+
+  async function addChosenRepository(): Promise<void> {
+    const { repository: added, message } = await source.addRepository()
+    if (message) status.value = message
+    if (!added) return
+    if (!repositories.value.some((repo) => repo.id === added.id)) repositories.value.push(added)
+    await openRepository(repositories.value.find((repo) => repo.id === added.id)!)
   }
 
   /** Takes a repository off the list; if it was open, opens the first one left. */
   async function removeRepository(id: string): Promise<void> {
     const wasOpen = repository.value?.id === id
-    try {
+    const removed = await attempt(async () => {
       status.value = (await source.removeRepository(id)).message
-    } catch (error) {
-      status.value = `Failed: ${messageOf(error)}`
-      return
-    }
+    })
+    if (!removed) return
     repositories.value = repositories.value.filter((repo) => repo.id !== id)
-    if (!wasOpen) return
-    const next = repositories.value[0]
-    if (next) await openRepository(next)
+    if (wasOpen) await openFirstRepositoryOrClose()
+  }
+
+  /** Opens the first repository on the list, or shows none when the list is empty. */
+  async function openFirstRepositoryOrClose(): Promise<void> {
+    const first = repositories.value[0]
+    if (first) await openRepository(first)
     else closeRepository()
   }
 
@@ -426,20 +469,22 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
 
   async function reload(announce = false): Promise<void> {
     try {
-      repositories.value = await source.listRepositories()
-      await refreshOpenRepository()
-      if (announce && repository.value) status.value = `Refreshed ${repository.value.name}`
+      await rereadEverything(announce)
     } catch (error) {
-      status.value = `Couldn’t refresh: ${messageOf(error)}`
+      status.value = `Couldn’t refresh: ${errorMessage(error)}`
     }
+  }
+
+  async function rereadEverything(announce: boolean): Promise<void> {
+    repositories.value = await source.listRepositories()
+    await refreshOpenRepository()
+    if (announce && repository.value) status.value = `Refreshed ${repository.value.name}`
   }
 
   async function refreshOpenRepository(): Promise<void> {
     const open = repositories.value.find((repo) => repo.id === selectedRepoId.value)
     if (!open) {
-      const first = repositories.value[0]
-      if (first) await openRepository(first)
-      else closeRepository()
+      await openFirstRepositoryOrClose()
       return
     }
     await Promise.all([
@@ -556,12 +601,4 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
 function checkedOutBranch(repo: Repository): string {
   if (repo.currentBranch === null) throw new Error('no branch is checked out')
   return repo.currentBranch
-}
-
-function commitCount(count: number): string {
-  return count === 1 ? '1 commit' : `${count} commits`
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }

@@ -1,3 +1,4 @@
+import { pluralWord } from '../../../src/lib/format'
 import type { Branches, FileChange, FileStatus } from '../../../src/types/git'
 
 // Parsers for the machine-readable git output GitCliDataSource asks for. Each documents the
@@ -5,25 +6,42 @@ import type { Branches, FileChange, FileStatus } from '../../../src/types/git'
 
 const NUL = '\0'
 const UNIT = '\x1f'
+const TAB = '\t'
+
+const LOCAL_BRANCH_PREFIX = 'refs/heads/'
+const REMOTE_BRANCH_PREFIX = 'refs/remotes/'
+
+/** The full ref of a local branch, for refspecs and ranges: a bare name could also match a tag. */
+export function localBranchRef(branch: string): string {
+  return `${LOCAL_BRANCH_PREFIX}${branch}`
+}
+
+/** The `for-each-ref` patterns for every branch parseBranches reads: local and remote-tracking. */
+export const BRANCH_REFS = [LOCAL_BRANCH_PREFIX, REMOTE_BRANCH_PREFIX]
 
 /** `for-each-ref --format=%(refname)%00%(objectname)%00%(upstream:track,nobracket)%00%(symref)`. */
 export const BRANCH_FORMAT = '%(refname)%00%(objectname)%00%(upstream:track,nobracket)%00%(symref)'
 
 export function parseBranches(output: string): Branches {
   const branches: Branches = { local: [], remote: [] }
-  for (const line of output.split('\n')) {
-    if (!line) continue
-    const [refname = '', tipHash = '', track = '', symref = ''] = line.split(NUL)
-    // origin/HEAD and other symbolic refs point at a branch that is already listed.
-    if (symref) continue
-    if (refname.startsWith('refs/heads/')) {
-      branches.local.push({ name: refname.slice('refs/heads/'.length), ...parseTrack(track), tipHash })
-    } else if (refname.startsWith('refs/remotes/')) {
-      branches.remote.push({ name: refname.slice('refs/remotes/'.length), tipHash })
-    }
-  }
+  for (const line of output.split('\n')) addBranch(branches, line)
   return branches
 }
+
+/** Adds one BRANCH_FORMAT line's branch. Symbolic refs (origin/HEAD) point at a branch already listed. */
+function addBranch(branches: Branches, line: string): void {
+  const [refname = '', tipHash = '', track = '', symref = ''] = line.split(NUL)
+  if (!refname || symref) return
+  if (refname.startsWith(LOCAL_BRANCH_PREFIX)) {
+    branches.local.push({ name: refname.slice(LOCAL_BRANCH_PREFIX.length), ...parseTrack(track), tipHash })
+  }
+  if (refname.startsWith(REMOTE_BRANCH_PREFIX)) {
+    branches.remote.push({ name: refname.slice(REMOTE_BRANCH_PREFIX.length), tipHash })
+  }
+}
+
+/** What `%(upstream:track)` says when the upstream was deleted on the remote. */
+const TRACK_GONE = 'gone'
 
 /** 'ahead 2, behind 1', 'ahead 2', 'behind 1', 'gone' (upstream deleted) or '' (in sync / none). */
 function parseTrack(track: string): { ahead: number; behind: number } {
@@ -71,22 +89,32 @@ function branchLabels(decoration: string): string[] {
  * ('R' plus a similarity, e.g. 'R087') is followed by two paths, where it was and where it is.
  */
 export function parseNameStatus(output: string): FileChange[] {
-  const fields = output.split(NUL)
+  const fields: Fields = output.split(NUL).values()
   const changes: FileChange[] = []
-  let i = 0
-  while (i < fields.length) {
-    const code = fields[i++]!
-    if (!code) continue
-    if (code.startsWith('R')) {
-      const oldPath = fields[i++]!
-      const path = fields[i++]!
-      changes.push({ path, status: 'R', oldPath })
-      continue
-    }
-    const path = fields[i++]
-    if (path) changes.push({ path, status: fileStatus(code) })
+  for (const code of fields) {
+    const change = changeFrom(code, fields)
+    if (change) changes.push(change)
   }
   return changes
+}
+
+/** The fields still to read. Each change reads its own paths, so the loop goes on at the next status. */
+type Fields = Iterator<string, undefined> & Iterable<string>
+
+const RENAMED = 'R'
+
+/** The change `code` starts, reading its paths from `fields`; null for the empty field after the last NUL. */
+function changeFrom(code: string, fields: Fields): FileChange | null {
+  if (!code) return null
+  if (code.startsWith(RENAMED)) return renameFrom(fields)
+  const path = fields.next().value
+  return path ? { path, status: fileStatus(code) } : null
+}
+
+function renameFrom(fields: Fields): FileChange {
+  const oldPath = fields.next().value ?? ''
+  const path = fields.next().value ?? ''
+  return { path, status: RENAMED, oldPath }
 }
 
 /** A, M and D as they are; anything else git reports for one path (a type change, T) counts as modified. */
@@ -118,19 +146,38 @@ export function pullRefusal(stderr: string, upstream: string): string | null {
 
 /** `command` is the word git ends its heading with ("would be overwritten by merge:"); `doing` is ours. */
 function overwriteRefusal(stderr: string, command: string, doing: string): string | null {
+  const overwritten = overwrittenFiles(stderr, command)
+  if (!overwritten) return null
+  return overwritten.untracked ? untrackedFilesRefusal(overwritten.files, doing) : changesRefusal(overwritten.files, doing)
+}
+
+/** The files git's refusal lists, and whether they're untracked files rather than uncommitted changes. */
+interface OverwrittenFiles {
+  files: string[]
+  untracked: boolean
+}
+
+function overwrittenFiles(stderr: string, command: string): OverwrittenFiles | null {
   const lines = stderr.split(/\r?\n/)
   const heading = lines.findIndex((line) => line.endsWith(`would be overwritten by ${command}:`))
   if (heading === -1) return null
-  const files: string[] = []
-  for (const line of lines.slice(heading + 1)) {
-    if (!line.startsWith('\t')) break
-    files.push(line.slice(1))
-  }
-  const untracked = /untracked working tree files/.test(lines[heading]!)
-  const named = fileList(files)
-  return untracked
-    ? `untracked ${files.length === 1 ? 'file' : 'files'} ${named} would be overwritten by ${doing}. Move or remove ${files.length === 1 ? 'it' : 'them'} first.`
-    : `your changes to ${named} would be overwritten by ${doing}. Commit or stash them first.`
+  return { files: indentedLinesAfter(lines, heading), untracked: lines[heading]!.includes('untracked working tree files') }
+}
+
+/** The tab-indented lines straight after `heading`, without the tab. */
+function indentedLinesAfter(lines: string[], heading: number): string[] {
+  const after = lines.slice(heading + 1)
+  const end = after.findIndex((line) => !line.startsWith(TAB))
+  return after.slice(0, end === -1 ? after.length : end).map((line) => line.slice(TAB.length))
+}
+
+function untrackedFilesRefusal(files: string[], doing: string): string {
+  const count = files.length
+  return `untracked ${pluralWord(count, 'file', 'files')} ${fileList(files)} would be overwritten by ${doing}. Move or remove ${pluralWord(count, 'it', 'them')} first.`
+}
+
+function changesRefusal(files: string[], doing: string): string {
+  return `your changes to ${fileList(files)} would be overwritten by ${doing}. Commit or stash them first.`
 }
 
 /**
@@ -155,13 +202,17 @@ export interface Upstream {
 
 /** The upstream of `branch` from UPSTREAM_FORMAT output, or null when it has none. */
 export function parseUpstream(output: string, branch: string): Upstream | null {
-  for (const line of output.split('\n')) {
-    const [refname, ref = '', name = '', remote = '', remoteRef = '', track = ''] = line.split(NUL)
-    // A pattern also matches longer names (refs/heads/a matches refs/heads/a/b), so compare exactly.
-    if (refname !== `refs/heads/${branch}`) continue
-    return ref && remote && remoteRef ? { ref, name, remote, remoteRef, gone: track === 'gone' } : null
-  }
-  return null
+  // A pattern also matches longer names (refs/heads/a matches refs/heads/a/b), so compare exactly.
+  const fields = output
+    .split('\n')
+    .map((line) => line.split(NUL))
+    .find(([refname]) => refname === localBranchRef(branch))
+  return fields ? upstreamFrom(fields) : null
+}
+
+/** One UPSTREAM_FORMAT line's upstream; null when the branch tracks nothing. */
+function upstreamFrom([, ref = '', name = '', remote = '', remoteRef = '', track = '']: string[]): Upstream | null {
+  return ref && remote && remoteRef ? { ref, name, remote, remoteRef, gone: track === TRACK_GONE } : null
 }
 
 /** One ref's line in `push --porcelain`: a flag, what was pushed where, and git's summary. */
@@ -170,6 +221,9 @@ export interface PushedRef {
   flag: string
   summary: string
 }
+
+/** The `PushedRef` flags the data source acts on. */
+export const PUSH_FLAG = { rejected: '!', upToDate: '=' } as const
 
 /** `push --porcelain` stdout: 'To <url>', then '<flag>\t<from>:<to>\t<summary>' per ref, then 'Done'. */
 export function parsePushPorcelain(stdout: string): PushedRef[] {

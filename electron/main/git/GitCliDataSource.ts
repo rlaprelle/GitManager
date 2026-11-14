@@ -1,6 +1,7 @@
-import { readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { stat } from 'node:fs/promises'
 import { basename, isAbsolute, normalize, relative, resolve } from 'node:path'
 import { localNameOf, switchedMessage } from '../../../src/lib/checkout'
+import { errorMessage } from '../../../src/lib/errorMessage'
 import { layoutLanes, primaryBranchTip } from '../../../src/lib/laneLayout'
 import { parseUnifiedDiff } from '../../../src/lib/parseDiff'
 import { fetchedMessage, publishedMessage, pulledMessage, pushedMessage, remoteChanges } from '../../../src/lib/remoteOperations'
@@ -17,15 +18,19 @@ import type {
   OperationResult,
   Repository,
 } from '../../../src/types/git'
+import { lastFetchTime, preservingFetchHead } from './fetchHead'
 import { networkAccessFor } from './network'
 import {
   BRANCH_FORMAT,
+  BRANCH_REFS,
   LOG_FORMAT,
+  PUSH_FLAG,
   type PushedRef,
   UPSTREAM_FORMAT,
   type Upstream,
   checkoutRefusal,
   countStatusEntries,
+  localBranchRef,
   parseBranches,
   parseCommitLog,
   parseNameStatus,
@@ -54,6 +59,12 @@ export interface RepositoryCatalog {
 export type ChooseFolder = () => Promise<string | null>
 
 const FOLDER_NOT_FOUND = 'Folder not found'
+
+/** The remote a new branch is published to when there is more than one. */
+const DEFAULT_REMOTE = 'origin'
+
+/** What git gives as the remote of an upstream branch in the same repository. */
+const THIS_REPOSITORY = '.'
 
 /** Uncommitted changes, one NUL-terminated entry per path (untracked files included). */
 const STATUS = ['status', '--porcelain=v1', '-z', '--no-renames', '--untracked-files=normal']
@@ -177,10 +188,9 @@ export class GitCliDataSource implements GitDataSource {
       const commitsLeft = await commitsOnlyOnDetachedHead(folder)
       if (commitsLeft > 0) return { kind: 'confirm', commitsLeft }
     }
-    await git(folder, ['switch', '--quiet', ...plan.args]).catch((error: unknown) => {
-      const refusal = error instanceof GitError ? checkoutRefusal(error.stderr, plan.branch) : null
-      throw refusal ? new GitError(refusal, (error as GitError).stderr) : error
-    })
+    await git(folder, ['switch', '--quiet', ...plan.args]).catch(
+      explainRefusal((error) => checkoutRefusal(error.stderr, plan.branch)),
+    )
     const changes = countStatusEntries(await git(folder, STATUS))
     return { kind: 'switched', branch: plan.branch, message: switchedMessage(plan.branch, changes, plan.tracking) }
   }
@@ -206,29 +216,15 @@ export class GitCliDataSource implements GitDataSource {
    */
   async pull(repoId: string, branch: string): Promise<OperationResult> {
     const folder = await this.folderOf(repoId)
-    const current = await checkedOutBranch(folder)
-    if (current === null) throw new GitError('no branch is checked out')
-    if (current !== branch) throw new GitError(`${branch} isn’t checked out; ${current} is`)
-    const upstream = await upstreamOf(folder, branch)
-    if (!upstream) throw new GitError(`${branch} has no upstream branch to pull from`)
-
-    if (upstream.remote !== '.') await fetchKeepingLastFetch(folder, ['--prune', '--quiet', '--', upstream.remote])
-    const fetched = await upstreamOf(folder, branch)
-    if (!fetched || fetched.gone) throw new GitError(`${upstream.name} no longer exists on ${upstream.remote}`)
-
-    const [behind, ahead] = await Promise.all([
-      commitCount(folder, `HEAD..${fetched.ref}`),
-      commitCount(folder, `${fetched.ref}..HEAD`),
-    ])
-    if (behind === 0) return { message: pulledMessage(0, fetched.name) }
+    await assertCheckedOut(folder, branch)
+    const upstream = await fetchedUpstreamOf(folder, branch)
+    const { behind, ahead } = await divergenceFrom(folder, upstream.ref)
+    if (behind === 0) return { message: pulledMessage(0, upstream.name) }
     if (ahead > 0) {
-      throw new GitError(`can’t fast-forward: ${branch} and ${fetched.name} both have new commits. Merge or rebase them in a terminal.`)
+      throw new GitError(`can’t fast-forward: ${branch} and ${upstream.name} both have new commits. Merge or rebase them in a terminal.`)
     }
-    await git(folder, ['merge', '--ff-only', '--quiet', fetched.ref]).catch((error: unknown) => {
-      const refusal = error instanceof GitError ? pullRefusal(error.stderr, fetched.name) : null
-      throw refusal ? new GitError(refusal, (error as GitError).stderr) : error
-    })
-    return { message: pulledMessage(behind, fetched.name) }
+    await fastForward(folder, upstream)
+    return { message: pulledMessage(behind, upstream.name) }
   }
 
   /**
@@ -238,46 +234,27 @@ export class GitCliDataSource implements GitDataSource {
    */
   async push(repoId: string, branch: string): Promise<OperationResult> {
     const folder = await this.folderOf(repoId)
-    if (!(await this.branchesAt(folder)).local.some((candidate) => candidate.name === branch)) {
-      throw new GitError(`Unknown branch: ${branch}`)
-    }
+    if (!hasBranchNamed((await this.branchesAt(folder)).local, branch)) throw new GitError(`Unknown branch: ${branch}`)
     const upstream = await upstreamOf(folder, branch)
     if (!upstream) return publish(folder, branch)
 
-    // A deleted upstream is pushed again: count what the remote has on no branch.
-    const pushing = upstream.gone
-      ? await commitCount(folder, `refs/heads/${branch}`, `--remotes=${upstream.remote}`)
-      : await commitCount(folder, `${upstream.ref}..refs/heads/${branch}`)
-    const pushed = await pushRef(folder, upstream.remote, `refs/heads/${branch}:${upstream.remoteRef}`, branch, upstream.name)
-    return { message: pushedMessage(pushed.flag === '=' ? 0 : pushing, upstream.name) }
+    const pushing = await commitsToPush(folder, branch, upstream)
+    const refspec = `${localBranchRef(branch)}:${upstream.remoteRef}`
+    const pushed = await pushRef(folder, { remote: upstream.remote, refspec, branch, upstreamName: upstream.name })
+    return { message: pushedMessage(pushed.flag === PUSH_FLAG.upToDate ? 0 : pushing, upstream.name) }
   }
 
   /** One repository's list entry. A repository git can't read is still listed, with the problem. */
-  private async summarize({ id, path }: StoredRepository): Promise<Repository> {
-    const unreadable = (problem: string): Repository => ({
-      id,
-      name: basename(path),
-      path,
-      currentBranch: null,
-      changedFileCount: 0,
-      lastFetch: null,
-      problem,
-    })
-    if (!(await isFolder(path))) return unreadable(FOLDER_NOT_FOUND)
+  private async summarize(stored: StoredRepository): Promise<Repository> {
     try {
-      const [currentBranch, changes, lastFetch] = await Promise.all([
-        checkedOutBranch(path),
-        git(path, STATUS),
-        lastFetchTime(path),
-      ])
-      return { ...unreadable(''), currentBranch, changedFileCount: countStatusEntries(changes), lastFetch, problem: null }
+      return await readSummary(stored)
     } catch (error) {
-      return unreadable(error instanceof Error ? error.message : String(error))
+      return unreadableRepository(stored, errorMessage(error))
     }
   }
 
   private async branchesAt(folder: string): Promise<Branches> {
-    return parseBranches(await git(folder, ['for-each-ref', `--format=${BRANCH_FORMAT}`, 'refs/heads', 'refs/remotes']))
+    return parseBranches(await git(folder, ['for-each-ref', `--format=${BRANCH_FORMAT}`, ...BRANCH_REFS]))
   }
 
   private async stored(repoId: string): Promise<StoredRepository> {
@@ -295,6 +272,20 @@ export class GitCliDataSource implements GitDataSource {
     if (!(await isFolder(repo.path))) throw new GitError(`${FOLDER_NOT_FOUND}: ${repo.path}`)
     return repo.path
   }
+}
+
+async function readSummary({ id, path }: StoredRepository): Promise<Repository> {
+  if (!(await isFolder(path))) throw new GitError(FOLDER_NOT_FOUND)
+  const [currentBranch, changes, lastFetch] = await Promise.all([
+    checkedOutBranch(path),
+    git(path, STATUS),
+    lastFetchTime(path),
+  ])
+  return { id, name: basename(path), path, currentBranch, changedFileCount: countStatusEntries(changes), lastFetch, problem: null }
+}
+
+function unreadableRepository({ id, path }: StoredRepository, problem: string): Repository {
+  return { id, name: basename(path), path, currentBranch: null, changedFileCount: 0, lastFetch: null, problem }
 }
 
 async function isFolder(path: string): Promise<boolean> {
@@ -322,56 +313,6 @@ async function hasCommits(folder: string): Promise<boolean> {
   return head.trim() !== ''
 }
 
-/** When FETCH_HEAD was last written, which git does on every fetch; null if never. */
-async function lastFetchTime(folder: string): Promise<string | null> {
-  const found = await stat(await fetchHeadPath(folder)).catch(() => null)
-  return found ? found.mtime.toISOString() : null
-}
-
-async function fetchHeadPath(folder: string): Promise<string> {
-  return resolve(folder, (await git(folder, ['rev-parse', '--git-path', 'FETCH_HEAD'])).trim())
-}
-
-/**
- * `git fetch` with `args`, leaving FETCH_HEAD as it was when the fetch fails. Git empties
- * FETCH_HEAD before it connects, so a fetch that fails would otherwise look like one that
- * succeeded just now (the last fetch time is FETCH_HEAD's), and lose what the last good fetch
- * recorded. When some remotes answered (`--all`), git keeps what they sent, and so does this.
- */
-async function fetchKeepingLastFetch(folder: string, args: string[]): Promise<void> {
-  const fetchHead = await fetchHeadPath(folder)
-  const before = await snapshotOf(fetchHead)
-  try {
-    await networkGit(folder, ['fetch', ...args])
-  } catch (error) {
-    const after = await stat(fetchHead).catch(() => null)
-    if (after?.size === 0) await restore(fetchHead, before)
-    throw error
-  }
-}
-
-interface FileSnapshot {
-  content: Buffer
-  accessed: Date
-  modified: Date
-}
-
-async function snapshotOf(path: string): Promise<FileSnapshot | null> {
-  const found = await stat(path).catch(() => null)
-  if (!found) return null
-  return { content: await readFile(path), accessed: found.atime, modified: found.mtime }
-}
-
-/** Puts a file back as `snapshot` recorded it, or removes it if there was none. */
-async function restore(path: string, snapshot: FileSnapshot | null): Promise<void> {
-  if (!snapshot) {
-    await rm(path, { force: true })
-    return
-  }
-  await writeFile(path, snapshot.content)
-  await utimes(path, snapshot.accessed, snapshot.modified)
-}
-
 /**
  * What diff-tree compares for a commit: its first parent and the commit, or the commit alone
  * (`--root`) for a root commit. A merge therefore shows what it brought into its first parent.
@@ -394,16 +335,26 @@ interface SwitchPlan {
 }
 
 async function switchPlan(folder: string, branches: Branches, target: CheckoutTarget): Promise<SwitchPlan> {
-  if ('local' in target) {
-    if (!branches.local.some((branch) => branch.name === target.local)) throw new GitError(`Unknown branch: ${target.local}`)
-    // --no-guess: never create a branch from a remote one of the same name; only a remote target does that.
-    return { args: ['--no-guess', target.local], branch: target.local }
-  }
-  if (!branches.remote.some((branch) => branch.name === target.remote)) throw new GitError(`Unknown branch: ${target.remote}`)
-  const name = localNameOf(target.remote, await remotesOf(folder))
-  if (name === null) throw new GitError(`${target.remote} belongs to no remote`)
-  if (branches.local.some((branch) => branch.name === name)) throw new GitError(`A local branch ${name} already exists`)
-  return { args: ['--track', target.remote], branch: name, tracking: target.remote }
+  return 'local' in target ? localSwitchPlan(branches, target.local) : remoteSwitchPlan(folder, branches, target.remote)
+}
+
+function localSwitchPlan(branches: Branches, name: string): SwitchPlan {
+  if (!hasBranchNamed(branches.local, name)) throw new GitError(`Unknown branch: ${name}`)
+  // --no-guess: never create a branch from a remote one of the same name; only a remote target does that.
+  return { args: ['--no-guess', name], branch: name }
+}
+
+/** A new local branch, named as the remote one without its remote, tracking it. */
+async function remoteSwitchPlan(folder: string, branches: Branches, remoteBranch: string): Promise<SwitchPlan> {
+  if (!hasBranchNamed(branches.remote, remoteBranch)) throw new GitError(`Unknown branch: ${remoteBranch}`)
+  const name = localNameOf(remoteBranch, await remotesOf(folder))
+  if (name === null) throw new GitError(`${remoteBranch} belongs to no remote`)
+  if (hasBranchNamed(branches.local, name)) throw new GitError(`A local branch ${name} already exists`)
+  return { args: ['--track', remoteBranch], branch: name, tracking: remoteBranch }
+}
+
+function hasBranchNamed(branches: { name: string }[], name: string): boolean {
+  return branches.some((branch) => branch.name === name)
 }
 
 /** Commits that switching away from a detached HEAD would leave on no branch, remote branch or tag. */
@@ -431,13 +382,18 @@ async function networkGit(folder: string, args: string[]): Promise<string> {
   return runGit(folder, args, { network: await networkAccessFor(folder) })
 }
 
+/** `git fetch` with `args`; a failed fetch leaves the last fetch's time and record as they were. */
+async function fetchKeepingLastFetch(folder: string, args: string[]): Promise<void> {
+  await preservingFetchHead(folder, () => networkGit(folder, ['fetch', ...args]))
+}
+
 async function remotesOf(folder: string): Promise<string[]> {
   return (await git(folder, ['remote'])).split('\n').map((line) => line.trim()).filter(Boolean)
 }
 
 /** The upstream of a branch git listed (so its name is safe in a ref pattern). */
 async function upstreamOf(folder: string, branch: string): Promise<Upstream | null> {
-  return parseUpstream(await git(folder, ['for-each-ref', `--format=${UPSTREAM_FORMAT}`, `refs/heads/${branch}`]), branch)
+  return parseUpstream(await git(folder, ['for-each-ref', `--format=${UPSTREAM_FORMAT}`, localBranchRef(branch)]), branch)
 }
 
 /** How many commits `rev-list --count` finds in `range`, leaving out those `exclude` reaches. */
@@ -450,31 +406,89 @@ async function commitCount(folder: string, range: string, ...exclude: string[]):
 async function publish(folder: string, branch: string): Promise<OperationResult> {
   const remotes = await remotesOf(folder)
   if (remotes.length === 0) throw new GitError('this repository has no remote to push to')
-  const remote = remotes.includes('origin') ? 'origin' : remotes.length === 1 ? remotes[0]! : null
+  const remote = publishRemoteOf(remotes)
   if (remote === null) throw new GitError(`${branch} tracks no branch yet, and there’s no remote called origin to publish it to`)
-  await pushRef(folder, remote, `refs/heads/${branch}:refs/heads/${branch}`, branch, `${remote}/${branch}`, ['--set-upstream'])
+  const refspec = `${localBranchRef(branch)}:${localBranchRef(branch)}`
+  await pushRef(folder, { remote, refspec, branch, upstreamName: `${remote}/${branch}`, options: ['--set-upstream'] })
   return { message: publishedMessage(branch, remote) }
+}
+
+/** origin when there is one, else the only remote; null when there are several and none is origin. */
+function publishRemoteOf(remotes: string[]): string | null {
+  if (remotes.includes(DEFAULT_REMOTE)) return DEFAULT_REMOTE
+  return remotes.length === 1 ? remotes[0]! : null
+}
+
+/** Commits the push will send. A deleted upstream is pushed again, so count what the remote has on no branch. */
+async function commitsToPush(folder: string, branch: string, upstream: Upstream): Promise<number> {
+  return upstream.gone
+    ? commitCount(folder, localBranchRef(branch), `--remotes=${upstream.remote}`)
+    : commitCount(folder, `${upstream.ref}..${localBranchRef(branch)}`)
+}
+
+/** One refspec to push, and what a refusal of it names. */
+interface PushRequest {
+  remote: string
+  refspec: string
+  branch: string
+  /** The remote branch as the status bar names it: origin/main. */
+  upstreamName: string
+  options?: string[]
 }
 
 /**
  * `git push --porcelain` of one refspec, answering git's report for it. A refusal (the remote
  * has commits the branch lacks, or a hook declined) becomes one line naming the branch.
  */
-async function pushRef(
-  folder: string,
-  remote: string,
-  refspec: string,
-  branch: string,
-  upstreamName: string,
-  options: string[] = [],
-): Promise<PushedRef> {
-  const stdout = await networkGit(folder, ['push', '--porcelain', ...options, '--', remote, refspec]).catch((error: unknown) => {
-    if (!(error instanceof GitError)) throw error
-    const [report] = parsePushPorcelain(error.stdout)
-    const refusal = report?.flag === '!' ? pushRefusal(report.summary, branch, upstreamName) : null
-    throw refusal ? new GitError(refusal, error.stderr, error.stdout) : error
-  })
+async function pushRef(folder: string, { remote, refspec, branch, upstreamName, options = [] }: PushRequest): Promise<PushedRef> {
+  const stdout = await networkGit(folder, ['push', '--porcelain', ...options, '--', remote, refspec]).catch(
+    explainRefusal((error) => {
+      const [report] = parsePushPorcelain(error.stdout)
+      return report?.flag === PUSH_FLAG.rejected ? pushRefusal(report.summary, branch, upstreamName) : null
+    }),
+  )
   const [report] = parsePushPorcelain(stdout)
   if (!report) throw new GitError(`git didn’t say whether ${branch} was pushed`)
   return report
+}
+
+/** Fails unless `branch` is the one checked out: a pull merges into the working folder. */
+async function assertCheckedOut(folder: string, branch: string): Promise<void> {
+  const current = await checkedOutBranch(folder)
+  if (current === null) throw new GitError('no branch is checked out')
+  if (current !== branch) throw new GitError(`${branch} isn’t checked out; ${current} is`)
+}
+
+/** The branch's upstream after fetching its remote (an upstream in this repository needs no fetch). */
+async function fetchedUpstreamOf(folder: string, branch: string): Promise<Upstream> {
+  const upstream = await upstreamOf(folder, branch)
+  if (!upstream) throw new GitError(`${branch} has no upstream branch to pull from`)
+  if (upstream.remote !== THIS_REPOSITORY) await fetchKeepingLastFetch(folder, ['--prune', '--quiet', '--', upstream.remote])
+  const fetched = await upstreamOf(folder, branch)
+  if (!fetched || fetched.gone) throw new GitError(`${upstream.name} no longer exists on ${upstream.remote}`)
+  return fetched
+}
+
+/** Commits `ref` has that HEAD lacks (behind), and the other way round (ahead). */
+async function divergenceFrom(folder: string, ref: string): Promise<{ behind: number; ahead: number }> {
+  const [behind, ahead] = await Promise.all([commitCount(folder, `HEAD..${ref}`), commitCount(folder, `${ref}..HEAD`)])
+  return { behind, ahead }
+}
+
+async function fastForward(folder: string, upstream: Upstream): Promise<void> {
+  await git(folder, ['merge', '--ff-only', '--quiet', upstream.ref]).catch(
+    explainRefusal((error) => pullRefusal(error.stderr, upstream.name)),
+  )
+}
+
+/**
+ * A `.catch` handler that turns a refusal git explains in its output into one readable line.
+ * `explain` returns null for failures it doesn't recognise, which are rethrown unchanged.
+ */
+function explainRefusal(explain: (error: GitError) => string | null): (error: unknown) => never {
+  return (error) => {
+    if (!(error instanceof GitError)) throw error
+    const refusal = explain(error)
+    throw refusal === null ? error : new GitError(refusal, error.stderr, error.stdout)
+  }
 }

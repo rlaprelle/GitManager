@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { commitDateLabel, lastFetchLabel, pluralize, renameLabel, shortHash, splitPath, syncLabel } from '../format'
+import { commitDateLabel, lastFetchLabel, pluralWord, pluralize, renameLabel, shortHash, splitPath, syncLabel } from '../format'
 
 describe('splitPath', () => {
   it('splits a forward-slash path into file name and directory', () => {
@@ -29,6 +29,18 @@ describe('pluralize', () => {
   it('uses the singular for exactly one', () => {
     expect(pluralize(1, 'commit', 'commits')).toBe('1 commit')
     expect(pluralize(3, 'commit', 'commits')).toBe('3 commits')
+  })
+
+  it('uses the plural for zero', () => {
+    expect(pluralize(0, 'commit', 'commits')).toBe('0 commits')
+  })
+})
+
+describe('pluralWord', () => {
+  it('picks the word alone, for sentences that say the count elsewhere or not at all', () => {
+    expect(pluralWord(1, 'file', 'files')).toBe('file')
+    expect(pluralWord(2, 'file', 'files')).toBe('files')
+    expect(pluralWord(0, 'file', 'files')).toBe('files')
   })
 })
 
@@ -77,6 +89,12 @@ describe('lastFetchLabel', () => {
 
   it('switches to a date after a week', () => {
     expect(lastFetchLabel(local(2026, 10, 30, 11, 22).toISOString(), now)).toBe('Oct 30')
+  })
+
+  it('counts days until a full week has passed', () => {
+    const week = 60 * 24 * 7
+    expect(lastFetchLabel(ago(week - 1), now)).toBe('6 days ago')
+    expect(lastFetchLabel(ago(week), now)).not.toMatch(/ago$/)
   })
 })
 

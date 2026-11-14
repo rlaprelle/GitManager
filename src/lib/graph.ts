@@ -21,6 +21,11 @@ export const ROW_HEIGHT = 32
 const MID = ROW_HEIGHT / 2
 const FIRST_LANE_X = 14
 const LANE_SPACING = 18
+/**
+ * How far each control point of a curve sits from its end, straight up or down toward the other
+ * end, so the curve leaves and meets each lane vertically instead of at an angle.
+ */
+const CURVE_PULL = 10
 /** The design's column, wide enough for three lanes. */
 const MIN_GRAPH_WIDTH = 64
 
@@ -76,11 +81,11 @@ function segmentsFor(lanes: number[], y1: number, y2: number): GraphSegment[] {
 function curveIn(fromLane: number, dotLane: number): GraphCurve {
   const fromX = laneX(fromLane)
   const dotX = laneX(dotLane)
-  return { d: `M ${fromX} 0 C ${fromX} 10 ${dotX} 6 ${dotX} ${MID}`, color: laneColor(fromLane) }
+  return { d: `M ${fromX} 0 C ${fromX} ${CURVE_PULL} ${dotX} ${MID - CURVE_PULL} ${dotX} ${MID}`, color: laneColor(fromLane) }
 }
 
 function curveOut(dotLane: number, toLane: number): GraphCurve {
   const dotX = laneX(dotLane)
   const toX = laneX(toLane)
-  return { d: `M ${dotX} ${MID} C ${dotX} 26 ${toX} 22 ${toX} ${ROW_HEIGHT}`, color: laneColor(toLane) }
+  return { d: `M ${dotX} ${MID} C ${dotX} ${MID + CURVE_PULL} ${toX} ${ROW_HEIGHT - CURVE_PULL} ${toX} ${ROW_HEIGHT}`, color: laneColor(toLane) }
 }

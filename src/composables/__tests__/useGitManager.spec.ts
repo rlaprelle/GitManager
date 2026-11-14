@@ -186,14 +186,14 @@ describe('useGitManager', () => {
       const failing = await loadedManager(source)
       expect(failing.loading.value).toBe(false)
       expect(failing.repository.value).toBeUndefined()
-      expect(failing.status.value).toBe("Couldn't load repositories: backend offline")
+      expect(failing.status.value).toBe("Couldn’t load repositories: backend offline")
     })
 
     it.each([
-      ['getBranches', "Couldn't load branches: disk error"],
-      ['getHistory', "Couldn't load history: disk error"],
-      ['getCommitFiles', "Couldn't load changed files: disk error"],
-      ['getFileDiff', "Couldn't load diff: disk error"],
+      ['getBranches', "Couldn’t load branches: disk error"],
+      ['getHistory', "Couldn’t load history: disk error"],
+      ['getCommitFiles', "Couldn’t load changed files: disk error"],
+      ['getFileDiff', "Couldn’t load diff: disk error"],
     ] as const)('reports a failed %s in the status bar and leaves that area empty', async (method, message) => {
       const source = new MockGitDataSource()
       source[method] = async () => {
@@ -265,7 +265,7 @@ describe('useGitManager', () => {
       }
       const failing = await loadedManager(source)
       await failing.openCompare()
-      expect(failing.status.value).toBe("Couldn't compare files: file not found")
+      expect(failing.status.value).toBe("Couldn’t compare files: file not found")
       expect(failing.activeHunks.value).toEqual([])
     })
 
