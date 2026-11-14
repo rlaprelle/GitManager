@@ -1,17 +1,19 @@
 // @vitest-environment node
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { describeGitDataSourceContract } from '../../../../src/services/__tests__/gitDataSourceContract'
-import { mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises'
+import { basename, join } from 'node:path'
 import { GitCliDataSource, type RepositoryCatalog, type StoredRepository } from '../GitCliDataSource'
 import {
   type Fixtures,
   commitInFixture,
   createFixtures,
+  cloneOriginInFixture,
   createRepositoryWithRemote,
   createScratchRepository,
   fixtureGit,
   gitInFixture,
+  originOf,
   removeFixtures,
   renameInFixture,
 } from './fixtures'
@@ -46,10 +48,11 @@ afterAll(async () => {
 
 let checkoutRepositories = 0
 
-/** A fresh repository with a remote, for a test that checks out branches. */
-async function checkoutRepository(): Promise<{ source: GitCliDataSource; folder: string }> {
-  const folder = await createRepositoryWithRemote(fixtures, `checkout-${++checkoutRepositories}`)
-  return { source: sourceFor({ id: 'repo', path: folder }), folder }
+/** A fresh repository with a remote (see createRepositoryWithRemote), for a test that changes it. */
+async function checkoutRepository(): Promise<{ source: GitCliDataSource; folder: string; name: string }> {
+  const name = `checkout-${++checkoutRepositories}`
+  const folder = await createRepositoryWithRemote(fixtures, name)
+  return { source: sourceFor({ id: 'repo', path: folder }), folder, name }
 }
 
 /** The repository list in memory, behaving like RepositoryStore (which has its own tests). */
@@ -245,10 +248,6 @@ describe('GitCliDataSource reading the fixture repositories', () => {
       problem: 'Folder not found',
     })
   })
-
-  it('reports that write operations are not available yet', async () => {
-    await expect(sample().fetch()).rejects.toThrow("Fetch isn't available in this version yet")
-  })
 })
 
 describe('GitCliDataSource checking out branches', () => {
@@ -371,5 +370,212 @@ describe('GitCliDataSource adding repositories', () => {
     const plainFolder = join(fixtures.root, 'not-a-repository')
     await mkdir(plainFolder, { recursive: true })
     await expect(choosing(plainFolder).addRepository()).rejects.toThrow(`${plainFolder} isn’t inside a git repository`)
+  })
+})
+
+describe('GitCliDataSource talking to a remote', () => {
+  const tipOf = async (folder: string, ref: string) => (await fixtureGit(folder, 'rev-parse', ref)).trim()
+  const branchesOf = (source: GitCliDataSource) => source.getBranches('repo')
+
+  /** A repository with a remote, and a colleague's clone of the same origin. */
+  async function withColleague() {
+    const repository = await checkoutRepository()
+    return { ...repository, colleague: await cloneOriginInFixture(fixtures, repository.name) }
+  }
+
+  it('fetches every remote: new commits and branches come in, deleted branches go', async () => {
+    const { source, colleague } = await withColleague()
+    await commitInFixture(fixtures, colleague, 'colleague.txt', 'hi\n', 'Colleague’s work')
+    await gitInFixture(fixtures, colleague, 'push', '--quiet', 'origin', 'main')
+    await gitInFixture(fixtures, colleague, 'push', '--quiet', 'origin', 'main:refs/heads/feature/new')
+    await gitInFixture(fixtures, colleague, 'push', '--quiet', 'origin', '--delete', 'feature/remote')
+
+    expect(await source.fetch('repo')).toEqual({ message: 'Fetched: 1 branch updated, 1 new, 1 removed' })
+    const { local, remote } = await branchesOf(source)
+    expect(remote.map((branch) => branch.name).sort()).toEqual(['origin/feature/local', 'origin/feature/new', 'origin/main'])
+    expect(local.find((branch) => branch.name === 'main')).toMatchObject({ ahead: 0, behind: 1 })
+    expect(await source.fetch('repo')).toEqual({ message: 'Fetched: everything was up to date' })
+  })
+
+  it('records the fetch as the repository’s last fetch', async () => {
+    const { source, folder } = await checkoutRepository()
+    await rm(join(folder, '.git', 'FETCH_HEAD'))
+    expect((await source.listRepositories())[0]!.lastFetch).toBeNull()
+    await source.fetch('repo')
+    expect((await source.listRepositories())[0]!.lastFetch).not.toBeNull()
+  })
+
+  it('keeps the last fetch time, and what that fetch brought, when a fetch fails', async () => {
+    const { source, folder } = await checkoutRepository()
+    const fetchHead = join(folder, '.git', 'FETCH_HEAD')
+    const yesterday = new Date(Date.now() - 24 * 3600 * 1000)
+    await utimes(fetchHead, yesterday, yesterday)
+    const fetched = await readFile(fetchHead, 'utf8')
+    await gitInFixture(fixtures, folder, 'remote', 'set-url', 'origin', join(fixtures.root, 'no-such-origin.git'))
+
+    await expect(source.fetch('repo')).rejects.toThrow()
+    await expect(source.pull('repo', 'main')).rejects.toThrow()
+    expect((await source.listRepositories())[0]!.lastFetch).toBe(yesterday.toISOString())
+    expect(await readFile(fetchHead, 'utf8')).toBe(fetched)
+  })
+
+  it('counts a fetch that reached some remotes, and says which failed', async () => {
+    const { source, folder } = await checkoutRepository()
+    const fetchHead = join(folder, '.git', 'FETCH_HEAD')
+    const yesterday = new Date(Date.now() - 24 * 3600 * 1000)
+    await utimes(fetchHead, yesterday, yesterday)
+    await gitInFixture(fixtures, folder, 'remote', 'add', 'broken', join(fixtures.root, 'no-such-origin.git'))
+
+    await expect(source.fetch('repo')).rejects.toThrow()
+    const { lastFetch } = (await source.listRepositories())[0]!
+    expect(Date.parse(lastFetch!)).toBeGreaterThan(yesterday.getTime() + 3600 * 1000)
+  })
+
+  it('still has never fetched after a first fetch fails', async () => {
+    const { source, folder } = await checkoutRepository()
+    await rm(join(folder, '.git', 'FETCH_HEAD'))
+    await gitInFixture(fixtures, folder, 'remote', 'set-url', 'origin', join(fixtures.root, 'no-such-origin.git'))
+    await expect(source.fetch('repo')).rejects.toThrow()
+    expect((await source.listRepositories())[0]!.lastFetch).toBeNull()
+  })
+
+  it('says when there is no remote to fetch from', async () => {
+    const folder = await createScratchRepository(fixtures, 'no-remote')
+    await expect(sourceFor({ id: 'repo', path: folder }).fetch('repo')).rejects.toThrow(
+      'this repository has no remote to fetch from',
+    )
+  })
+
+  it('pulls by fast-forwarding the checked-out branch to what the remote has now', async () => {
+    const { source, folder, colleague } = await withColleague()
+    await commitInFixture(fixtures, colleague, 'one.txt', '1\n', 'One')
+    await commitInFixture(fixtures, colleague, 'two.txt', '2\n', 'Two')
+    await gitInFixture(fixtures, colleague, 'push', '--quiet', 'origin', 'main')
+
+    expect(await source.pull('repo', 'main')).toEqual({ message: 'Pulled 2 commits from origin/main' })
+    expect(await tipOf(folder, 'main')).toBe(await tipOf(colleague, 'main'))
+    expect(await source.pull('repo', 'main')).toEqual({ message: 'Already up to date with origin/main' })
+  })
+
+  it('refuses to pull when both sides have new commits, and leaves the branch where it was', async () => {
+    const { source, folder, colleague } = await withColleague()
+    await commitInFixture(fixtures, colleague, 'theirs.txt', 'theirs\n', 'Theirs')
+    await gitInFixture(fixtures, colleague, 'push', '--quiet', 'origin', 'main')
+    await commitInFixture(fixtures, folder, 'mine.txt', 'mine\n', 'Mine')
+    const before = await tipOf(folder, 'main')
+
+    await expect(source.pull('repo', 'main')).rejects.toThrow(
+      'can’t fast-forward: main and origin/main both have new commits. Merge or rebase them in a terminal.',
+    )
+    expect(await tipOf(folder, 'main')).toBe(before)
+    // What was fetched stays fetched, so the branch list can show it.
+    expect(await tipOf(folder, 'origin/main')).toBe(await tipOf(colleague, 'main'))
+  })
+
+  it('refuses to pull, naming the file, when it would overwrite uncommitted changes', async () => {
+    const { source, folder, colleague } = await withColleague()
+    await commitInFixture(fixtures, colleague, 'README.md', '# Changed upstream\n', 'Edit the readme')
+    await gitInFixture(fixtures, colleague, 'push', '--quiet', 'origin', 'main')
+    await writeFile(join(folder, 'README.md'), 'edited here, not committed\n')
+
+    await expect(source.pull('repo', 'main')).rejects.toThrow(
+      'your changes to README.md would be overwritten by pulling origin/main. Commit or stash them first.',
+    )
+  })
+
+  it('pulls only into a branch with an upstream', async () => {
+    const { source } = await checkoutRepository()
+    await source.checkout('repo', { local: 'feature/local' })
+    await expect(source.pull('repo', 'feature/local')).rejects.toThrow('feature/local has no upstream branch to pull from')
+  })
+
+  it('pushes the branch’s new commits to its upstream', async () => {
+    const { source, folder, name } = await checkoutRepository()
+    await commitInFixture(fixtures, folder, 'a.txt', 'a\n', 'A')
+    await commitInFixture(fixtures, folder, 'b.txt', 'b\n', 'B')
+
+    expect(await source.push('repo', 'main')).toEqual({ message: 'Pushed 2 commits to origin/main' })
+    expect(await tipOf(originOf(fixtures, name), 'main')).toBe(await tipOf(folder, 'main'))
+    expect((await branchesOf(source)).local.find((branch) => branch.name === 'main')).toMatchObject({ ahead: 0 })
+    expect(await source.push('repo', 'main')).toEqual({ message: 'Nothing to push; origin/main is up to date' })
+  })
+
+  it('trusts the remote, not an out-of-date remote branch here, about whether there was anything to push', async () => {
+    const { source, folder, name } = await checkoutRepository()
+    await commitInFixture(fixtures, folder, 'a.txt', 'a\n', 'A')
+    // Pushed by path, not by remote name, so origin/main here doesn't move.
+    await gitInFixture(fixtures, folder, 'push', '--quiet', originOf(fixtures, name), 'main:main')
+    expect((await branchesOf(source)).local.find((branch) => branch.name === 'main')).toMatchObject({ ahead: 1 })
+
+    expect(await source.push('repo', 'main')).toEqual({ message: 'Nothing to push; origin/main is up to date' })
+  })
+
+  it('pushes to the upstream it tracks, even under another name', async () => {
+    const { source, folder, name } = await checkoutRepository()
+    await gitInFixture(fixtures, folder, 'switch', '--quiet', '-c', 'mine', '--track', 'origin/feature/remote')
+    await commitInFixture(fixtures, folder, 'mine.txt', 'mine\n', 'Mine')
+
+    expect(await source.push('repo', 'mine')).toEqual({ message: 'Pushed 1 commit to origin/feature/remote' })
+    expect(await tipOf(originOf(fixtures, name), 'feature/remote')).toBe(await tipOf(folder, 'mine'))
+    await expect(fixtureGit(originOf(fixtures, name), 'rev-parse', '--verify', '--quiet', 'refs/heads/mine')).rejects.toThrow()
+  })
+
+  it('refuses a push the remote is ahead of, and changes nothing there', async () => {
+    const { source, folder, name, colleague } = await withColleague()
+    await commitInFixture(fixtures, colleague, 'theirs.txt', 'theirs\n', 'Theirs')
+    await gitInFixture(fixtures, colleague, 'push', '--quiet', 'origin', 'main')
+    await commitInFixture(fixtures, folder, 'mine.txt', 'mine\n', 'Mine')
+
+    await expect(source.push('repo', 'main')).rejects.toThrow(
+      'origin/main has commits that main doesn’t have. Pull them first, then push again.',
+    )
+    expect(await tipOf(originOf(fixtures, name), 'main')).toBe(await tipOf(colleague, 'main'))
+  })
+
+  it('passes on the remote’s reason when a hook there refuses the push', async () => {
+    const { source, folder, name } = await checkoutRepository()
+    await writeFile(join(originOf(fixtures, name), 'hooks', 'pre-receive'), '#!/bin/sh\nexit 1\n')
+    await commitInFixture(fixtures, folder, 'mine.txt', 'mine\n', 'Mine')
+    await expect(source.push('repo', 'main')).rejects.toThrow('the remote refused the push: pre-receive hook declined')
+  })
+
+  it('publishes a branch that tracks nothing yet, and it tracks origin from then on', async () => {
+    const { source, folder, name } = await checkoutRepository()
+    await gitInFixture(fixtures, folder, 'switch', '--quiet', '-c', 'feature/fresh')
+    await commitInFixture(fixtures, folder, 'fresh.txt', 'fresh\n', 'Fresh work')
+    expect(await source.push('repo', 'feature/fresh')).toEqual({
+      message: 'Published feature/fresh to origin; it now tracks origin/feature/fresh',
+    })
+    expect(await tipOf(originOf(fixtures, name), 'feature/fresh')).toBe(await tipOf(folder, 'feature/fresh'))
+    expect((await fixtureGit(folder, 'rev-parse', '--abbrev-ref', 'feature/fresh@{upstream}')).trim()).toBe('origin/feature/fresh')
+  })
+
+  it('lets ssh ask for sign-in during fetch, pull and push, and nothing else', async () => {
+    const { source, folder } = await checkoutRepository()
+    // A stand-in ssh that records what it was started with, then fails as an unreachable server would.
+    const record = join(folder, '..', `${basename(folder)}-ssh.log`).replaceAll('\\', '/')
+    const fakeSsh = join(folder, '..', `${basename(folder)}-ssh.sh`).replaceAll('\\', '/')
+    await writeFile(fakeSsh, `#!/bin/sh\necho "require=$SSH_ASKPASS_REQUIRE gcm=$GCM_INTERACTIVE" >> '${record}'\nexit 255\n`)
+    await gitInFixture(fixtures, folder, 'config', 'core.sshCommand', `sh '${fakeSsh}'`)
+    await gitInFixture(fixtures, folder, 'remote', 'set-url', 'origin', 'ssh://git@example.invalid/repo.git')
+    await commitInFixture(fixtures, folder, 'a.txt', 'a\n', 'A')
+
+    const sshStarts = async () => (await readFile(record, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean)
+    // Git may start ssh more than once per command; each operation must start it at least once.
+    let started = 0
+    for (const operation of [() => source.fetch('repo'), () => source.pull('repo', 'main'), () => source.push('repo', 'main')]) {
+      await expect(operation()).rejects.toThrow()
+      expect((await sshStarts()).length).toBeGreaterThan(started)
+      started = (await sshStarts()).length
+    }
+    await source.getBranches('repo')
+    expect(await sshStarts()).toEqual(Array(started).fill('require=force gcm='))
+  })
+
+  it('says when there is no remote to publish to', async () => {
+    const folder = await createScratchRepository(fixtures, 'nowhere-to-push')
+    await expect(sourceFor({ id: 'repo', path: folder }).push('repo', 'main')).rejects.toThrow(
+      'this repository has no remote to push to',
+    )
   })
 })

@@ -3,6 +3,7 @@ import { sampleCompareDiff } from '@/data/sampleDiffs'
 import type { SampleCommit, SampleRepository } from '@/data/sampleTypes'
 import { localNameOf, switchedMessage } from '@/lib/checkout'
 import { invertHunks } from '@/lib/diff'
+import { fetchedMessage, publishedMessage, pulledMessage, pushedMessage } from '@/lib/remoteOperations'
 import { layoutLanes, primaryBranchTip } from '@/lib/laneLayout'
 import type {
   AddRepositoryResult,
@@ -13,6 +14,7 @@ import type {
   FileChange,
   HistoryPage,
   Hunk,
+  LocalBranch,
   OperationResult,
   Repository,
 } from '@/types/git'
@@ -22,9 +24,9 @@ import type { GitDataSource } from './GitDataSource'
 const SAMPLE_REMOTES = ['origin']
 
 /**
- * In-memory stand-in for a git backend, serving the design's sample repos. Checkout really
- * switches; remote operations always succeed and report the design's messages. Every result is
- * a copy, so callers can't change the data through it.
+ * In-memory stand-in for a git backend, serving the design's sample repos. Checkout and push
+ * really change them; the sample remote has nothing new, so fetch and pull only report that.
+ * Every result is a copy, so callers can't change the data through it.
  */
 export class MockGitDataSource implements GitDataSource {
   /** Repositories taken off the list this session. */
@@ -103,16 +105,47 @@ export class MockGitDataSource implements GitDataSource {
     return { kind: 'switched', branch: name, message: switchedMessage(name, repo.changedFileCount, remote.name) }
   }
 
-  async fetch(_repoId: string): Promise<OperationResult> {
-    return { message: 'Fetched origin: no new commits' }
+  /** The sample remote never has anything new. */
+  async fetch(repoId: string): Promise<OperationResult> {
+    this.repository(repoId).lastFetch = new Date().toISOString()
+    return { message: fetchedMessage({ updated: 0, added: 0, removed: 0 }) }
   }
 
-  async pull(_repoId: string, branch: string): Promise<OperationResult> {
-    return { message: `Pulled origin/${branch}: already up to date` }
+  /** The sample remote has no commits of its own, so a pull only clears the behind count. */
+  async pull(repoId: string, branch: string): Promise<OperationResult> {
+    const repo = this.repository(repoId)
+    if (repo.currentBranch === null) throw new Error('no branch is checked out')
+    if (repo.currentBranch !== branch) throw new Error(`${branch} isn’t checked out; ${repo.currentBranch} is`)
+    const local = this.localBranch(repo, branch)
+    if (!repo.remoteBranches.some((remote) => remote.name === `origin/${branch}`)) {
+      throw new Error(`${branch} has no upstream branch to pull from`)
+    }
+    const pulled = local.behind
+    local.behind = 0
+    return { message: pulledMessage(pulled, `origin/${branch}`) }
   }
 
-  async push(_repoId: string, branch: string): Promise<OperationResult> {
-    return { message: `Pushed ${branch} to origin/${branch}` }
+  /** Moves origin's copy of the branch (and its label in the history) to the branch; publishes one origin lacks. */
+  async push(repoId: string, branch: string): Promise<OperationResult> {
+    const repo = this.repository(repoId)
+    const local = this.localBranch(repo, branch)
+    const upstreamName = `origin/${branch}`
+    const upstream = repo.remoteBranches.find((remote) => remote.name === upstreamName)
+    const pushed = local.ahead
+    local.ahead = 0
+    moveLabel(repo, upstreamName, local.tipHash)
+    if (upstream) {
+      upstream.tipHash = local.tipHash
+      return { message: pushedMessage(pushed, upstreamName) }
+    }
+    repo.remoteBranches.push({ name: upstreamName, tipHash: local.tipHash })
+    return { message: publishedMessage(branch, 'origin') }
+  }
+
+  private localBranch(repo: SampleRepository, branch: string): LocalBranch {
+    const local = repo.localBranches.find((candidate) => candidate.name === branch)
+    if (!local) throw new Error(`Unknown branch: ${branch}`)
+    return local
   }
 
   private listed(): SampleRepository[] {
@@ -142,5 +175,13 @@ export function sampleHistoryPage(repo: SampleRepository, limit: number): Histor
       graph: rows[index]!,
     })),
     hasMore: repo.commits.length > limit,
+  }
+}
+
+/** Puts a branch label on the commit `hash` and takes it off every other. */
+function moveLabel(repo: SampleRepository, label: string, hash: string): void {
+  for (const commit of repo.commits) {
+    commit.refs = commit.refs.filter((ref) => ref !== label)
+    if (commit.hash === hash) commit.refs.push(label)
   }
 }

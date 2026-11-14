@@ -18,12 +18,15 @@ function recordingBridge() {
     addRepository: (...args) => (calls.push(['addRepository', ...args]), mock.addRepository()),
     removeRepository: (...args) => (calls.push(['removeRepository', ...args]), mock.removeRepository(...args)),
     checkout: (...args) => (calls.push(['checkout', ...args]), mock.checkout(...args)),
+    fetch: (...args) => (calls.push(['fetch', ...args]), mock.fetch(...args)),
+    pull: (...args) => (calls.push(['pull', ...args]), mock.pull(...args)),
+    push: (...args) => (calls.push(['push', ...args]), mock.push(...args)),
   }
   return { bridge, calls }
 }
 
 describe('IpcGitDataSource', () => {
-  it('forwards every call it supports, with its arguments, to the bridge', async () => {
+  it('forwards every call, with its arguments, to the bridge', async () => {
     const { bridge, calls } = recordingBridge()
     const source = new IpcGitDataSource(bridge)
     await source.listRepositories()
@@ -35,6 +38,9 @@ describe('IpcGitDataSource', () => {
     await source.addRepository()
     await source.removeRepository('pricing')
     await source.checkout('inventory', { remote: 'origin/release/2.4' }, { leaveCommits: true })
+    await source.fetch('inventory')
+    await source.pull('inventory', 'release/2.4')
+    await source.push('inventory', 'release/2.4')
     expect(calls).toEqual([
       ['listRepositories'],
       ['getBranches', 'inventory'],
@@ -45,6 +51,9 @@ describe('IpcGitDataSource', () => {
       ['addRepository'],
       ['removeRepository', 'pricing'],
       ['checkout', 'inventory', { remote: 'origin/release/2.4' }, { leaveCommits: true }],
+      ['fetch', 'inventory'],
+      ['pull', 'inventory', 'release/2.4'],
+      ['push', 'inventory', 'release/2.4'],
     ])
   })
 
@@ -61,14 +70,5 @@ describe('IpcGitDataSource', () => {
       [{ local: 'main' }, { leaveCommits: true }],
       [{ remote: 'origin/release/2.4' }, {}],
     ])
-  })
-
-  it('rejects Fetch, Pull and Push without calling the bridge', async () => {
-    const { bridge, calls } = recordingBridge()
-    const source = new IpcGitDataSource(bridge)
-    await expect(source.fetch('inventory')).rejects.toThrow("Fetch isn't available")
-    await expect(source.pull('inventory', 'main')).rejects.toThrow("Pull isn't available")
-    await expect(source.push('inventory', 'main')).rejects.toThrow("Push isn't available")
-    expect(calls).toEqual([])
   })
 })

@@ -11,11 +11,13 @@ const props = withDefaults(
     syncLabel: string | null
     /** The operations the host offers; Fetch, Pull and Push show only when listed. */
     operations?: readonly RepositoryOperation[]
-    /** True while an operation runs: the buttons are disabled. */
-    busy?: boolean
+    /** The operation running now, if any: every button is disabled, and that one says so. */
+    running?: RepositoryOperation | null
   }>(),
-  { operations: () => ALL_OPERATIONS, busy: false },
+  { operations: () => ALL_OPERATIONS, running: null },
 )
+
+const busy = computed(() => props.running !== null)
 
 const offers = (operation: RepositoryOperation) => props.operations.includes(operation)
 const offersRemoteOperations = computed(() => offers('fetch') || offers('pull') || offers('push'))
@@ -52,11 +54,11 @@ const secondaryButton =
     <div v-if="offersRemoteOperations" class="ml-auto flex flex-wrap gap-2">
       <button v-if="offers('fetch')" type="button" :class="secondaryButton" :disabled="busy" @click="$emit('fetch')">
         <GmIcon name="fetch" />
-        Fetch
+        {{ running === 'fetch' ? 'Fetching…' : 'Fetch' }}
       </button>
       <button v-if="offers('pull')" type="button" :class="secondaryButton" :disabled="busy" @click="$emit('pull')">
         <GmIcon name="pull" />
-        Pull
+        {{ running === 'pull' ? 'Pulling…' : 'Pull' }}
       </button>
       <button
         v-if="offers('push')"
@@ -66,7 +68,7 @@ const secondaryButton =
         @click="$emit('push')"
       >
         <GmIcon name="push" />
-        Push
+        {{ running === 'push' ? 'Pushing…' : 'Push' }}
       </button>
     </div>
   </header>

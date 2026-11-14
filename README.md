@@ -4,7 +4,7 @@ A calm, dark-themed git client that puts the questions you ask most often on one
 
 Git Manager is for developers who juggle several repositories and want a quick visual answer without reaching for the command line. That might be a service, its API client, a front end and a dotfiles repo all at once.
 
-> **Status:** the Windows desktop app works on your real repositories with your installed Git for Windows: add repositories, browse their branches, history and diffs, and check out branches. Fetch, Pull and Push come later and are hidden until then. The browser version runs on built-in sample repositories, where every button works against sample data. See [Real repositories](#real-repositories).
+> **Status:** the Windows desktop app works on your real repositories with your installed Git for Windows: add repositories, browse their branches, history and diffs, check out branches, and fetch, pull and push. The browser version runs on built-in sample repositories, where every button works against sample data. See [Real repositories](#real-repositories).
 
 ## What you can do
 
@@ -16,7 +16,12 @@ Git Manager is for developers who juggle several repositories and want a quick v
   - **Simple diff:** old and new side by side, with removed lines on the left lined up against the added lines that replaced them.
 - **Compare any two files.** Enter two paths to see them side by side, even when they don't share any history (for example, `application.yml` against `application-prod.yml`). Swap them with one click.
 - **See changes made elsewhere.** Commit, switch branches or edit files in your terminal or editor, and Git Manager catches up when you come back to its window, without losing the commit you were looking at. Press **F5** to refresh on demand.
-- **Fetch, pull and push** the current branch from the header (browser version only, on sample data, for now).
+- **Fetch, pull and push** from the header. The button you clicked says what's happening ("Fetching…") until git finishes, and the status bar says what happened:
+  - **Fetch** updates every remote and drops branches deleted there: "Fetched: 2 branches updated, 1 new, 1 removed". The ↑/↓ counts and "Last fetch" update with it.
+  - **Pull** brings the checked-out branch up to its remote branch, but only when that is a plain fast-forward: "Pulled 3 commits from origin/main". If you and the remote both have new commits, nothing changes and the status bar says so; merge or rebase in a terminal. Uncommitted changes that would be overwritten are named, as with Checkout.
+  - **Push** sends the checked-out branch to the remote branch it tracks: "Pushed 2 commits to origin/feature". It never forces: if the remote has commits you don't, it says to pull first. A branch that tracks nothing yet is published to `origin` and tracks it from then on.
+  - **Signing in** uses git's own windows: Git Credential Manager for HTTPS, and Git for Windows' password window for an SSH passphrase or a server's unknown host key.
+  - **A stalled connection fails with git's reason**: after 20 seconds trying to connect, or a minute with nothing moving. A slow transfer that keeps moving is never cut off.
 
 ## Core concepts
 
@@ -72,10 +77,10 @@ For how the code is organised, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md
 
 The interface talks to git through a single TypeScript interface, `GitDataSource` (`src/services/GitDataSource.ts`). It asks only for what the screen shows (a repository's branches, a page of history, one commit's files, one file's diff), so large repositories never have to be read in full: the history shows the newest 200 commits, and **Show more commits** at the end of the list adds 200 at a time.
 
-- **Desktop app:** its Electron main process runs your installed Git for Windows, so it uses your own git settings, and passes results to the interface over the preload bridge. Reading never takes git's locks, so it can't get in the way of your own git commands; Checkout runs `git switch`, which takes them as your own commands do. If git is missing or older than 2.30, the app says so instead of starting. Your repository list is kept in `%APPDATA%\git-manager\repositories.json`.
+- **Desktop app:** its Electron main process runs your installed Git for Windows, so it uses your own git settings, and passes results to the interface over the preload bridge. Reading never takes git's locks, so it can't get in the way of your own git commands; Checkout, Pull and the rest run git as your own commands do, with your credential helper, SSH keys and hooks. If git is missing or older than 2.30, the app says so instead of starting. Your repository list is kept in `%APPDATA%\git-manager\repositories.json`.
 - **Browser version:** keeps the sample data (`MockGitDataSource`), so the interface can be developed and tested without touching a real repository.
 
-Renamed files show as one change ("renamed from …", or "moved from …" when only the folder changed), diffed against their old version. Not tried yet: submodules and Git LFS (an LFS checkout that needs to sign in will fail: the app doesn't show git's sign-in prompts yet). A branch checked out in another worktree can't be checked out here; git's message says where it is.
+Renamed files show as one change ("renamed from …", or "moved from …" when only the folder changed), diffed against their old version. Not tried yet: submodules and Git LFS (an LFS checkout that needs to sign in will fail: only Fetch, Pull and Push may ask you to sign in). A branch checked out in another worktree can't be checked out here; git's message says where it is.
 
 The installed app has no menu: Ctrl+R (reload) and Ctrl+Shift+I (DevTools) do nothing, and F5 refreshes. `npm run dev:app` keeps both for development.
 

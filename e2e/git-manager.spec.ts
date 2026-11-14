@@ -96,16 +96,18 @@ test('compare two files: simple diff only, swap reverses, back returns', async (
   await expect(status(page)).toHaveText('Viewing commit 9f3a1c2')
 })
 
-test('fetch, pull and push report their result in the status bar', async ({ page }) => {
+test('fetch, pull and push report their result in the status bar, and push clears the ahead count', async ({ page }) => {
+  await expect(header(page)).toContainText('↑2 vs origin')
   await header(page).getByRole('button', { name: 'Fetch' }).click()
-  await expect(status(page)).toHaveText('Fetched origin: no new commits')
+  await expect(status(page)).toHaveText('Fetched: everything was up to date')
   await expect(page.locator('footer')).toContainText('Last fetch: just now')
 
   await header(page).getByRole('button', { name: 'Pull' }).click()
-  await expect(status(page)).toHaveText('Pulled origin/feature/stock-reservations: already up to date')
+  await expect(status(page)).toHaveText('Already up to date with origin/feature/stock-reservations')
 
   await header(page).getByRole('button', { name: 'Push' }).click()
-  await expect(status(page)).toHaveText('Pushed feature/stock-reservations to origin/feature/stock-reservations')
+  await expect(status(page)).toHaveText('Pushed 2 commits to origin/feature/stock-reservations')
+  await expect(header(page)).not.toContainText('vs origin')
 })
 
 test('add repository explains what to choose', async ({ page }) => {

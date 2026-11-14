@@ -80,6 +80,55 @@ export function describeGitDataSourceContract(
     })
   })
 
+  describe(`${name} follows the GitDataSource contract for fetch, pull and push`, () => {
+    const repositoryOf = async ({ source, repoId }: CheckoutSubject) =>
+      (await source.listRepositories()).find((repo) => repo.id === repoId)!
+    const localBranch = async ({ source, repoId }: CheckoutSubject, branch: string) =>
+      (await source.getBranches(repoId)).local.find((candidate) => candidate.name === branch)!
+
+    it('fetches, and records when', async () => {
+      const subject = await createCheckoutSubject()
+      // File times can trail the clock by a little; a fetch now is still well after this.
+      const started = Date.now() - 2000
+      expect((await subject.source.fetch(subject.repoId)).message).toMatch(/^Fetched: /)
+      const { lastFetch } = await repositoryOf(subject)
+      expect(lastFetch).not.toBeNull()
+      expect(Date.parse(lastFetch!)).toBeGreaterThanOrEqual(started)
+    })
+
+    it('pulls into the checked-out branch, which is then behind by nothing', async () => {
+      const subject = await createCheckoutSubject()
+      const current = (await repositoryOf(subject)).currentBranch!
+      expect((await subject.source.pull(subject.repoId, current)).message).toMatch(/^(Pulled|Already up to date)/)
+      expect((await localBranch(subject, current)).behind).toBe(0)
+    })
+
+    it('pushes a branch, which is then ahead by nothing', async () => {
+      const subject = await createCheckoutSubject()
+      const current = (await repositoryOf(subject)).currentBranch!
+      expect((await subject.source.push(subject.repoId, current)).message).toMatch(/^(Pushed|Nothing to push|Published)/)
+      expect((await localBranch(subject, current)).ahead).toBe(0)
+    })
+
+    it('pulls only the checked-out branch, and pushes only a branch it has', async () => {
+      const subject = await createCheckoutSubject()
+      const current = (await repositoryOf(subject)).currentBranch!
+      await expect(subject.source.pull(subject.repoId, subject.otherLocal)).rejects.toThrow(
+        `${subject.otherLocal} isn’t checked out; ${current} is`,
+      )
+      for (const branch of ['no-such-branch', '--force', '-f']) {
+        await expect(subject.source.push(subject.repoId, branch), branch).rejects.toThrow(`Unknown branch: ${branch}`)
+      }
+    })
+
+    it('rejects a repository it doesn’t know', async () => {
+      const { source } = await createCheckoutSubject()
+      await expect(source.fetch('no-such-repository')).rejects.toThrow()
+      await expect(source.pull('no-such-repository', 'main')).rejects.toThrow()
+      await expect(source.push('no-such-repository', 'main')).rejects.toThrow()
+    })
+  })
+
   describe(`${name} follows the GitDataSource contract`, () => {
     async function eachRepository(check: (source: GitDataSource, repo: Repository) => Promise<void>) {
       const { source } = await createSubject()

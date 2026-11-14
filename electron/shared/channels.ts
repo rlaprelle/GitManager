@@ -12,4 +12,7 @@ export const IpcChannel = {
   AddRepository: 'repositories:add',
   RemoveRepository: 'repositories:remove',
   Checkout: 'git:checkout',
+  Fetch: 'git:fetch',
+  Pull: 'git:pull',
+  Push: 'git:push',
 } as const

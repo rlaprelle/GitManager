@@ -220,6 +220,21 @@ export async function createRepositoryWithRemote(fixtures: Fixtures, name: strin
   return repo
 }
 
+/** The bare repository `createRepositoryWithRemote(fixtures, name)` made as origin. */
+export function originOf(fixtures: Fixtures, name: string): string {
+  return join(fixtures.root, `${name}-origin.git`)
+}
+
+/**
+ * Another clone of `createRepositoryWithRemote`'s origin, for a colleague who pushes to it:
+ * the changes a fetch or pull should bring in, or that a push should be refused over.
+ */
+export async function cloneOriginInFixture(fixtures: Fixtures, name: string): Promise<string> {
+  const colleague = join(fixtures.root, `${name}-colleague`)
+  await userGit(fixtures, fixtures.root, 'clone', '--quiet', originOf(fixtures, name), colleague)
+  return colleague
+}
+
 /** Runs git in a test's own repository, as the user would in their own terminal. */
 export async function gitInFixture(fixtures: Fixtures, repo: string, ...args: string[]): Promise<string> {
   return userGit(fixtures, repo, ...args)

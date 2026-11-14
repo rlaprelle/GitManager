@@ -15,8 +15,10 @@ const props = withDefaults(
     checkoutableRemotes?: string[]
     /** True while an operation runs: Checkout is disabled. */
     busy?: boolean
+    /** True while a checkout runs: Checkout says so. */
+    switching?: boolean
   }>(),
-  { canCheckout: true, checkoutableRemotes: () => [], busy: false },
+  { canCheckout: true, checkoutableRemotes: () => [], busy: false, switching: false },
 )
 
 defineEmits<{ select: [name: string]; checkout: [name: string]; checkoutRemote: [name: string] }>()
@@ -69,7 +71,7 @@ const checkoutButton =
           :disabled="busy"
           @click="$emit('checkout', branch.name)"
         >
-          {{ busy ? 'Switching…' : 'Checkout' }}
+          {{ switching ? 'Switching…' : 'Checkout' }}
         </button>
       </div>
     </div>
@@ -99,7 +101,7 @@ const checkoutButton =
           :title="`Create a local branch that tracks ${branch.name}, and switch to it`"
           @click="$emit('checkoutRemote', branch.name)"
         >
-          {{ busy ? 'Switching…' : 'Checkout' }}
+          {{ switching ? 'Switching…' : 'Checkout' }}
         </button>
       </div>
     </div>

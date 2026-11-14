@@ -44,6 +44,9 @@ export function registerIpcHandlers(ipc: IpcRegistrar, { source, appVersion, che
   handle(IpcChannel.Checkout, (repoId, target, options) =>
     source.checkout(text(repoId), checkoutTarget(target), checkoutOptions(options)),
   )
+  handle(IpcChannel.Fetch, (repoId) => source.fetch(text(repoId)))
+  handle(IpcChannel.Pull, (repoId, branch) => source.pull(text(repoId), text(branch)))
+  handle(IpcChannel.Push, (repoId, branch) => source.push(text(repoId), text(branch)))
 }
 
 function text(value: unknown): string {

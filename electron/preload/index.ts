@@ -24,6 +24,9 @@ const bridge: GitManagerBridge = {
     addRepository: () => call(IpcChannel.AddRepository),
     removeRepository: (repoId) => call(IpcChannel.RemoveRepository, repoId),
     checkout: (repoId, target, options) => call(IpcChannel.Checkout, repoId, target, options),
+    fetch: (repoId) => call(IpcChannel.Fetch, repoId),
+    pull: (repoId, branch) => call(IpcChannel.Pull, repoId, branch),
+    push: (repoId, branch) => call(IpcChannel.Push, repoId, branch),
   },
 }
 

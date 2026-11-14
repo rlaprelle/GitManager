@@ -108,8 +108,18 @@ const NAMED_FILES = 3
  * line already says enough. Git lists the files one per tab-indented line after its heading.
  */
 export function checkoutRefusal(stderr: string, branch: string): string | null {
+  return overwriteRefusal(stderr, 'checkout', `switching to ${branch}`)
+}
+
+/** Git's refusal to fast-forward because files would be overwritten, worded like checkoutRefusal. */
+export function pullRefusal(stderr: string, upstream: string): string | null {
+  return overwriteRefusal(stderr, 'merge', `pulling ${upstream}`)
+}
+
+/** `command` is the word git ends its heading with ("would be overwritten by merge:"); `doing` is ours. */
+function overwriteRefusal(stderr: string, command: string, doing: string): string | null {
   const lines = stderr.split(/\r?\n/)
-  const heading = lines.findIndex((line) => /would be overwritten by checkout:$/.test(line))
+  const heading = lines.findIndex((line) => line.endsWith(`would be overwritten by ${command}:`))
   if (heading === -1) return null
   const files: string[] = []
   for (const line of lines.slice(heading + 1)) {
@@ -119,8 +129,66 @@ export function checkoutRefusal(stderr: string, branch: string): string | null {
   const untracked = /untracked working tree files/.test(lines[heading]!)
   const named = fileList(files)
   return untracked
-    ? `untracked ${files.length === 1 ? 'file' : 'files'} ${named} would be overwritten by switching to ${branch}. Move or remove ${files.length === 1 ? 'it' : 'them'} first.`
-    : `your changes to ${named} would be overwritten by switching to ${branch}. Commit or stash them first.`
+    ? `untracked ${files.length === 1 ? 'file' : 'files'} ${named} would be overwritten by ${doing}. Move or remove ${files.length === 1 ? 'it' : 'them'} first.`
+    : `your changes to ${named} would be overwritten by ${doing}. Commit or stash them first.`
+}
+
+/**
+ * `for-each-ref --format=%(refname)%00%(upstream)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream:remoteref)%00%(upstream:track)`
+ * for one branch.
+ */
+export const UPSTREAM_FORMAT =
+  '%(refname)%00%(upstream)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream:remoteref)%00%(upstream:track)'
+
+/** The branch a local branch tracks. */
+export interface Upstream {
+  /** Its remote-tracking ref here: refs/remotes/origin/main. */
+  ref: string
+  /** As the UI names it: origin/main. */
+  name: string
+  remote: string
+  /** The branch on the remote: refs/heads/main. */
+  remoteRef: string
+  /** Deleted on the remote (and pruned here). */
+  gone: boolean
+}
+
+/** The upstream of `branch` from UPSTREAM_FORMAT output, or null when it has none. */
+export function parseUpstream(output: string, branch: string): Upstream | null {
+  for (const line of output.split('\n')) {
+    const [refname, ref = '', name = '', remote = '', remoteRef = '', track = ''] = line.split(NUL)
+    // A pattern also matches longer names (refs/heads/a matches refs/heads/a/b), so compare exactly.
+    if (refname !== `refs/heads/${branch}`) continue
+    return ref && remote && remoteRef ? { ref, name, remote, remoteRef, gone: track === 'gone' } : null
+  }
+  return null
+}
+
+/** One ref's line in `push --porcelain`: a flag, what was pushed where, and git's summary. */
+export interface PushedRef {
+  /** ' ' fast-forward, '+' forced, '-' deleted, '*' new, '!' rejected, '=' up to date. */
+  flag: string
+  summary: string
+}
+
+/** `push --porcelain` stdout: 'To <url>', then '<flag>\t<from>:<to>\t<summary>' per ref, then 'Done'. */
+export function parsePushPorcelain(stdout: string): PushedRef[] {
+  return stdout
+    .split(/\r?\n/)
+    .map((line) => /^([ +\-*!=])\t[^\t]+\t(.*)$/.exec(line))
+    .filter((match) => match !== null)
+    .map(([, flag = '', summary = '']) => ({ flag, summary }))
+}
+
+/**
+ * Why a push was refused, from its porcelain summary, as one line for the status bar (after
+ * "Failed: "). Null when the summary isn't a refusal this knows.
+ */
+export function pushRefusal(summary: string, branch: string, upstream: string): string | null {
+  if (summary.startsWith('[rejected]')) return `${upstream} has commits that ${branch} doesn’t have. Pull them first, then push again.`
+  const remote = /^\[remote rejected\] \((.*)\)$/.exec(summary)
+  if (remote) return `the remote refused the push: ${remote[1]}`
+  return null
 }
 
 /** 'a, b and c', or 'a, b, c and 4 more'. */

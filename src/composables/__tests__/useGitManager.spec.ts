@@ -387,6 +387,38 @@ describe('useGitManager', () => {
   })
 
   describe('refreshing after changes made outside the app', () => {
+    it('opens the tip of a branch the user picked while the history was still loading', async () => {
+      const held = heldSource()
+      const opening = manager(held.source)
+      held.hold('getHistory')
+      const loading = opening.load()
+      await settle()
+      // Branches are on screen; the history isn't yet.
+      await opening.selectBranch('main')
+
+      await held.callsTo('getHistory')[0]!.release()
+      await loading
+      expect(opening.selectedBranch.value).toBe('main')
+      expect(opening.commit.value?.hash).toBe('c81f5a3')
+      expect(opening.files.value).not.toEqual([])
+    })
+
+    it('keeps a branch the user picked while the refresh was still reading', async () => {
+      const held = heldSource()
+      const refreshing = await loadedManager(held.source)
+      held.hold('getHistory')
+      const refresh = refreshing.refresh()
+      await settle()
+      // The window regained focus, and the user clicks a branch before git answers.
+      await refreshing.selectBranch('main')
+      expect(refreshing.commit.value?.hash).toBe('c81f5a3')
+
+      await held.callsTo('getHistory')[0]!.release()
+      await refresh
+      expect(refreshing.selectedBranch.value).toBe('main')
+      expect(refreshing.commit.value?.hash).toBe('c81f5a3')
+    })
+
     /** A mock over its own copy of the sample data, which the test can change "outside the app". */
     function changeableSource() {
       const repositories = structuredClone(sampleRepositories)
@@ -686,18 +718,80 @@ describe('useGitManager', () => {
       expect(asking.pendingCheckout.value).toBeNull()
     })
 
-    it('fetching updates the last-fetch time', async () => {
+    it('fetching reloads the repository, with the last-fetch time the source recorded', async () => {
       const before = Date.now()
       await gm.fetchRemote()
       expect(Date.parse(gm.repository.value!.lastFetch!)).toBeGreaterThanOrEqual(before)
-      expect(gm.status.value).toBe('Fetched origin: no new commits')
+      expect(gm.status.value).toBe('Fetched: everything was up to date')
     })
 
-    it('pull and push report against the current branch', async () => {
+    it('pulls and pushes the checked-out branch, then shows what changed', async () => {
       await gm.pull()
-      expect(gm.status.value).toBe('Pulled origin/feature/stock-reservations: already up to date')
+      expect(gm.status.value).toBe('Already up to date with origin/feature/stock-reservations')
       await gm.push()
-      expect(gm.status.value).toBe('Pushed feature/stock-reservations to origin/feature/stock-reservations')
+      expect(gm.status.value).toBe('Pushed 2 commits to origin/feature/stock-reservations')
+      expect(gm.headerSyncLabel.value).toBeNull()
+      expect(gm.branches.value.local.find((branch) => branch.name === 'feature/stock-reservations')!.ahead).toBe(0)
+    })
+
+    it('says what is running, one operation at a time, and keeps the selection when it reloads', async () => {
+      const held = heldSource()
+      const busy = await loadedManager(held.source)
+      const selected = busy.commit.value!.hash
+      held.hold('push')
+      const pushing = busy.push()
+      await settle()
+      expect(busy.runningOperation.value).toBe('push')
+      expect(busy.operationRunning.value).toBe(true)
+      expect(busy.status.value).toBe('Pushing…')
+
+      await busy.fetchRemote()
+      await busy.pull()
+      await busy.checkoutBranch('main')
+      await busy.refresh()
+      expect(held.callsTo('push')).toHaveLength(1)
+
+      held.hold('listRepositories')
+      await held.callsTo('push')[0]!.release()
+      // Still running while it re-reads, so nothing else starts in between.
+      expect(busy.runningOperation.value).toBe('push')
+      await held.callsTo('listRepositories')[0]!.release()
+      await pushing
+      expect(busy.runningOperation.value).toBeNull()
+      expect(busy.status.value).toBe('Pushed 2 commits to origin/feature/stock-reservations')
+      expect(busy.commit.value!.hash).toBe(selected)
+    })
+
+    it('waits for a refresh already running before fetching', async () => {
+      const held = heldSource()
+      const waiting = await loadedManager(held.source)
+      held.hold('listRepositories')
+      const refreshing = waiting.refresh()
+      await settle()
+      const fetching = waiting.fetchRemote()
+      await settle()
+      expect(waiting.status.value).toBe('Fetching…')
+      expect(held.callsTo('fetch')).toHaveLength(0)
+
+      held.letThrough('listRepositories')
+      await held.callsTo('listRepositories')[0]!.release()
+      await Promise.all([refreshing, fetching])
+      expect(waiting.status.value).toBe('Fetched: everything was up to date')
+    })
+
+    it('re-reads the repository after a failure too, since a refused pull has still fetched', async () => {
+      const source = new MockGitDataSource()
+      const failing = await loadedManager(source)
+      let reads = 0
+      const listRepositories = source.listRepositories.bind(source)
+      source.listRepositories = async () => (reads++, listRepositories())
+      source.pull = async () => {
+        throw new Error('can’t fast-forward: main and origin/main both have new commits')
+      }
+      await failing.pull()
+      expect(failing.status.value).toBe('Failed: can’t fast-forward: main and origin/main both have new commits')
+      expect(reads).toBe(1)
+      expect(failing.runningOperation.value).toBeNull()
     })
 
     it('shows a detached HEAD as such, and refuses to pull or push without a branch', async () => {

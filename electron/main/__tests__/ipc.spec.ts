@@ -111,4 +111,33 @@ describe('registerIpcHandlers', () => {
     expect(await invoke(IpcChannel.Checkout, 3, { local: 'main' })).toEqual({ ok: false, message: 'Expected text, got number' })
     expect(received).toHaveLength(2)
   })
+
+  it('fetches, pulls and pushes', async () => {
+    const invoke = registeredHandlers()
+    expect(await invoke(IpcChannel.Fetch, 'inventory')).toEqual({ ok: true, value: { message: 'Fetched: everything was up to date' } })
+    expect(await invoke(IpcChannel.Pull, 'inventory', 'feature/stock-reservations')).toEqual({
+      ok: true,
+      value: { message: 'Already up to date with origin/feature/stock-reservations' },
+    })
+    expect(await invoke(IpcChannel.Push, 'inventory', 'feature/stock-reservations')).toEqual({
+      ok: true,
+      value: { message: 'Pushed 2 commits to origin/feature/stock-reservations' },
+    })
+  })
+
+  it('passes fetch, pull and push only text', async () => {
+    const received: unknown[][] = []
+    const source = new MockGitDataSource()
+    const record = async (...args: unknown[]) => (received.push(args), { message: 'done' })
+    source.fetch = record
+    source.pull = record
+    source.push = record
+    const invoke = registeredHandlers(source)
+    expect(await invoke(IpcChannel.Fetch, { id: 'inventory' })).toEqual({ ok: false, message: 'Expected text, got object' })
+    expect(await invoke(IpcChannel.Pull, 'inventory')).toEqual({ ok: false, message: 'Expected text, got undefined' })
+    expect(await invoke(IpcChannel.Pull, 'inventory', ['main'])).toEqual({ ok: false, message: 'Expected text, got object' })
+    expect(await invoke(IpcChannel.Push, 7, 'main')).toEqual({ ok: false, message: 'Expected text, got number' })
+    expect(await invoke(IpcChannel.Push, 'inventory', true)).toEqual({ ok: false, message: 'Expected text, got boolean' })
+    expect(received).toEqual([])
+  })
 })

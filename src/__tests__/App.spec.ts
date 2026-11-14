@@ -145,14 +145,38 @@ describe('App', () => {
     expect(wrapper.get('[data-testid="header-branch"]').text()).toBe('main')
   })
 
-  it('fetch, pull and push report in the status bar', async () => {
+  it('fetch, pull and push report in the status bar, and what they changed shows', async () => {
     const wrapper = await mountApp()
     await buttonByText(wrapper, 'Fetch').trigger('click')
     await flushPromises()
+    expect(statusText(wrapper)).toBe('Fetched: everything was up to date')
     expect(wrapper.text()).toContain('Last fetch: just now')
+    await buttonByText(wrapper, 'Pull').trigger('click')
+    await flushPromises()
+    expect(statusText(wrapper)).toBe('Already up to date with origin/feature/stock-reservations')
+    expect(wrapper.text()).toContain('↑2 vs origin')
     await buttonByText(wrapper, 'Push').trigger('click')
     await flushPromises()
-    expect(statusText(wrapper)).toBe('Pushed feature/stock-reservations to origin/feature/stock-reservations')
+    expect(statusText(wrapper)).toBe('Pushed 2 commits to origin/feature/stock-reservations')
+    expect(wrapper.text()).not.toContain('↑2 vs origin')
+  })
+
+  it('shows a fetch running on its button, with every write button waiting', async () => {
+    const held = heldSource()
+    const wrapper = await mountApp(held.source)
+    await branchRow(wrapper, 'main').trigger('click')
+    held.hold('fetch')
+    await buttonByText(wrapper, 'Fetch').trigger('click')
+    await flushPromises()
+    expect(buttonByText(wrapper, 'Fetching…').attributes('disabled')).toBeDefined()
+    expect(buttonByText(wrapper, 'Push').attributes('disabled')).toBeDefined()
+    expect(statusText(wrapper)).toBe('Fetching…')
+    // Checkout waits too, without claiming to switch.
+    const checkout = wrapper.findAll('nav button').find((button) => button.text() === 'Checkout')!
+    expect(checkout.attributes('disabled')).toBeDefined()
+    await held.callsTo('fetch')[0]!.release()
+    await flushPromises()
+    expect(buttonByText(wrapper, 'Fetch').attributes('disabled')).toBeUndefined()
   })
 
   it('opens compare mode and swaps the two files', async () => {

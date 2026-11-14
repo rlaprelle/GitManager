@@ -36,6 +36,7 @@ const {
   rightPath,
   historyLoading,
   loadingMoreHistory,
+  runningOperation,
   operationRunning,
   pendingCheckout,
   filesLoading,
@@ -128,7 +129,7 @@ onUnmounted(() => {
         :current-branch="headLabel"
         :sync-label="headerSyncLabel"
         :operations="operations"
-        :busy="operationRunning"
+        :running="runningOperation"
         @fetch="fetchRemote"
         @pull="pull"
         @push="push"
@@ -158,6 +159,7 @@ onUnmounted(() => {
             :can-checkout="canCheckout"
             :checkoutable-remotes="checkoutableRemotes"
             :busy="operationRunning"
+            :switching="runningOperation === 'checkout'"
             @select="selectBranch"
             @checkout="checkoutBranch"
             @checkout-remote="checkoutRemoteBranch"

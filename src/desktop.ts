@@ -2,6 +2,7 @@
 // It must never import the sample data, so an installed app can't fall back to it
 // (e2e-electron checks the built bundle).
 import { mountApp, mountGitRequired } from './mountApp'
+import { ALL_OPERATIONS } from './services/GitDataSource'
 import { IpcGitDataSource } from './services/IpcGitDataSource'
 import type { GitManagerBridge } from './types/bridge'
 
@@ -12,6 +13,5 @@ void bridge.getGitStatus().then((status) => {
     mountGitRequired(status)
     return
   }
-  // Fetch, Pull and Push stay hidden until GitCliDataSource can do them.
-  mountApp({ source: new IpcGitDataSource(bridge.git), comparePaths: { left: '', right: '' }, operations: ['checkout'] })
+  mountApp({ source: new IpcGitDataSource(bridge.git), comparePaths: { left: '', right: '' }, operations: ALL_OPERATIONS })
 })
