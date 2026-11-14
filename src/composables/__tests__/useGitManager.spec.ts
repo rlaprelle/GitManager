@@ -4,8 +4,9 @@ import { expiryJobDiff, reservationConfigDiff, sampleCompareDiff, skuLookupDiff 
 import { invertHunks } from '@/lib/diff'
 import type { GitDataSource } from '@/services/GitDataSource'
 import type { SampleRepository } from '@/data/sampleTypes'
+import type { Hunk } from '@/types/git'
 import { MockGitDataSource } from '@/services/MockGitDataSource'
-import { HISTORY_LIMIT, useGitManager } from '../useGitManager'
+import { HISTORY_LIMIT, NO_TEXT_CHANGES, useGitManager } from '../useGitManager'
 import { heldSource, settle } from './heldSource'
 
 function manager(source: GitDataSource = new MockGitDataSource()) {
@@ -319,6 +320,66 @@ describe('useGitManager', () => {
       const source = new MockGitDataSource()
       source.getHistory = async () => ({ commits: [], hasMore: false })
       expect((await loadedManager(source)).historyMessage.value).toBe('No commits yet')
+    })
+  })
+
+  describe('the diff area message', () => {
+    /** The mock, except that every file diff answers with this. */
+    function diffAnswering(answer: () => Promise<Hunk[]>) {
+      const source = new MockGitDataSource()
+      source.getFileDiff = answer
+      return source
+    }
+
+    it('is empty while the diff has lines', () => {
+      expect(gm.diffMessage.value).toBeNull()
+    })
+
+    it('says a changed file has no text changes to show (binary, empty, or moved without edits)', async () => {
+      const blank = await loadedManager(diffAnswering(async () => []))
+      expect(blank.diffMessage.value).toBe(NO_TEXT_CHANGES)
+    })
+
+    it('says the diff couldn’t load, rather than that nothing changed', async () => {
+      const failing = await loadedManager(
+        diffAnswering(async () => {
+          throw new Error('disk error')
+        }),
+      )
+      expect(failing.diffMessage.value).toBe('Couldn’t load this diff')
+    })
+
+    it('says nothing while the diff loads', async () => {
+      const held = heldSource(diffAnswering(async () => []))
+      held.hold('getFileDiff')
+      const slow = manager(held.source)
+      const loaded = slow.load()
+      await settle()
+      expect(slow.diffMessage.value).toBeNull()
+      await held.callsTo('getFileDiff')[0]!.release()
+      await loaded
+      expect(slow.diffMessage.value).toBe(NO_TEXT_CHANGES)
+    })
+
+    it('says two compared files are the same, or couldn’t be compared', async () => {
+      const source = new MockGitDataSource()
+      source.compareFiles = async () => []
+      const same = await loadedManager(source)
+      await same.openCompare()
+      expect(same.diffMessage.value).toBe('The two files are the same')
+
+      source.compareFiles = async () => {
+        throw new Error('file not found')
+      }
+      await same.setRightPath('missing.yml')
+      expect(same.diffMessage.value).toBe('Couldn’t compare these files')
+    })
+
+    it('says nothing in compare until both paths are filled in', async () => {
+      const empty = useGitManager(new MockGitDataSource(), { comparePaths: { left: '', right: '' } })
+      await empty.load()
+      await empty.openCompare()
+      expect(empty.diffMessage.value).toBeNull()
     })
   })
 

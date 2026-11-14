@@ -17,6 +17,7 @@ type PanelOverrides = Partial<{
   commitIndex: number
   filesLoading: boolean
   diffLoading: boolean
+  diffMessage: string | null
 }>
 
 function mountPanel(overrides: PanelOverrides = {}) {
@@ -37,6 +38,7 @@ function mountPanel(overrides: PanelOverrides = {}) {
       hunks: compareOpen ? sampleCompareDiff : diffLoading || filesLoading ? [] : commit.files[0]!.hunks,
       leftPath: SAMPLE_COMPARE_PATHS.left,
       rightPath: SAMPLE_COMPARE_PATHS.right,
+      diffMessage: overrides.diffMessage ?? null,
     },
   })
 }
@@ -106,6 +108,13 @@ describe('DiffPanel in commit mode', () => {
   it('labels the left side of a newly added file as a new file', () => {
     const wrapper = mountPanel({ diffMode: 'simple' })
     expect(wrapper.get('[data-testid="left-label"]').text()).toBe('(new file)')
+  })
+
+  it.each(['git', 'simple'] as const)('shows the diff message instead of the %s diff', (diffMode) => {
+    const wrapper = mountPanel({ diffMode, diffMessage: 'No text changes to show' })
+    expect(wrapper.text()).toContain('No text changes to show')
+    expect(wrapper.find('[data-testid="unified-diff"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="side-by-side-diff"]').exists()).toBe(false)
   })
 
   it('emits file selection, diff mode changes and compare', async () => {

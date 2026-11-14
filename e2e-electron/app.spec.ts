@@ -156,6 +156,8 @@ test.describe('with git installed', () => {
     // git's "\ No newline at end of file" is a note, not a numbered line of the file.
     await expect(window.locator('[data-kind="note"]')).toHaveText(/^\s*No newline at end of file\s*$/)
     await expect(window.locator('[data-kind="hunk"]')).toHaveText('@@ -0,0 +1,1 @@')
+    await diffViewer().getByRole('button', { name: /logo\.png/ }).click()
+    await expect(diffViewer()).toContainText('No text changes to show: a binary file')
 
     await sidebar().getByRole('button', { name: 'feature/search', exact: true }).click()
     await expect(diffViewer()).toContainText('Add search')

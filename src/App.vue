@@ -56,6 +56,7 @@ const {
   historyMessage,
   diffMode,
   activeHunks,
+  diffMessage,
   load,
   selectRepository,
   selectBranch,
@@ -188,6 +189,7 @@ onUnmounted(() => {
             :compare-open="compareOpen"
             :diff-mode="diffMode"
             :hunks="activeHunks"
+            :diff-message="diffMessage"
             :left-path="leftPath"
             :right-path="rightPath"
             @select-file="selectFile"

@@ -60,6 +60,13 @@ describe('App', () => {
     expect(remote.attributes('data-kind')).toBe('remote')
   })
 
+  it('says so in the diff area when a changed file has no text changes', async () => {
+    const source = new MockGitDataSource()
+    source.getFileDiff = async () => []
+    const wrapper = await mountApp(source)
+    expect(wrapper.get('[aria-label="Diff viewer"]').text()).toContain('No text changes to show')
+  })
+
   it('selecting a commit updates the diff panel', async () => {
     const wrapper = await mountApp()
     await buttonByText(wrapper, 'Paginate GET /items').trigger('click')

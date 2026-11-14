@@ -222,6 +222,7 @@ Every method is async and reports failure by rejecting, including when it's give
 | `currentBranch`, `headLabel` | The checked-out branch ('' when detached), and what the header calls HEAD ('detached HEAD' then). |
 | `headerSyncLabel` | `'↑2 vs origin'` for the checked-out branch, or `null` when it's in sync. |
 | `historyMessage` | What the history pane says instead of rows: 'Loading history…', 'Couldn’t load history' or 'No commits yet'; `null` when it has rows. |
+| `diffMessage` | What the diff area says instead of lines: no text changes to show (a binary file, an empty one, a move without edits), 'The two files are the same', or that the diff or comparison couldn’t load; `null` while loading or when there are lines. Empty lines alone can't tell these apart. |
 | `diffMode` | `'simple'` whenever compare is open, otherwise the mode the user chose. |
 | `activeHunks` | The compare result while comparing, otherwise the selected file's diff. |
 

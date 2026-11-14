@@ -21,6 +21,9 @@ export type DiffMode = 'git' | 'simple'
 /** How many of a repository's newest commits the history shows at first, and how many more each "show more" adds. */
 export const HISTORY_LIMIT = 200
 
+/** A changed file whose diff has no lines: git shows none for a binary file, an empty one, or a move without edits. */
+export const NO_TEXT_CHANGES = 'No text changes to show: a binary file, an empty one, or moved without edits'
+
 export interface GitManagerOptions {
   comparePaths: { left: string; right: string }
 }
@@ -125,6 +128,24 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   const diffMode = computed<DiffMode>(() => (compareOpen.value ? 'simple' : chosenDiffMode.value))
 
   const activeHunks = computed<Hunk[]>(() => (compareOpen.value ? compareLoad.value.value : diffLoad.value.value))
+
+  /**
+   * What the diff area says instead of lines; null when it has lines, or while they load. Empty
+   * lines mean "nothing to show" only when the load worked: a failed one leaves them empty too.
+   */
+  const diffMessage = computed<string | null>(() => (compareOpen.value ? compareMessage() : commitDiffMessage()))
+
+  function commitDiffMessage(): string | null {
+    if (filesLoad.loading.value || diffLoad.loading.value || !file.value) return null
+    if (diffLoad.failed.value) return 'Couldn’t load this diff'
+    return diffLoad.value.value.length === 0 ? NO_TEXT_CHANGES : null
+  }
+
+  function compareMessage(): string | null {
+    if (compareLoad.loading.value || !leftPath.value.trim() || !rightPath.value.trim()) return null
+    if (compareLoad.failed.value) return 'Couldn’t compare these files'
+    return compareLoad.value.value.length === 0 ? 'The two files are the same' : null
+  }
 
   // ---- loading ----
 
@@ -598,6 +619,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     historyMessage,
     diffMode,
     activeHunks,
+    diffMessage,
     // actions
     load,
     selectRepository,
