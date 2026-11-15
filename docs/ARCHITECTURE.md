@@ -111,7 +111,7 @@ src/
   components/
     AppHeader.vue            repo name, branch chip, Fetch / Pull / Push
     RepositoryList.vue       repository list, "N changed" badge, problem, Add / Remove
-    BranchList.vue           local and remote branches, HEAD badge, Checkout (remote: creates the tracking branch)
+    BranchList.vue           local and remote branches, tip hash, HEAD badge, Checkout (remote: creates the tracking branch)
     ConfirmDialog.vue        native <dialog>: title, text, Cancel (focused) and a warning-coloured confirm
     CommitHistory.vue        commit table with the lane graph column
     CommitGraphCell.vue      one row of the graph as inline SVG

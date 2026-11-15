@@ -410,6 +410,21 @@ test.describe('fetching, pulling and pushing', () => {
     expect(await tipOf(repo, 'origin/main')).toBe(await tipOf(colleague, 'main'))
   })
 
+  test('each branch shows its tip’s short hash, and a fetch moves the remote branch’s hash', async () => {
+    await launch([{ id: 'repo', path: repo }])
+    const branchHash = (name: string) =>
+      sidebar().getByRole('button', { name: new RegExp(`^${name}(\\s|$)`) }).getByTestId('branch-hash')
+    const tip = (await tipOf(repo, 'main')).slice(0, 7)
+    await expect(branchHash('main')).toHaveText(tip)
+    await expect(branchHash('origin/main')).toHaveText(tip)
+
+    await colleaguePushes('theirs.txt')
+    await headerButton('Fetch').click()
+    await expect(status()).toHaveText('Fetched: 1 branch updated')
+    await expect(branchHash('origin/main')).toHaveText((await tipOf(colleague, 'main')).slice(0, 7))
+    await expect(branchHash('main')).toHaveText(tip)
+  })
+
   test('Pull fast-forwards the checked-out branch, and the new commits show', async () => {
     await launch([{ id: 'repo', path: repo }])
     await colleaguePushes('one.txt', 'two.txt')

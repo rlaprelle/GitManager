@@ -22,6 +22,10 @@ function branchButton(wrapper: ReturnType<typeof mountList>, name: string) {
   return wrapper.findAll('button[aria-pressed]').find((b) => b.text().includes(name) && !b.text().includes(`origin/${name}`))!
 }
 
+/** A branch's own button, found by the name's tooltip (the button's text also holds HEAD, sync state and hash). */
+const rowOf = (wrapper: ReturnType<typeof mountList>, name: string) =>
+  wrapper.findAll('button[aria-pressed]').find((b) => b.find(`[title="${name}"]`).exists())!
+
 const checkoutButtons = (wrapper: ReturnType<typeof mountList>) =>
   wrapper.findAll('button').filter((b) => ['Checkout', 'Switching…'].includes(b.text()))
 
@@ -70,10 +74,32 @@ describe('BranchList', () => {
     expect(titles).toContain('origin/feature/stock-reservations')
   })
 
+  it('shows the short hash of each branch’s tip, local and remote, with the full hash as its tooltip', () => {
+    const wrapper = mountList()
+    for (const branch of [...inventory.localBranches, ...inventory.remoteBranches]) {
+      const hash = rowOf(wrapper, branch.name).get('[data-testid="branch-hash"]')
+      expect(hash.text()).toBe(branch.tipHash.slice(0, 7))
+      expect(hash.attributes('title')).toBe(branch.tipHash)
+    }
+  })
+
+  it('makes the hash each branch button’s description, leaving the branch as its name', () => {
+    const wrapper = mountList()
+    const ids = new Set<string>()
+    for (const branch of [...inventory.localBranches, ...inventory.remoteBranches]) {
+      const row = rowOf(wrapper, branch.name)
+      const hash = row.get('[data-testid="branch-hash"]')
+      expect(hash.attributes('aria-hidden')).toBe('true')
+      expect(row.attributes('aria-describedby')).toBe(hash.attributes('id'))
+      ids.add(hash.attributes('id')!)
+    }
+    expect(ids.size).toBe(inventory.localBranches.length + inventory.remoteBranches.length)
+  })
+
   it('emits select for local and remote branches', async () => {
     const wrapper = mountList()
     await branchButton(wrapper, 'main').trigger('click')
-    await wrapper.findAll('button').find((b) => b.text() === 'origin/release/2.4')!.trigger('click')
+    await rowOf(wrapper, 'origin/release/2.4').trigger('click')
     expect(wrapper.emitted('select')).toEqual([['main'], ['origin/release/2.4']])
   })
 

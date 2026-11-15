@@ -60,6 +60,20 @@ test('Checkout on a remote branch creates its local branch and switches to it', 
   await expect(sidebar(page).getByRole('button', { name: /^release\/2\.4\s*HEAD/ })).toBeVisible()
 })
 
+test('each branch shows its tip’s short hash, which follows the branch when a push moves it', async ({ page }) => {
+  const local = sidebar(page).getByRole('button', { name: /^feature\/stock-reservations\s*HEAD/ })
+  const remote = sidebar(page).getByRole('button', { name: 'origin/feature/stock-reservations', exact: true })
+  // The hash is shown, and described to screen readers, without becoming part of the branch's name.
+  await expect(local.getByTestId('branch-hash')).toHaveText('9f3a1c2')
+  await expect(local).toHaveAccessibleDescription('9f3a1c2')
+  await expect(remote.getByTestId('branch-hash')).toHaveText('a07c3be')
+  await expect(remote).toHaveAccessibleDescription('a07c3be')
+
+  await header(page).getByRole('button', { name: 'Push' }).click()
+  await expect(status(page)).toHaveText('Pushed 2 commits to origin/feature/stock-reservations')
+  await expect(remote.getByTestId('branch-hash')).toHaveText('9f3a1c2')
+})
+
 test('selecting a commit and a file shows that file’s git diff', async ({ page }) => {
   await page.getByRole('button', { name: /Guard against null SKU in lookup/ }).click()
   await diffViewer(page).getByRole('button', { name: /SkuLookupTest\.java/ }).click()
