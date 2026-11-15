@@ -276,6 +276,30 @@ describe('GitCliDataSource reading the fixture repositories', () => {
     expect(hunks[0]!.lines).toEqual([' first', ' ', '-middle', '+changed', ' ', ' last'])
   })
 
+  /** The labels on main's tip, in a fresh repository with origin, after `configure` has run in it. */
+  async function labelsOfNewest(configure: (folder: string) => Promise<unknown>): Promise<string[]> {
+    const { source, folder } = await checkoutRepository()
+    await configure(folder)
+    const { commits } = await source.getHistory('repo', 10)
+    const main = await fixtureGit(folder, 'rev-parse', 'main')
+    return commits.find((commit) => commit.hash === main.trim())!.refs
+  }
+
+  it('labels remote branches even when the repository’s log.excludeDecoration hides them', async () => {
+    const refs = await labelsOfNewest((folder) => gitInFixture(fixtures, folder, 'config', 'log.excludeDecoration', 'refs/remotes/'))
+    expect(refs).toEqual(['main', 'origin/main'])
+  })
+
+  it('labels commits with branches only, even when log.initialDecorationSet shows every ref', async () => {
+    const refs = await labelsOfNewest(async (folder) => {
+      await gitInFixture(fixtures, folder, 'config', 'log.initialDecorationSet', 'all')
+      // git maintenance's prefetch refs sit on the same commits as the remote branches.
+      await gitInFixture(fixtures, folder, 'update-ref', 'refs/prefetch/remotes/origin/main', 'main')
+      await gitInFixture(fixtures, folder, 'update-ref', 'refs/notes/review', 'main')
+    })
+    expect(refs).toEqual(['main', 'origin/main'])
+  })
+
   it('says which folder is missing when a repository was moved or deleted', async () => {
     const source = sourceFor({ id: 'gone', path: `${fixtures.root}/no-such-folder` })
     await expect(source.getBranches('gone')).rejects.toThrow('Folder not found')

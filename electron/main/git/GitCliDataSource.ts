@@ -72,6 +72,14 @@ const DEFAULT_REMOTE = 'origin'
 /** What git gives as the remote of an upstream branch in the same repository. */
 const THIS_REPOSITORY = '.'
 
+/**
+ * Commit labels name branches only, as the branch list does. Explicit patterns override the
+ * user's log.excludeDecoration (which could hide remote branches) and log.initialDecorationSet=all,
+ * and git before 2.39, which labels every ref (refs/prefetch, refs/notes, ...). Not
+ * --clear-decorations: it needs 2.39, and the app supports older git.
+ */
+const BRANCH_LABELS_ONLY = BRANCH_REFS.map((prefix) => `--decorate-refs=${prefix}`)
+
 /** Uncommitted changes, one NUL-terminated entry per path (untracked files included). */
 const STATUS = ['status', '--porcelain=v1', '-z', '--no-renames', '--untracked-files=normal']
 
@@ -126,7 +134,17 @@ export class GitCliDataSource implements GitDataSource {
     const count = Math.max(1, Math.floor(limit))
     const [log, branches] = await Promise.all([
       // HEAD as well as every branch, so a detached HEAD's commits show too.
-      git(folder, ['log', 'HEAD', '--branches', '--remotes', '--date-order', '-z', `--format=${LOG_FORMAT}`, `--max-count=${count + 1}`]),
+      git(folder, [
+        'log',
+        'HEAD',
+        '--branches',
+        '--remotes',
+        ...BRANCH_LABELS_ONLY,
+        '--date-order',
+        '-z',
+        `--format=${LOG_FORMAT}`,
+        `--max-count=${count + 1}`,
+      ]),
       this.branchesAt(folder),
     ])
     const logged = parseCommitLog(log)
