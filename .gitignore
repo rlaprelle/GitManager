@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tsbuildinfo
+test-results/
+playwright-report/
+.vite/
+*.log
+.playwright-mcp/
+out/
+release/

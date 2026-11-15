@@ -1,0 +1,108 @@
+import { randomUUID } from 'node:crypto'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { basename, dirname, normalize } from 'node:path'
+import type { AddedRepository, RepositoryCatalog, StoredRepository } from './git/GitCliDataSource'
+
+interface StoreFile {
+  version: 1
+  repositories: StoredRepository[]
+}
+
+/**
+ * The repositories the user added, kept in `repositories.json` in the app's data folder,
+ * in the order they were added. Ids are random, and stay the same for as long as the entry
+ * exists.
+ */
+export class RepositoryStore implements RepositoryCatalog {
+  /** The last change to the file; the next one waits for it, so two quick clicks can't overwrite each other. */
+  private lastChange: Promise<unknown> = Promise.resolve()
+
+  constructor(private readonly file: string) {}
+
+  async list(): Promise<StoredRepository[]> {
+    return (await this.read()).repositories
+  }
+
+  /** Adds a folder, or finds the existing entry when that folder is already in the list. */
+  add(path: string): Promise<AddedRepository> {
+    return this.afterLastChange(() => this.addNow(path))
+  }
+
+  /** Forgets a repository. Never touches the folder itself. */
+  remove(id: string): Promise<void> {
+    return this.afterLastChange(() => this.removeNow(id))
+  }
+
+  private async addNow(path: string): Promise<AddedRepository> {
+    const contents = await this.read()
+    const existing = contents.repositories.find((repo) => sameFolder(repo.path, path))
+    if (existing) return { repository: existing, added: false }
+    const repository = { id: randomUUID(), path: withoutTrailingSlash(normalize(path)) }
+    await this.write({ ...contents, repositories: [...contents.repositories, repository] })
+    return { repository, added: true }
+  }
+
+  private async removeNow(id: string): Promise<void> {
+    const contents = await this.read()
+    await this.write({ ...contents, repositories: contents.repositories.filter((repo) => repo.id !== id) })
+  }
+
+  /** Runs `change` once the previous change has finished, whether or not that one failed. */
+  private afterLastChange<T>(change: () => Promise<T>): Promise<T> {
+    const result = this.lastChange.then(change, change)
+    this.lastChange = result
+    return result
+  }
+
+  private async read(): Promise<StoreFile> {
+    const text = await this.readText()
+    return text === null ? { version: 1, repositories: [] } : this.parse(text)
+  }
+
+  /** The file's text, or null before the first repository is added. */
+  private async readText(): Promise<string | null> {
+    try {
+      return await readFile(this.file, 'utf8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+      throw error
+    }
+  }
+
+  private parse(text: string): StoreFile {
+    try {
+      return parseStoreFile(text)
+    } catch {
+      // Starting over would silently lose the user's list; make them look at the file instead.
+      throw new Error(`Can’t read ${basename(this.file)} in ${dirname(this.file)}`)
+    }
+  }
+
+  /** Writes a temporary file and renames it over the old one, so a crash can't leave half a list. */
+  private async write(contents: StoreFile): Promise<void> {
+    await mkdir(dirname(this.file), { recursive: true })
+    const temporary = `${this.file}.tmp`
+    await writeFile(temporary, JSON.stringify(contents, null, 2) + '\n')
+    await rename(temporary, this.file)
+  }
+}
+
+function parseStoreFile(text: string): StoreFile {
+  const parsed = JSON.parse(text) as StoreFile
+  if (!Array.isArray(parsed.repositories)) throw new Error('no repository list')
+  return parsed
+}
+
+/** Windows paths: case-insensitive, either slash, trailing slashes ignored. */
+function sameFolder(a: string, b: string): boolean {
+  const key = (path: string) => withoutTrailingSlash(normalize(path)).toLowerCase()
+  return key(a) === key(b)
+}
+
+/** A drive root keeps its backslash: 'D:' alone means the current folder on drive D, not its root. */
+const DRIVE_ROOT = /^[a-zA-Z]:[\\/]+$/
+
+function withoutTrailingSlash(path: string): string {
+  if (DRIVE_ROOT.test(path)) return `${path.slice(0, 2)}\\`
+  return path.replace(/[\\/]+$/, '')
+}

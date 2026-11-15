@@ -1,0 +1,27 @@
+{
+  "extends": "@tsconfig/node24/tsconfig.json",
+  "include": [
+    "vite.config.ts",
+    "config/**/*.ts",
+    "scripts/**/*.ts",
+    "vitest.config.ts",
+    "electron.vite.config.ts",
+    "playwright.config.ts",
+    "playwright.electron.config.ts",
+    "e2e/**/*.ts",
+    "e2e-electron/**/*.ts"
+  ],
+  "compilerOptions": {
+    "noEmit": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node"],
+    // scripts/ run directly under Node (type stripping), which needs explicit .ts imports.
+    "allowImportingTsExtensions": true,
+    // e2e specs import shared types from src/, which use the @/ alias.
+    "paths": { "@/*": ["./src/*"] },
+    // e2e callbacks passed to page.evaluate run in the browser.
+    "lib": ["ES2024", "DOM"]
+  }
+}

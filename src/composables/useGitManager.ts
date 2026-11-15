@@ -1,0 +1,652 @@
+import { computed, ref } from 'vue'
+import type { GitDataSource, RepositoryOperation } from '@/services/GitDataSource'
+import type {
+  Branches,
+  CheckoutOptions,
+  CheckoutTarget,
+  Commit,
+  FileChange,
+  HistoryPage,
+  Hunk,
+  OperationResult,
+  Repository,
+} from '@/types/git'
+import { destinationOf, remotesToCheckOut } from '@/lib/checkout'
+import { errorMessage } from '@/lib/errorMessage'
+import { headLabel as describeHead, pluralize, shortHash, syncLabel } from '@/lib/format'
+import { latestLoad } from './latestLoad'
+
+export type DiffMode = 'git' | 'simple'
+
+/** How many of a repository's newest commits the history shows at first, and how many more each "show more" adds. */
+export const HISTORY_LIMIT = 200
+
+/** A changed file whose diff has no lines: git shows none for a binary file, an empty one, or a move without edits. */
+export const NO_TEXT_CHANGES = 'No text changes to show: a binary file, an empty one, or moved without edits'
+
+export interface GitManagerOptions {
+  comparePaths: { left: string; right: string }
+}
+
+/** A checkout waiting for the user to agree to leave a detached HEAD's commits behind. */
+export interface PendingCheckout {
+  target: CheckoutTarget
+  /** The branch as the user clicked it: 'main', or 'origin/feature'. */
+  branch: string
+  /** The branch HEAD would end on: 'main', or 'feature' for origin/feature. */
+  destination: string
+  commitsLeft: number
+}
+
+/** A checkout the user asked for: what to switch to, the branch as they clicked it, and how. */
+interface CheckoutRequest {
+  target: CheckoutTarget
+  branch: string
+  options: CheckoutOptions
+}
+
+const NO_BRANCHES: Branches = { local: [], remote: [] }
+const NO_HISTORY: HistoryPage = { commits: [], hasMore: false }
+
+export function useGitManager(source: GitDataSource, options: GitManagerOptions) {
+  const repositories = ref<Repository[]>([])
+  const loading = ref(true)
+  const status = ref('Ready')
+
+  const selectedRepoId = ref<string | null>(null)
+  const selectedBranch = ref<string | null>(null)
+  const selectedCommitIndex = ref(0)
+  const selectedFileIndex = ref(0)
+  const chosenDiffMode = ref<DiffMode>('git')
+
+  // Each area loads separately when its selection changes; see latestLoad.
+  const branchesLoad = latestLoad<Branches>(NO_BRANCHES)
+  const historyLoad = latestLoad<HistoryPage>(NO_HISTORY)
+  const filesLoad = latestLoad<FileChange[]>([])
+  const diffLoad = latestLoad<Hunk[]>([])
+  const compareLoad = latestLoad<Hunk[]>([])
+
+  /** How many commits the open repository's history asks for; grows with showMoreHistory. */
+  const historyLimit = ref(HISTORY_LIMIT)
+  const loadingMoreHistory = ref(false)
+
+  /** The operation running now (one at a time), or null. */
+  const runningOperation = ref<RepositoryOperation | null>(null)
+  const operationRunning = computed(() => runningOperation.value !== null)
+  const pendingCheckout = ref<PendingCheckout | null>(null)
+
+  const compareOpen = ref(false)
+  const leftPath = ref(options.comparePaths.left)
+  const rightPath = ref(options.comparePaths.right)
+
+  // ---- derived state ----
+
+  const repository = computed<Repository | undefined>(
+    () => repositories.value.find((r) => r.id === selectedRepoId.value) ?? repositories.value[0],
+  )
+
+  const branches = computed(() => branchesLoad.value.value)
+  /** Remote branches the sidebar offers to check out (those with no local branch of their name). */
+  const checkoutableRemotes = computed(() => remotesToCheckOut(branches.value))
+  const remoteBranchNames = computed(() => branches.value.remote.map((branch) => branch.name))
+  const commits = computed<Commit[]>(() => historyLoad.value.value.commits)
+  const historyHasMore = computed(() => historyLoad.value.value.hasMore)
+
+  const commit = computed<Commit | undefined>(() => {
+    const list = commits.value
+    return list[Math.min(selectedCommitIndex.value, list.length - 1)]
+  })
+
+  const files = computed(() => filesLoad.value.value)
+
+  const file = computed<FileChange | undefined>(() => {
+    const list = files.value
+    return list[Math.min(selectedFileIndex.value, list.length - 1)]
+  })
+
+  /** The checked-out branch's name, or '' when HEAD is detached. */
+  const currentBranch = computed(() => repository.value?.currentBranch ?? '')
+  /** What the header and status bar call HEAD: the branch, or 'detached HEAD'. */
+  const headLabel = computed(() => describeHead(repository.value?.currentBranch ?? null))
+
+  /** '↑2 vs origin' for the checked-out branch, or null when it's in sync. */
+  const headerSyncLabel = computed<string | null>(() => {
+    const local = branches.value.local.find((b) => b.name === currentBranch.value)
+    const label = local ? syncLabel(local) : ''
+    return label ? `${label} vs origin` : null
+  })
+
+  /** What the history pane says instead of rows: loading, couldn't load, or no commits; null when it has rows. */
+  const historyMessage = computed<string | null>(() => {
+    if (historyLoad.loading.value) return 'Loading history…'
+    if (historyLoad.failed.value) return 'Couldn’t load history'
+    if (repository.value && commits.value.length === 0) return 'No commits yet'
+    return null
+  })
+
+  /** Two arbitrary files have no shared history, so only the simple diff applies. */
+  const diffMode = computed<DiffMode>(() => (compareOpen.value ? 'simple' : chosenDiffMode.value))
+
+  const activeHunks = computed<Hunk[]>(() => (compareOpen.value ? compareLoad.value.value : diffLoad.value.value))
+
+  /**
+   * What the diff area says instead of lines; null when it has lines, or while they load. Empty
+   * lines mean "nothing to show" only when the load worked: a failed one leaves them empty too.
+   */
+  const diffMessage = computed<string | null>(() => (compareOpen.value ? compareMessage() : commitDiffMessage()))
+
+  function commitDiffMessage(): string | null {
+    if (filesLoad.loading.value || diffLoad.loading.value || !file.value) return null
+    if (diffLoad.failed.value) return 'Couldn’t load this diff'
+    return diffLoad.value.value.length === 0 ? NO_TEXT_CHANGES : null
+  }
+
+  function compareMessage(): string | null {
+    if (compareLoad.loading.value || !leftPath.value.trim() || !rightPath.value.trim()) return null
+    if (compareLoad.failed.value) return 'Couldn’t compare these files'
+    return compareLoad.value.value.length === 0 ? 'The two files are the same' : null
+  }
+
+  // ---- loading ----
+
+  async function load(): Promise<void> {
+    const listed = await readRepositoryList()
+    if (listed) await openFirstRepositoryOrClose()
+  }
+
+  /** The first read of the list, which `loading` covers. Resolves whether it succeeded. */
+  async function readRepositoryList(): Promise<boolean> {
+    loading.value = true
+    try {
+      repositories.value = await source.listRepositories()
+      return true
+    } catch (error) {
+      status.value = `Couldn’t load repositories: ${errorMessage(error)}`
+      return false
+    } finally {
+      loading.value = false
+    }
+  }
+
+  function reportFailure(what: string): (error: unknown) => void {
+    return (error) => {
+      status.value = `Couldn’t load ${what}: ${errorMessage(error)}`
+    }
+  }
+
+  /** Loads branches and history, then opens the newest commit. */
+  async function openRepository(repo: Repository): Promise<void> {
+    selectedRepoId.value = repo.id
+    selectedBranch.value = repo.currentBranch
+    pendingCheckout.value = null
+    historyLimit.value = HISTORY_LIMIT
+    resetCommitView()
+    filesLoad.clear()
+    diffLoad.clear()
+    const [, historyLoaded] = await Promise.all([
+      branchesLoad.run(() => source.getBranches(repo.id), reportFailure('branches')),
+      historyLoad.run(() => source.getHistory(repo.id, historyLimit.value), reportFailure('history')),
+    ])
+    if (!historyLoaded) return
+    // A branch picked while the history was loading had no commits to jump to yet: jump now.
+    if (selectedBranch.value !== repo.currentBranch) selectedCommitIndex.value = tipIndexOf(selectedBranch.value)
+    await openCommit()
+  }
+
+  function tipHashOf(name: string | null): string | undefined {
+    return [...branches.value.local, ...branches.value.remote].find((b) => b.name === name)?.tipHash
+  }
+
+  /** Where a branch's tip is in the history; the newest commit when it isn't there. */
+  function tipIndexOf(name: string | null): number {
+    const tipHash = tipHashOf(name)
+    return Math.max(
+      commits.value.findIndex((c) => c.hash === tipHash),
+      0,
+    )
+  }
+
+  /** Loads the selected commit's files, then the selected file's diff. */
+  async function openCommit(): Promise<void> {
+    const repo = repository.value
+    const target = commit.value
+    if (!repo || !target) return
+    diffLoad.clear()
+    const filesLoaded = await filesLoad.run(
+      () => source.getCommitFiles(repo.id, target.hash),
+      reportFailure('changed files'),
+    )
+    if (filesLoaded) await openFile()
+  }
+
+  async function openFile(): Promise<void> {
+    const repo = repository.value
+    const target = commit.value
+    const changed = file.value
+    if (!repo || !target || !changed) return
+    await diffLoad.run(() => source.getFileDiff(repo.id, target.hash, changed.path), reportFailure('diff'))
+  }
+
+  // ---- selection ----
+
+  function resetCommitView(commitIndex = 0): void {
+    selectedCommitIndex.value = commitIndex
+    selectedFileIndex.value = 0
+    compareOpen.value = false
+  }
+
+  async function selectRepository(id: string): Promise<void> {
+    const repo = repositories.value.find((r) => r.id === id)
+    if (!repo) return
+    status.value = `Opened ${repo.name}`
+    await openRepository(repo)
+  }
+
+  async function selectBranch(name: string): Promise<void> {
+    const tipHash = tipHashOf(name)
+    selectedBranch.value = name
+    resetCommitView(tipIndexOf(name))
+    status.value = `Selected ${name} (tip ${tipHash ? shortHash(tipHash) : 'unknown'})`
+    await openCommit()
+  }
+
+  async function selectCommit(index: number): Promise<void> {
+    const target = commits.value[index]
+    if (!target) return
+    resetCommitView(index)
+    status.value = `Viewing commit ${shortHash(target.hash)}`
+    await openCommit()
+  }
+
+  async function selectFile(index: number): Promise<void> {
+    selectedFileIndex.value = index
+    await openFile()
+  }
+
+  function setDiffMode(mode: DiffMode): void {
+    if (compareOpen.value) return
+    chosenDiffMode.value = mode
+  }
+
+  // ---- compare two files ----
+
+  async function refreshCompare(): Promise<void> {
+    const repo = repository.value
+    if (!repo) return
+    // Desktop starts with both inputs empty; there's nothing to compare until both are filled in.
+    if (!leftPath.value.trim() || !rightPath.value.trim()) {
+      compareLoad.clear()
+      return
+    }
+    await compareLoad.run(() => source.compareFiles(repo.id, leftPath.value, rightPath.value), reportCompareFailure)
+  }
+
+  function reportCompareFailure(error: unknown): void {
+    status.value = `Couldn’t compare files: ${errorMessage(error)}`
+  }
+
+  async function openCompare(): Promise<void> {
+    compareOpen.value = true
+    status.value = 'Comparing two files'
+    await refreshCompare()
+  }
+
+  function closeCompare(): void {
+    compareOpen.value = false
+    if (commit.value) status.value = `Viewing commit ${shortHash(commit.value.hash)}`
+  }
+
+  async function setLeftPath(path: string): Promise<void> {
+    leftPath.value = path
+    await refreshCompare()
+  }
+
+  async function setRightPath(path: string): Promise<void> {
+    rightPath.value = path
+    await refreshCompare()
+  }
+
+  async function swapComparePaths(): Promise<void> {
+    ;[leftPath.value, rightPath.value] = [rightPath.value, leftPath.value]
+    await refreshCompare()
+  }
+
+  // ---- repository operations ----
+
+  /** Switches to a local branch. */
+  async function checkoutBranch(name: string): Promise<void> {
+    await runCheckout({ target: { local: name }, branch: name, options: {} })
+  }
+
+  /** Creates the local branch that tracks a remote one, and switches to it. */
+  async function checkoutRemoteBranch(name: string): Promise<void> {
+    await runCheckout({ target: { remote: name }, branch: name, options: {} })
+  }
+
+  /** Goes ahead with the checkout that was waiting, leaving the detached HEAD's commits behind. */
+  async function confirmCheckout(): Promise<void> {
+    const pending = pendingCheckout.value
+    if (!pending) return
+    await runCheckout({ target: pending.target, branch: pending.branch, options: { leaveCommits: true } })
+  }
+
+  function cancelCheckout(): void {
+    if (!pendingCheckout.value) return
+    pendingCheckout.value = null
+    status.value = 'Checkout cancelled; nothing changed'
+  }
+
+  async function runCheckout(request: CheckoutRequest): Promise<void> {
+    await runOperation('checkout', `Switching to ${request.branch}…`, async (repo) => {
+      await attempt(() => switchBranch(repo, request))
+    })
+  }
+
+  /**
+   * Asks the source to switch, then reloads what the switch changed. The source decides
+   * whether it needs the user's agreement first (pendingCheckout). A refresh already running
+   * finishes first, so what it read before the switch can't land after it.
+   */
+  async function switchBranch(repo: Repository, request: CheckoutRequest): Promise<void> {
+    pendingCheckout.value = null
+    await refreshInFlight
+    const result = await source.checkout(repo.id, request.target, request.options)
+    if (result.kind === 'confirm') {
+      askToLeaveCommits(request, result.commitsLeft)
+      return
+    }
+    repo.currentBranch = result.branch
+    selectedBranch.value = result.branch
+    status.value = result.message
+    await reload()
+  }
+
+  function askToLeaveCommits({ target, branch }: CheckoutRequest, commitsLeft: number): void {
+    pendingCheckout.value = { target, branch, destination: destinationOf(target), commitsLeft }
+    status.value = `Switching to ${branch} would leave ${pluralize(commitsLeft, 'commit', 'commits')} on no branch`
+  }
+
+  async function fetchRemote(): Promise<void> {
+    await runRemoteOperation('fetch', 'Fetching…', (repo) => source.fetch(repo.id))
+  }
+
+  /** Brings the checked-out branch level with its upstream (fast-forward only; the source refuses otherwise). */
+  async function pull(): Promise<void> {
+    await runRemoteOperation('pull', 'Pulling…', (repo) => source.pull(repo.id, checkedOutBranch(repo)))
+  }
+
+  async function push(): Promise<void> {
+    await runRemoteOperation('push', 'Pushing…', (repo) => source.push(repo.id, checkedOutBranch(repo)))
+  }
+
+  /**
+   * Fetch, Pull and Push: one operation at a time, after a refresh already running. The source
+   * may take a while (git can be waiting for the user to sign in), so `progress` shows meanwhile.
+   * Everything is re-read afterwards even when it failed: a pull refused after fetching, or a
+   * fetch that failed for one remote of several, still moved remote branches. The last fetch
+   * time comes back from the source with the rest.
+   */
+  async function runRemoteOperation(
+    name: RepositoryOperation,
+    progress: string,
+    operation: (repo: Repository) => Promise<OperationResult>,
+  ): Promise<void> {
+    await runOperation(name, progress, async (repo) => {
+      await attempt(() => reportRemoteOperation(repo, operation))
+      await reload()
+    })
+  }
+
+  async function reportRemoteOperation(
+    repo: Repository,
+    operation: (repo: Repository) => Promise<OperationResult>,
+  ): Promise<void> {
+    await refreshInFlight
+    status.value = (await operation(repo)).message
+  }
+
+  /** Runs one repository operation, unless one is running already; `runningOperation` names it until `work` ends. */
+  async function runOperation(
+    name: RepositoryOperation,
+    progress: string,
+    work: (repo: Repository) => Promise<void>,
+  ): Promise<void> {
+    const repo = repository.value
+    if (!repo || operationRunning.value) return
+    runningOperation.value = name
+    status.value = progress
+    try {
+      await work(repo)
+    } finally {
+      runningOperation.value = null
+    }
+  }
+
+  /** Runs `work`; when it fails, the status bar says "Failed: …". Resolves whether it succeeded. */
+  async function attempt(work: () => Promise<void>): Promise<boolean> {
+    try {
+      await work()
+      return true
+    } catch (error) {
+      status.value = `Failed: ${errorMessage(error)}`
+      return false
+    }
+  }
+
+  // ---- the repository list ----
+
+  /** Adds the repository the user picks (or explains, in the browser) and opens it. */
+  async function addRepository(): Promise<void> {
+    await attempt(addChosenRepository)
+  }
+
+  async function addChosenRepository(): Promise<void> {
+    const { repository: added, message } = await source.addRepository()
+    if (message) status.value = message
+    if (!added) return
+    if (!repositories.value.some((repo) => repo.id === added.id)) repositories.value.push(added)
+    await openRepository(repositories.value.find((repo) => repo.id === added.id)!)
+  }
+
+  /** Takes a repository off the list; if it was open, opens the first one left. */
+  async function removeRepository(id: string): Promise<void> {
+    const wasOpen = repository.value?.id === id
+    const removed = await attempt(async () => {
+      status.value = (await source.removeRepository(id)).message
+    })
+    if (!removed) return
+    repositories.value = repositories.value.filter((repo) => repo.id !== id)
+    if (wasOpen) await openFirstRepositoryOrClose()
+  }
+
+  /** Opens the first repository on the list, or shows none when the list is empty. */
+  async function openFirstRepositoryOrClose(): Promise<void> {
+    const first = repositories.value[0]
+    if (first) await openRepository(first)
+    else closeRepository()
+  }
+
+  // ---- refreshing ----
+
+  /** The refresh running now, if any. */
+  let refreshInFlight: Promise<void> | null = null
+
+  /**
+   * Re-reads what may have changed outside the app (commits, branches, the checked-out branch,
+   * uncommitted files) without disturbing the view: the history stays on screen while it
+   * reloads, and the selected commit stays selected if it still exists. `announce` reports it
+   * in the status bar (an explicit refresh); otherwise it's silent (the window regaining focus).
+   * Skipped while an operation runs, since it reloads what it changed itself, and while a
+   * repository opens, since its reload would replace the opening one and lose a branch picked meanwhile.
+   */
+  async function refresh(options: { announce?: boolean } = {}): Promise<void> {
+    if (refreshInFlight || loading.value || operationRunning.value || openingRepository()) return
+    refreshInFlight = reload(options.announce)
+    try {
+      await refreshInFlight
+    } finally {
+      refreshInFlight = null
+    }
+  }
+
+  /** openRepository's first reads are still running (a refresh keeps `loading` false). */
+  function openingRepository(): boolean {
+    return branchesLoad.loading.value || historyLoad.loading.value
+  }
+
+  async function reload(announce = false): Promise<void> {
+    try {
+      await rereadEverything(announce)
+    } catch (error) {
+      status.value = `Couldn’t refresh: ${errorMessage(error)}`
+    }
+  }
+
+  async function rereadEverything(announce: boolean): Promise<void> {
+    repositories.value = await source.listRepositories()
+    await refreshOpenRepository()
+    if (announce && repository.value) status.value = `Refreshed ${repository.value.name}`
+  }
+
+  async function refreshOpenRepository(): Promise<void> {
+    const open = repositories.value.find((repo) => repo.id === selectedRepoId.value)
+    if (!open) {
+      await openFirstRepositoryOrClose()
+      return
+    }
+    await Promise.all([
+      branchesLoad.refresh(() => source.getBranches(open.id), reportFailure('branches')),
+      reloadHistoryKeepingSelection(open.id),
+      rereadComparedFiles(open.id),
+    ])
+  }
+
+  /** The compared files are the working tree's, so they may have changed while the window was away. */
+  async function rereadComparedFiles(repoId: string): Promise<void> {
+    if (!compareOpen.value || !leftPath.value.trim() || !rightPath.value.trim()) return
+    await compareLoad.refresh(() => source.compareFiles(repoId, leftPath.value, rightPath.value), reportCompareFailure)
+  }
+
+  /**
+   * Reloads the history (as many commits as `historyLimit` says) while the current one stays
+   * on screen, then reselects the selected commit by hash; if it's gone, opens the newest.
+   */
+  async function reloadHistoryKeepingSelection(repoId: string): Promise<void> {
+    const shown = commits.value
+    const loaded = await historyLoad.refresh(
+      () => source.getHistory(repoId, historyLimit.value),
+      reportFailure('history'),
+    )
+    if (!loaded) return
+    // Read only now: the user may have picked another commit or branch in the list on screen
+    // while git was reading, and that choice is the one to keep.
+    const selectedHash = shown[selectedCommitIndex.value]?.hash
+    const stillThere = commits.value.findIndex((candidate) => candidate.hash === selectedHash)
+    if (stillThere < 0) return showNewestCommit()
+    selectedCommitIndex.value = stillThere
+    await retryFailedCommitLoads()
+  }
+
+  /**
+   * The selected commit has gone (amended or rebased away). Unlike picking a commit, this leaves
+   * compare open: a refresh happens just by coming back to the window, and mustn't close what the user is looking at.
+   */
+  async function showNewestCommit(): Promise<void> {
+    selectedCommitIndex.value = 0
+    selectedFileIndex.value = 0
+    await openCommit()
+  }
+
+  /** A commit never changes, so its files and diff on screen are still right; only a failed load needs reading again. */
+  async function retryFailedCommitLoads(): Promise<void> {
+    if (filesLoad.failed.value) return openCommit()
+    if (diffLoad.failed.value) return openFile()
+  }
+
+  // ---- showing more history ----
+
+  /** Adds the next HISTORY_LIMIT commits to the history, keeping the selection. */
+  async function showMoreHistory(): Promise<void> {
+    const repo = repository.value
+    if (!repo || loadingMoreHistory.value || !historyHasMore.value) return
+    historyLimit.value += HISTORY_LIMIT
+    loadingMoreHistory.value = true
+    try {
+      await reloadHistoryKeepingSelection(repo.id)
+    } finally {
+      loadingMoreHistory.value = false
+    }
+  }
+
+  function closeRepository(): void {
+    selectedRepoId.value = null
+    selectedBranch.value = null
+    resetCommitView()
+    for (const area of [branchesLoad, historyLoad, filesLoad, diffLoad, compareLoad]) area.clear()
+  }
+
+  return {
+    // state
+    repositories,
+    loading,
+    status,
+    selectedBranch,
+    selectedCommitIndex,
+    selectedFileIndex,
+    compareOpen,
+    leftPath,
+    rightPath,
+    historyLoading: historyLoad.loading,
+    loadingMoreHistory,
+    runningOperation,
+    operationRunning,
+    pendingCheckout,
+    filesLoading: filesLoad.loading,
+    diffLoading: diffLoad.loading,
+    // derived
+    repository,
+    branches,
+    checkoutableRemotes,
+    remoteBranchNames,
+    commits,
+    historyHasMore,
+    commit,
+    files,
+    file,
+    currentBranch,
+    headLabel,
+    headerSyncLabel,
+    historyMessage,
+    diffMode,
+    activeHunks,
+    diffMessage,
+    // actions
+    load,
+    selectRepository,
+    selectBranch,
+    selectCommit,
+    selectFile,
+    setDiffMode,
+    openCompare,
+    closeCompare,
+    setLeftPath,
+    setRightPath,
+    swapComparePaths,
+    checkoutBranch,
+    checkoutRemoteBranch,
+    confirmCheckout,
+    cancelCheckout,
+    fetchRemote,
+    pull,
+    push,
+    addRepository,
+    removeRepository,
+    refresh,
+    showMoreHistory,
+  }
+}
+
+function checkedOutBranch(repo: Repository): string {
+  if (repo.currentBranch === null) throw new Error('no branch is checked out')
+  return repo.currentBranch
+}
