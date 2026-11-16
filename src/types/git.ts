@@ -116,3 +116,30 @@ export interface AddRepositoryResult {
   /** For the status bar; '' when there's nothing to say (the user cancelled). */
   message: string
 }
+
+/** What to clone, and the name of the folder to clone it into (inside the folder the user picked). */
+export interface CloneRequest {
+  url: string
+  name: string
+}
+
+/** How far a clone has got, as git reports it ('Receiving objects', 42). */
+export interface CloneProgress {
+  phase: string
+  percent: number
+}
+
+/**
+ * One side of a comparison: a file in one of the listed repositories, as it is in the working tree
+ * (`branch` null) or on a branch, or a file the user picked anywhere on disk. A picked file is known by
+ * the id the source gave it, never by a path the renderer sends.
+ */
+export type CompareSide =
+  | { kind: 'repository'; repoId: string; branch: string | null; path: string }
+  | { kind: 'file'; fileId: string }
+
+/** A file picked on disk for comparing: its id for compareFiles, and its path to show. */
+export interface PickedFile {
+  fileId: string
+  path: string
+}

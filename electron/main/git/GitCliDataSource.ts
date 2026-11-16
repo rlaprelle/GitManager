@@ -12,12 +12,18 @@ import type {
   CheckoutOptions,
   CheckoutResult,
   CheckoutTarget,
+  CloneProgress,
+  CloneRequest,
+  CompareSide,
   FileChange,
   HistoryPage,
   Hunk,
   OperationResult,
+  PickedFile,
   Repository,
 } from '../../../src/types/git'
+import { cloneInto, planClone } from './cloneInto'
+import { type CompareLookup, PickedFiles, compareSides, requireBranch } from './compareSides'
 import { lastFetchTime, preservingFetchHead } from './fetchHead'
 import { networkAccessFor } from './network'
 import {
@@ -61,8 +67,11 @@ export interface RepositoryCatalog {
   remove(id: string): Promise<void>
 }
 
-/** Asks the user for a folder; null when they cancel. */
-export type ChooseFolder = () => Promise<string | null>
+/** Asks the user for a folder (`title` heads the picker); null when they cancel. */
+export type ChooseFolder = (title: string) => Promise<string | null>
+
+/** Asks the user for a file; null when they cancel. */
+export type ChooseFile = () => Promise<string | null>
 
 const FOLDER_NOT_FOUND = 'Folder not found'
 
@@ -98,7 +107,27 @@ export class GitCliDataSource implements GitDataSource {
   constructor(
     private readonly repositories: RepositoryCatalog,
     private readonly chooseFolder: ChooseFolder,
+    private readonly chooseFile: ChooseFile = async () => null,
   ) {}
+
+  /** Files picked for comparing, by the ids the renderer was given. */
+  private readonly pickedFiles = new PickedFiles()
+
+  private readonly compareLookup: CompareLookup = {
+    folderOf: (repoId) => this.folderOf(repoId),
+    branchNamesOf: async (folder) => {
+      const { local, remote } = await this.branchesAt(folder)
+      return [...local, ...remote].map((branch) => branch.name)
+    },
+    insideFolder: (folder, path) => insideFolder(folder, path),
+    pickedFiles: this.pickedFiles,
+  }
+
+  /** The folder the user last picked to clone into. Main-process state: the renderer never names a folder. */
+  private cloneFolder: string | null = null
+
+  /** Stops the clone that is running, if one is. */
+  private stopRunningClone: AbortController | null = null
 
   async listRepositories(): Promise<Repository[]> {
     const stored = await this.repositories.list()
@@ -107,7 +136,7 @@ export class GitCliDataSource implements GitDataSource {
 
   /** Adds the repository the chosen folder belongs to, by its top folder, so a subfolder works too. */
   async addRepository(): Promise<AddRepositoryResult> {
-    const chosen = await this.chooseFolder()
+    const chosen = await this.chooseFolder('Add repository')
     if (chosen === null) return { repository: null, message: '' }
     const topFolder = await git(chosen, ['rev-parse', '--show-toplevel']).catch(() => {
       throw new GitError(`${chosen} isn’t inside a git repository`)
@@ -115,6 +144,33 @@ export class GitCliDataSource implements GitDataSource {
     const { repository: stored, added } = await this.repositories.add(normalize(topFolder.trim()))
     const repository = await this.summarize(stored)
     return { repository, message: added ? `Added ${repository.name}` : `${repository.name} is already in the list` }
+  }
+
+  async chooseCloneFolder(): Promise<string | null> {
+    const chosen = await this.chooseFolder('Choose the folder to clone into')
+    if (chosen !== null) this.cloneFolder = normalize(chosen)
+    return chosen === null ? null : this.cloneFolder
+  }
+
+  /** Clones into the folder chooseCloneFolder remembered (see `cloneInto.ts`), then lists and summarizes the clone. */
+  async cloneRepository(request: CloneRequest, onProgress?: (progress: CloneProgress) => void): Promise<AddRepositoryResult> {
+    const parent = this.cloneFolder
+    if (parent === null) throw new GitError('Choose a folder to clone into first')
+    if (this.stopRunningClone) throw new GitError('A clone is already running')
+    const stop = new AbortController()
+    this.stopRunningClone = stop
+    try {
+      const plan = await planClone(parent, request)
+      await cloneInto(parent, plan, stop.signal, onProgress)
+      const { repository: stored } = await this.repositories.add(normalize(plan.destination))
+      return { repository: await this.summarize(stored), message: `Cloned ${plan.name}` }
+    } finally {
+      this.stopRunningClone = null
+    }
+  }
+
+  async cancelClone(): Promise<void> {
+    this.stopRunningClone?.abort()
   }
 
   async removeRepository(repoId: string): Promise<OperationResult> {
@@ -191,13 +247,21 @@ export class GitCliDataSource implements GitDataSource {
     return parseUnifiedDiff(diff)
   }
 
-  async compareFiles(repoId: string, leftPath: string, rightPath: string): Promise<Hunk[]> {
+  /** See `compareSides.ts`: each side is put on disk (a branch's version as a temporary copy), then diffed. */
+  async compareFiles(left: CompareSide, right: CompareSide): Promise<Hunk[]> {
+    return parseUnifiedDiff(await compareSides(this.compareLookup, left, right))
+  }
+
+  async chooseCompareFile(): Promise<PickedFile | null> {
+    const chosen = await this.chooseFile()
+    return chosen === null ? null : this.pickedFiles.add(normalize(chosen))
+  }
+
+  async listBranchFiles(repoId: string, branch: string): Promise<string[]> {
     const folder = await this.folderOf(repoId)
-    const left = insideFolder(folder, leftPath)
-    const right = insideFolder(folder, rightPath)
-    // Exit code 1 means "the files differ", which is the answer, not a failure.
-    const diff = await git(folder, ['diff', '--no-index', '--no-ext-diff', '--', left, right], [1])
-    return parseUnifiedDiff(diff)
+    await requireBranch(this.compareLookup, folder, branch)
+    const listing = await git(folder, ['ls-tree', '-r', '-z', '--name-only', branch])
+    return listing.split('\0').filter(Boolean)
   }
 
   /**

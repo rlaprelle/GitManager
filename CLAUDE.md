@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Vue 3 + TypeScript + Vite + Tailwind v4 single-screen git client UI, hosted two ways: in a browser on in-memory sample data (`MockGitDataSource`), and as a Windows-only Electron app (electron-vite + electron-builder) that reads real repositories with the user's installed git CLI in the main process (`GitCliDataSource`, no JGit/Java backend). The desktop app can check out branches, fetch, pull (fast-forward only) and push. Deep dive: `docs/ARCHITECTURE.md`.
+Vue 3 + TypeScript + Vite + Tailwind v4 single-screen git client UI, hosted two ways: in a browser on in-memory sample data (`MockGitDataSource`), and as a Windows-only Electron app (electron-vite + electron-builder) that reads real repositories with the user's installed git CLI in the main process (`GitCliDataSource`, no JGit/Java backend). The desktop app can clone repositories, check out branches, fetch, pull (fast-forward only) and push. Deep dive: `docs/ARCHITECTURE.md`.
 
 ## Commands (PowerShell)
 
@@ -15,7 +15,8 @@ npm run build          # vue-tsc -b && vite build → dist/
 npm run dev:app        # electron-vite dev: Electron window, renderer from Vite on 5173
 npm run build:app      # vue-tsc -b && electron-vite build → out/
 npm run test:e2e:app   # electron-vite build, then Playwright against out/ (playwright.electron.config.ts)
-npm run dist           # build:app, then electron-builder NSIS installer → release/
+npm run dist           # build:app, then electron-builder NSIS installer → release/ (never publishes)
+npm version 0.2.1; git push --follow-tags   # release: the v* tag runs .github/workflows/release.yml → draft GitHub release
 npm run icon           # node scripts/build-icon.ts: build/icon*.svg → build/icon.ico (committed)
 ```
 
@@ -38,6 +39,7 @@ src/mountApp.ts                  mounts App or GitRequired; fonts + styles
 src/data/sample*.ts              sample repos stored whole (sampleTypes.ts), diffs, SAMPLE_COMPARE_PATHS
 src/composables/latestLoad.ts    one async area: value + loading, only the latest load applies
 src/composables/useGitManager.ts ALL state, derived state, actions
+src/composables/usePaneSizes.ts  dragged pane sizes (layout, not git state): localStorage + --gm-*-size CSS vars
 src/lib/{diff,graph,format}.ts   pure functions (diff rows, graph geometry, labels)
 src/lib/checkout.ts              checkout wording + names (switchedMessage, localNameOf, remotesToCheckOut, destinationOf)
 src/lib/refs.ts                  remote branch names: splitRemoteBranch, remoteNamesOf, refKind (badge: head/remote/local by the branch list)
@@ -45,6 +47,7 @@ src/lib/remoteOperations.ts      fetch/pull/push wording (both sources) + remote
 src/lib/laneLayout.ts            parents → GraphRow (lane 0 = primary branch line; ≤ 8 lanes)
 src/lib/laneTable.ts             LaneTable: which commits each lane is heading to, while layoutLanes runs
 src/lib/parseDiff.ts             git diff output → Hunk[]
+src/lib/paneLayout.ts            PANE_LIMITS (min + neighbour's reserve), clamping, arrow-key steps, saved sizes
 src/components/**                presentational: props in, emits out
 src/App.vue                      wires composable ↔ components; layout
 src/style.css                    @theme tokens (--color-gm-*), base styles
@@ -52,9 +55,14 @@ src/types/bridge.ts              GitManagerBridge: window.gitManager (preload �
 electron/main/index.ts           Electron main: window, data folder, folder picker, wiring
 electron/main/ipc.ts             handler per channel: type checks, IpcResult envelopes (testable without Electron)
 electron/main/repositoryStore.ts repositories.json in userData
+electron/main/updates.ts         auto-update (packaged only): check at start + every 4 h, download, offer restart
+.github/workflows/release.yml    v* tag → all suites → electron-builder --publish always → draft release
 electron/main/git/               GitCliDataSource, runGit, parsers, git version check; __tests__/fixtures.ts
 electron/main/git/network.ts     how fetch/pull/push run: askpass + GCM allowed, stall limits, user's ssh respected
 electron/main/git/fetchHead.ts   last fetch time (FETCH_HEAD's), and putting FETCH_HEAD back after a failed fetch
+electron/main/git/cloneInto.ts   clone: planClone (checks before git) + cloneInto (progress, cancel, clean-up)
+src/lib/clone.ts                 clone rules shared by both sources: URL/name checks, name from URL, progress parsing, CLONE_CANCELLED
+electron/main/git/compareSides.ts compare: each CompareSide onto disk (branch version as bytes into a temp folder), then diff --no-index
 electron/preload/index.ts        contextBridge → window.gitManager
 electron/shared/channels.ts      IPC channel names (main + preload)
 electron.vite.config.ts         desktop build; renderer spreads vite.config.ts
@@ -75,7 +83,7 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - Line/geometry logic lives in `src/lib/` (pure, unit-tested); components only render rows.
 - Real git = new `GitDataSource` impl passed to `App` in `src/main.ts`. Don't leak backend concerns above the service layer.
 - Renderer reaches Electron only through `window.gitManager` (`GitManagerBridge`). New main-process capability → channel in `channels.ts`, handler in `ipc.ts` (check every argument's type; answer `IpcResult`), method on the bridge type + preload (`call()` unwraps), test in `electron/main/__tests__/ipc.spec.ts` (it asserts every channel has a handler). Every bridge method is async.
-- Nothing from the renderer reaches git unchecked: repositories by id only (never a folder), hashes match `COMMIT_HASH`, paths after `--`, compare paths inside the repo. Run git only through `runGit` (execFile, no shell).
+- Nothing from the renderer reaches git unchecked: repositories by id only (never a folder), hashes match `COMMIT_HASH`, paths after `--`, compare paths inside the repo (or a branch git listed, or a file picked in main, by id: `PickedFiles`). Run git only through `runGit` (execFile, no shell).
 - Browser mode keeps `MockGitDataSource`; the desktop entry (`src/desktop.ts`) must never import sample data — e2e-electron greps the built bundle.
 - `App`'s `operations` prop (`RepositoryOperation[]`; `ALL_OPERATIONS` from both entries) decides which write buttons show. Don't offer an operation before it exists in `GitCliDataSource`.
 - Checkout targets are `{ local }` / `{ remote }`, checked against `for-each-ref`'s list before reaching git. `confirm` results (leaving a detached HEAD's commits) go through `pendingCheckout` + `ConfirmDialog`; one operation at a time (`operationRunning`, refresh skipped meanwhile). Anything crossing IPC must be a plain object: Vue refs hold proxies, which IPC can't clone.
@@ -106,7 +114,8 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - Monospace (`font-mono`, JetBrains Mono) for hashes, paths, code; Inter for UI. Both are bundled Fontsource variable fonts (families `'Inter Variable'`, `'JetBrains Mono Variable'`) imported in `src/main.ts`. Never load anything from another host.
 - Responsive: `max-[860px]:` variant is the narrow breakpoint. Page must never scroll horizontally (e2e enforces at phone width); wide content scrolls inside its own pane.
 - Smallest desktop size is 1024×640 content (Electron `minWidth`/`minHeight` with `useContentSize`; root `min-h-[640px]`). Both e2e suites assert no page scroll there — change all three together.
-- Test selectors: role/label first; repository buttons by anchored name (`/^name/`), since each row's Remove button is named "Remove name from the list"; then `data-testid` (`header-repo`, `header-branch`, `unified-diff`, `side-by-side-diff`, `left-label`, `right-label`, `commit-description`); diff rows and branch badges expose `data-kind`, side-by-side cells `data-side`/`data-cell`.
+- Test selectors: role/label first; repository buttons by anchored name (`/^name/`), since each row's Remove button is named "Remove name from the list"; then `data-testid` (`header-repo`, `header-branch`, `unified-diff`, `side-by-side-diff`, `left-label`, `right-label`, `commit-description`, `branch-hash`); a branch button's name is the branch (plus HEAD/sync label), and its tip hash is the button's accessible *description*, so name matches never include it; diff rows and branch badges expose `data-kind`, side-by-side cells `data-side`/`data-cell`.
+- Pane sizes: `PaneDivider` (between two panes, measures them itself) → `usePaneSizes` in App → `--gm-*-size` vars + an `!important`, `min-[860px]:`-gated flex class on the sized pane. The reserves in those classes' `min(…, 100% - Npx)` duplicate `PANE_LIMITS`; change both together. A null size means the pane's own default flex sizing, so the default layout is unchanged. jsdom has no `PointerEvent`: `PaneDivider.spec` dispatches MouseEvents with a `pointerId`.
 - Every new capability gets: lib/composable unit test, component test, `src/__tests__/App.spec.ts` wiring test if it crosses components, and a Playwright test that drives the UI.
 
 ## Constraints / quirks
@@ -131,9 +140,12 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - `scripts/*.ts` run under Node's type stripping: explicit `.ts` import extensions (`allowImportingTsExtensions` in `tsconfig.node.json`) and erasable syntax only (no enums, no parameter properties).
 - **Unpackaged runs use a separate data folder** (`%APPDATA%\git-manager-dev`, or `GIT_MANAGER_USER_DATA`), never the installed app's `repositories.json`. e2e-electron gives each test its own temp folder; stub the folder picker with `app.evaluate(({ dialog }) => { dialog.showOpenDialog = ... })`.
 - **Git test fixtures** (`electron/main/git/__tests__/fixtures.ts`; `createScratchRepository`, `createRepositoryWithRemote` (fresh repo + bare origin, for checkout), `commitInFixture`, `gitInFixture`, `switchToNewBranchInFixture` for changes "outside the app") build throwaway repos with an empty global config (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`) so the developer's git settings can't change them. The real-git spec and e2e-electron also run the app's own git with that config (checkout runs hooks). Each `git` call is a process: give real-git specs long timeouts.
-- **Only fetch, pull and push may sign in** (`runGit(…, { network })`, built by `networkAccessFor`): everything else keeps `GCM_INTERACTIVE=never`. Never put network access on a read. Tests can't see the sign-in windows; `network.spec.ts` checks what git receives (a `!env` alias) and GitCliDataSource.spec uses a stand-in `core.sshCommand` script that records its environment. Remote fixtures: `createRepositoryWithRemote` + `cloneOriginInFixture` (a colleague) + `originOf`; origin already has `feature/local` (cloned from the repo).
+- **Auto-update** (`electron/main/updates.ts`, electron-updater, bundled like everything else): only when `app.isPackaged`. Unsigned installer → `win.verifyUpdateCodeSignature: false` in `electron-builder.yml` (required from electron-builder 28). Releases are drafts (`publish.releaseType`): installed apps update only after someone publishes one. The release workflow rejects a tag that doesn't match `package.json`. e2e-electron can't run the real updater: it sends `update:ready` from main and replaces the `update:install` handler via `app.evaluate`. Real updates are checked by hand on a published release.
+- **Clone** (`electron/main/git/cloneInto.ts`): the parent folder comes only from `chooseCloneFolder` (main remembers it; the renderer never sends a folder); URL and name are checked by `src/lib/clone.ts` before git runs (scheme allowlist, no `-…`/`::`; Windows folder-name rules; destination missing or empty). Cancel aborts `runGit`'s `signal`, which kills the **process tree** (`taskkill /T`): killing git alone leaves ssh/remote helpers running, and a test's heartbeat stand-in ssh proves it. An already-aborted signal stops git at once. Progress reaches the renderer as `IpcEvent.CloneProgress` (main→window), not through `IpcChannel`, whose entries must all have handlers. `MockGitDataSource(repos, cloneStepMs)`: pass `0` in unit tests. The composable remembers a Cancel pressed before the source started (it waits for a refresh first).
+- **Only fetch, pull, push and clone may sign in** (`runGit(…, { network })`, built by `networkAccessFor`): everything else keeps `GCM_INTERACTIVE=never`. Never put network access on a read. Tests can't see the sign-in windows; `network.spec.ts` checks what git receives (a `!env` alias) and GitCliDataSource.spec uses a stand-in `core.sshCommand` script that records its environment. Remote fixtures: `createRepositoryWithRemote` + `cloneOriginInFixture` (a colleague) + `originOf`; origin already has `feature/local` (cloned from the repo).
 - **A failed fetch puts FETCH_HEAD back** (`preservingFetchHead` in `fetchHead.ts`): git empties it before connecting, and `lastFetch` is its time.
 - **On Windows a missing working folder fails like missing git** (`spawn git ENOENT`): check the folder exists before running git in it.
+- **Compare sides** (`CompareSide`: `{ kind: 'repository', repoId, branch | null, path }` or `{ kind: 'file', fileId }`). The composable keeps a `CompareChoice` per side (`repoId: null` = the open repository) and labels them short (`labelOf`). A branch's file is read as bytes (`runGitBytes`): reading it as text would change a non-UTF-8 file (a Latin-1 fixture proves it). Picked files are desktop only (`canChooseFiles`, from `desktop.ts`).
 - **Git's diff lists a change's removals before its additions**; `invertHunks` keeps that order, so a swapped compare matches real git.
 - In `page.evaluate` callbacks in e2e-electron, the page variable is named `window`; use `globalThis` for the browser's window.
 - **Desktop renderer entry is `desktop.html`** (`out/renderer/desktop.html`; dev URL + `/desktop.html`), not `index.html`.

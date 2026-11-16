@@ -2,6 +2,7 @@ import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositor
 import { sampleCompareDiff } from '@/data/sampleDiffs'
 import type { SampleCommit, SampleRepository } from '@/data/sampleTypes'
 import { localNameOf, switchedMessage } from '@/lib/checkout'
+import { CLONE_CANCELLED, cloneUrlProblem, folderNameProblem } from '@/lib/clone'
 import { invertHunks } from '@/lib/diff'
 import { fetchedMessage, publishedMessage, pulledMessage, pushedMessage } from '@/lib/remoteOperations'
 import { layoutLanes, primaryBranchTip } from '@/lib/laneLayout'
@@ -11,17 +12,36 @@ import type {
   CheckoutOptions,
   CheckoutResult,
   CheckoutTarget,
+  CloneProgress,
+  CloneRequest,
+  CompareSide,
   FileChange,
   HistoryPage,
   Hunk,
   LocalBranch,
   OperationResult,
+  PickedFile,
   Repository,
 } from '@/types/git'
 import type { GitDataSource } from './GitDataSource'
 
 /** The sample repositories have one remote. */
 const SAMPLE_REMOTES = ['origin']
+
+/** Where the browser's pretend clones go: the samples' own folder. */
+export const SAMPLE_CLONE_FOLDER = 'C:\\dev'
+
+/** A pretend clone is a copy of this sample, which has its default branch checked out. */
+const CLONE_TEMPLATE_ID = 'pricing'
+
+/** The progress a pretend clone reports, one step per tick. */
+const CLONE_STEPS: CloneProgress[] = [
+  { phase: 'Receiving objects', percent: 0 },
+  { phase: 'Receiving objects', percent: 40 },
+  { phase: 'Receiving objects', percent: 100 },
+  { phase: 'Resolving deltas', percent: 50 },
+  { phase: 'Resolving deltas', percent: 100 },
+]
 
 /**
  * In-memory stand-in for a git backend, serving the design's sample repos. Checkout and push
@@ -36,23 +56,79 @@ export class MockGitDataSource implements GitDataSource {
    * Checkout changes `repositories`. By default they're this source's own copy of the samples;
    * repositories passed in stay the caller's, so a test can change them "outside the app".
    */
-  constructor(private readonly repositories: SampleRepository[] = structuredClone(sampleRepositories)) {}
+  constructor(
+    private readonly repositories: SampleRepository[] = structuredClone(sampleRepositories),
+    /** How long each step of a pretend clone takes: long enough to see, and to cancel. Tests pass 0. */
+    private readonly cloneStepMs = 150,
+  ) {}
+
+  /** The folder chooseCloneFolder "picked"; null until it is called. */
+  private cloneFolder: string | null = null
+
+  /** Stops the pretend clone that is running, if one is. */
+  private stopRunningClone: (() => void) | null = null
+
+  private clones = 0
 
   async listRepositories(): Promise<Repository[]> {
-    return this.listed().map(({ id, name, path, currentBranch, changedFileCount, lastFetch }) => ({
-      id,
-      name,
-      path,
-      currentBranch,
-      changedFileCount,
-      lastFetch,
-      problem: null,
-    }))
+    return this.listed().map(summaryOf)
   }
 
   /** A browser can't open a folder picker, so this explains what the desktop app would ask for. */
   async addRepository(): Promise<AddRepositoryResult> {
     return { repository: null, message: 'Add repository: choose a folder that contains a .git directory' }
+  }
+
+  /** A browser has no folder picker; the samples' folder stands in for the one the user would pick. */
+  async chooseCloneFolder(): Promise<string | null> {
+    this.cloneFolder = SAMPLE_CLONE_FOLDER
+    return this.cloneFolder
+  }
+
+  /** Checks the request as real git's source does, then adds a copy of a sample under the new name. */
+  async cloneRepository(request: CloneRequest, onProgress?: (progress: CloneProgress) => void): Promise<AddRepositoryResult> {
+    const problem = cloneUrlProblem(request.url) ?? folderNameProblem(request.name)
+    if (problem) throw new Error(problem)
+    if (this.cloneFolder === null) throw new Error('Choose a folder to clone into first')
+    if (this.stopRunningClone) throw new Error('A clone is already running')
+    const path = `${this.cloneFolder}\\${request.name}`
+    // Removed repositories count: taking one off the list leaves its folder where it was.
+    if (this.repositories.some((repo) => repo.path.toLowerCase() === path.toLowerCase())) {
+      throw new Error(`${path} already exists and isn’t empty`)
+    }
+    await this.pretendToClone(onProgress ?? (() => {}))
+    // From the bundled samples, not this source's list, which may be empty (the first-run screen).
+    const template = sampleRepositories.find((repo) => repo.id === CLONE_TEMPLATE_ID)!
+    const clone: SampleRepository = {
+      ...structuredClone(template),
+      id: `clone-${++this.clones}`,
+      name: request.name,
+      path,
+      changedFileCount: 0,
+      lastFetch: new Date().toISOString(),
+    }
+    this.repositories.push(clone)
+    return { repository: summaryOf(clone), message: `Cloned ${request.name}` }
+  }
+
+  async cancelClone(): Promise<void> {
+    this.stopRunningClone?.()
+  }
+
+  private pretendToClone(onProgress: (progress: CloneProgress) => void): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      let step = 0
+      const timer = setInterval(() => {
+        if (step < CLONE_STEPS.length) onProgress({ ...CLONE_STEPS[step++]! })
+        else finish(resolve)
+      }, this.cloneStepMs)
+      const finish = (settle: () => void) => {
+        clearInterval(timer)
+        this.stopRunningClone = null
+        settle()
+      }
+      this.stopRunningClone = () => finish(() => reject(new Error(CLONE_CANCELLED)))
+    })
   }
 
   async removeRepository(repoId: string): Promise<OperationResult> {
@@ -81,10 +157,39 @@ export class MockGitDataSource implements GitDataSource {
   }
 
   /** Every pair of paths gets the sample diff; the sample pair reversed gets it inverted. */
-  async compareFiles(repoId: string, leftPath: string, rightPath: string): Promise<Hunk[]> {
-    this.repository(repoId)
-    const isReversedSample = leftPath === SAMPLE_COMPARE_PATHS.right && rightPath === SAMPLE_COMPARE_PATHS.left
-    return isReversedSample ? invertHunks(sampleCompareDiff) : structuredClone(sampleCompareDiff)
+  /**
+   * The samples have no file contents, so any two different files differ by the sample diff. One order
+   * gives it and the other its inverse (the sample pair's own order, SAMPLE_COMPARE_PATHS, is the forward
+   * one), so swapping inverts it as in git. A file compared with itself has no differences.
+   */
+  async compareFiles(left: CompareSide, right: CompareSide): Promise<Hunk[]> {
+    const [leftKey, rightKey] = await Promise.all([this.compareKey(left), this.compareKey(right)])
+    if (leftKey === rightKey) return []
+    return leftKey > rightKey ? structuredClone(sampleCompareDiff) : invertHunks(sampleCompareDiff)
+  }
+
+  /** A browser has no file picker; the browser build doesn't offer one. */
+  async chooseCompareFile(): Promise<PickedFile | null> {
+    return null
+  }
+
+  /** The samples don't store trees: every branch has every file the repository's commits touched. */
+  async listBranchFiles(repoId: string, branch: string): Promise<string[]> {
+    const repo = this.repository(repoId)
+    if (![...repo.localBranches, ...repo.remoteBranches].some((candidate) => candidate.name === branch)) {
+      throw new Error(`No branch named ${branch}`)
+    }
+    return [...new Set(repo.commits.flatMap((commit) => commit.files.map((file) => file.path)))].sort()
+  }
+
+  private async compareKey(side: CompareSide): Promise<string> {
+    if (side.kind === 'file') throw new Error('That file is no longer chosen; choose it again')
+    this.repository(side.repoId)
+    if (side.branch === null) return `${side.repoId}|working|${side.path}`
+    if (!(await this.listBranchFiles(side.repoId, side.branch)).includes(side.path)) {
+      throw new Error(`${side.path} isn’t on ${side.branch}`)
+    }
+    return `${side.repoId}|${side.branch}|${side.path}`
   }
 
   /** The samples have no detached HEAD, so there are never commits to leave and `options` changes nothing. */
@@ -163,6 +268,10 @@ export class MockGitDataSource implements GitDataSource {
     if (!commit) throw new Error(`Unknown commit: ${hash}`)
     return commit
   }
+}
+
+function summaryOf({ id, name, path, currentBranch, changedFileCount, lastFetch }: SampleRepository): Repository {
+  return { id, name, path, currentBranch, changedFileCount, lastFetch, problem: null }
 }
 
 /** A sample repository's newest `limit` commits, laid out with the same function the real git source uses. */

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, useId } from 'vue'
 import type { LocalBranch, RemoteBranch } from '@/types/git'
-import { syncLabel } from '@/lib/format'
+import { shortHash, syncLabel } from '@/lib/format'
 import { remoteNamesOf } from '@/lib/refs'
 import GmIcon from './GmIcon.vue'
 
@@ -36,6 +36,16 @@ function offersRemoteCheckout(name: string): boolean {
 
 const remoteNames = computed(() => remoteNamesOf(props.remoteBranches).join(', '))
 
+/** Same muted mono as the history's hash column, so a branch can be matched to its commit by eye. */
+const hashLabel = 'flex-none font-mono text-[11px] text-gm-subtle'
+
+/**
+ * The hash is the button's description, not part of its name: the name stays the branch (plus HEAD and
+ * sync state), so a screen reader says "main" first and finding a branch by name doesn't need its hash.
+ */
+const listId = useId()
+const hashId = (side: 'local' | 'remote', index: number) => `${listId}-${side}-hash-${index}`
+
 const checkoutButton =
   'mr-1 h-7 flex-none cursor-pointer rounded-md border border-gm-checkout-line bg-gm-checkout px-2.5 text-[12px] text-gm-chip-text disabled:cursor-default disabled:text-gm-disabled'
 </script>
@@ -47,7 +57,7 @@ const checkoutButton =
     <h3 v-if="localBranches.length" class="mt-1 mb-1 px-2 text-[12px] font-semibold text-gm-soft">Local</h3>
     <div class="flex flex-col gap-0.5">
       <div
-        v-for="branch in localBranches"
+        v-for="(branch, index) in localBranches"
         :key="branch.name"
         class="flex items-center gap-1 rounded-lg"
         :class="branch.name === selectedBranch ? 'bg-gm-selected' : 'bg-transparent'"
@@ -56,6 +66,7 @@ const checkoutButton =
           type="button"
           class="gm-row-hover flex min-w-0 flex-auto cursor-pointer items-center gap-2 rounded-lg border-0 bg-transparent px-2.5 py-[7px] text-left text-gm-text"
           :aria-pressed="branch.name === selectedBranch"
+          :aria-describedby="hashId('local', index)"
           @click="$emit('select', branch.name)"
         >
           <GmIcon name="branch" :size="14" class="flex-none text-gm-muted" />
@@ -67,6 +78,15 @@ const checkoutButton =
             HEAD
           </span>
           <span class="ml-auto flex-none text-[11px] text-gm-warn">{{ syncLabel(branch) }}</span>
+          <span
+            :id="hashId('local', index)"
+            data-testid="branch-hash"
+            aria-hidden="true"
+            :class="hashLabel"
+            :title="branch.tipHash"
+          >
+            {{ shortHash(branch.tipHash) }}
+          </span>
         </button>
         <button
           v-if="offersLocalCheckout(branch.name)"
@@ -83,7 +103,7 @@ const checkoutButton =
     <h3 v-if="remoteBranches.length" class="mt-3.5 mb-1 px-2 text-[12px] font-semibold text-gm-soft">Remote · {{ remoteNames }}</h3>
     <div class="flex flex-col gap-0.5">
       <div
-        v-for="branch in remoteBranches"
+        v-for="(branch, index) in remoteBranches"
         :key="branch.name"
         class="flex items-center gap-1 rounded-lg"
         :class="branch.name === selectedBranch ? 'bg-gm-selected' : 'bg-transparent'"
@@ -92,10 +112,21 @@ const checkoutButton =
           type="button"
           class="gm-row-hover flex min-w-0 flex-auto cursor-pointer items-center gap-2 rounded-lg border-0 bg-transparent px-2.5 py-[7px] text-left text-gm-soft"
           :aria-pressed="branch.name === selectedBranch"
+          :aria-describedby="hashId('remote', index)"
           @click="$emit('select', branch.name)"
         >
           <GmIcon name="remote-branch" :size="14" class="flex-none text-gm-faint" />
           <span class="truncate font-mono text-[12px]" :title="branch.name">{{ branch.name }}</span>
+          <span
+            :id="hashId('remote', index)"
+            data-testid="branch-hash"
+            aria-hidden="true"
+            :class="hashLabel"
+            class="ml-auto"
+            :title="branch.tipHash"
+          >
+            {{ shortHash(branch.tipHash) }}
+          </span>
         </button>
         <button
           v-if="offersRemoteCheckout(branch.name)"

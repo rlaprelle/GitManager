@@ -4,17 +4,19 @@ A calm, dark-themed git client that puts the questions you ask most often on one
 
 Git Manager is for developers who juggle several repositories and want a quick visual answer without reaching for the command line. That might be a service, its API client, a front end and a dotfiles repo all at once.
 
-> **Status:** the Windows desktop app works on your real repositories with your installed Git for Windows: add repositories, browse their branches, history and diffs, check out branches, and fetch, pull and push. The browser version runs on built-in sample repositories, where every button works against sample data. See [Real repositories](#real-repositories).
+> **Status:** the Windows desktop app works on your real repositories with your installed Git for Windows: add or clone repositories, browse their branches, history and diffs, check out branches, and fetch, pull and push. The browser version runs on built-in sample repositories, where every button works against sample data. See [Real repositories](#real-repositories).
 
 ## What you can do
 
+- **Clone a repository.** The clone button beside **+** (or **Clone repository…** on the first-run screen) asks for the repository's URL (`https://`, `ssh://`, `git://`, `file://` or `user@host:path`), the folder to clone into, and a folder name, filled in from the URL. git's progress shows as it goes, and **Cancel clone** stops it and removes the half-made folder. Cloning signs in the same way Fetch does. The clone is added to the list and opened. It clones the default branch, with full history and no submodules.
 - **Add and switch between repositories.** Add a repository by choosing its folder (or any folder inside it); remove one from the list with its × button, which never touches the folder. The sidebar lists every repository you've added, how many files have uncommitted changes in each, and says so if a folder has been moved or deleted.
-- **See your branches.** Local branches show how far they are ahead of or behind their remote (`↑2 ↓1`), and the checked-out branch is marked `HEAD`. Click a branch to jump to its newest commit. Click **Checkout** to switch to it. Uncommitted changes come along, as with `git switch`, and the status bar says how many did. If they would be overwritten, nothing happens and the status bar names the files. Checkout on a remote branch (`origin/feature`) creates the local branch that tracks it, unless you already have one. Leaving a detached HEAD whose commits aren't on any branch asks first.
+- **See your branches.** Local branches show how far they are ahead of or behind their remote (`↑2 ↓1`), and the checked-out branch is marked `HEAD`. Every branch, local and remote, shows the short hash of the commit it points to, the same hash as in the history's Commit column. Click a branch to jump to its newest commit. Click **Checkout** to switch to it. Uncommitted changes come along, as with `git switch`, and the status bar says how many did. If they would be overwritten, nothing happens and the status bar names the files. Checkout on a remote branch (`origin/feature`) creates the local branch that tracks it, unless you already have one. Leaving a detached HEAD whose commits aren't on any branch asks first.
 - **Read the history as a graph.** Commits are listed newest first beside a coloured lane graph that shows where branches split off and merge back. `main` keeps the left-most lane, and the graph widens for busy histories (up to eight lanes). Branch labels sit on the commits they point to.
 - **See what a commit changed.** Pick a commit, then a file, and read the change in one of two views:
   - **Git diff:** the familiar unified view with `+` and `-` lines and hunk headers.
   - **Simple diff:** old and new side by side, with removed lines on the left lined up against the added lines that replaced them.
-- **Compare any two files.** Enter two paths to see them side by side, even when they don't share any history (for example, `application.yml` against `application-prod.yml`). Swap them with one click.
+- **Compare any two files.** See two files side by side, even when they don't share any history (for example, `application.yml` against `application-prod.yml`). Each side picks a repository from your list, a version (the working tree, or any local or remote branch), and a file: type its path, or click **Browse…**. On a branch, Browse… lists that branch's files with a filter. On the working tree, the desktop app opens the Windows file picker, where any file on disk will do. So you can compare one file on two branches, two different files, files from two repositories, or a repository's file with one from anywhere. The column headings say where each side comes from (`release/2.4 · pom.xml`, `pricing-api · main · pom.xml`). **Swap** exchanges everything about the two sides.
+- **Arrange the screen.** Drag the lines between the sidebar and the main area, the repository and branch lists, the history and the diff, or the file list and the diff to resize them. Double-click a line to put it back. Each line can also take keyboard focus (Tab) and move with the arrow keys (Shift for bigger steps). Sizes are remembered for next time; on narrow screens, where the panes stack, there's nothing to drag.
 - **See changes made elsewhere.** Commit, switch branches or edit files in your terminal or editor, and Git Manager catches up when you come back to its window, without losing the commit you were looking at. Press **F5** to refresh on demand.
 - **Fetch, pull and push** from the header. The button you clicked says what's happening ("Fetching…") until git finishes, and the status bar says what happened:
   - **Fetch** updates every remote and drops branches deleted there: "Fetched: 2 branches updated, 1 new, 1 removed". The ↑/↓ counts and "Last fetch" update with it.
@@ -70,6 +72,20 @@ npm run icon           # regenerate build/icon.ico after editing build/icon.svg 
 - **Test server port:** the e2e tests start their own server on port 4317, so they don't interfere with a dev server you already have running.
 - **Works offline.** Fonts (Inter and JetBrains Mono) ship with the app, and a Content-Security-Policy lets the page load only its own files. The installer includes the fonts' licences in `resources\licenses`.
 - **The installer is unsigned.** Windows SmartScreen warns about a downloaded copy ("Windows protected your PC" → **More info** → **Run anyway**). It installs for the current user only and needs no admin rights.
+- **Updates itself.** The installed app checks this repository's [Releases](https://github.com/rlaprelle/GitManager/releases) when it starts and every 4 hours, downloads a newer version in the background, and offers **Restart now** in the status bar. An update you don't restart for installs when you quit. Development runs never check.
+
+### Cutting a release
+
+Releases are built by GitHub Actions (`.github/workflows/release.yml`) when a version tag is pushed. Typecheck and all four test suites must pass first. Then the installer and `latest.yml` (what installed apps check) go to a **draft** release. In PowerShell, on `main`:
+
+```powershell
+npm version 0.2.1          # bumps package.json, commits, and tags v0.2.1
+git push --follow-tags     # the tag starts the workflow
+```
+
+Then open the draft on the Releases page, add notes, and **Publish release**. Installed apps see it only once it's published. The workflow refuses a tag that doesn't match `package.json`'s version.
+
+Because the installer is unsigned, an update is trusted by the SHA-512 checksum in `latest.yml`, downloaded over HTTPS from GitHub; there is no signature to check. Anyone who can publish a release here can therefore ship code to every installed copy.
 
 For how the code is organised, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 

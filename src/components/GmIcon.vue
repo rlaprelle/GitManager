@@ -13,6 +13,7 @@ export type IconName =
   | 'swap'
   | 'remove'
   | 'warning'
+  | 'clone'
 
 withDefaults(defineProps<{ name: IconName; size?: number; strokeWidth?: number }>(), {
   size: 16,
@@ -81,6 +82,11 @@ withDefaults(defineProps<{ name: IconName; size?: number; strokeWidth?: number }
     </template>
     <template v-else-if="name === 'folder'">
       <path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z" />
+    </template>
+    <template v-else-if="name === 'clone'">
+      <path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z" />
+      <path d="M12 10.5v6" />
+      <path d="M9.5 14l2.5 2.5 2.5-2.5" />
     </template>
     <template v-else-if="name === 'compare'">
       <rect x="3" y="4" width="7.5" height="16" rx="1.5" />

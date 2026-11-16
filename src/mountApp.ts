@@ -6,7 +6,7 @@ import './style.css'
 import App from './App.vue'
 import GitRequired from './components/GitRequired.vue'
 import type { GitDataSource, RepositoryOperation } from './services/GitDataSource'
-import type { GitStatus } from './types/bridge'
+import type { GitStatus, UpdateSource } from './types/bridge'
 
 // Shared by the two entry points: main.ts (browser, sample data) and desktop.ts (installed git).
 
@@ -15,6 +15,10 @@ export interface AppOptions {
   comparePaths: { left: string; right: string }
   /** The operations that change a repository this host offers; the others' buttons are hidden. */
   operations: readonly RepositoryOperation[]
+  /** Desktop only: the installed app's updates. */
+  updates?: UpdateSource
+  /** Desktop only: a file picker, so Compare can take any file on disk. */
+  canChooseFiles?: boolean
 }
 
 export function mountApp(options: AppOptions): void {

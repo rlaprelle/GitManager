@@ -5,10 +5,38 @@ import { describeGitDataSourceContract } from './gitDataSourceContract'
 
 describeGitDataSourceContract(
   'MockGitDataSource',
-  async () => ({ source: new MockGitDataSource(), comparePaths: SAMPLE_COMPARE_PATHS }),
+  async () => ({
+    source: new MockGitDataSource(),
+    comparePaths: SAMPLE_COMPARE_PATHS,
+    compareBranches: { left: 'main', right: 'origin/release/2.4', path: 'pom.xml' },
+  }),
   // inventory-service has feature/stock-reservations checked out, and no local release/2.4.
   async () => ({ source: new MockGitDataSource(), repoId: 'inventory', otherLocal: 'main', remoteOnly: 'origin/release/2.4' }),
+  // The samples live in the folder the mock "picks", so their names are taken.
+  async () => ({ source: new MockGitDataSource(undefined, 0), url: 'https://example.com/team/tools.git', takenName: 'pricing-api' }),
 )
+
+describe('MockGitDataSource clone', () => {
+  it('stops a running clone when cancelled, listing nothing', async () => {
+    const source = new MockGitDataSource(undefined, 5)
+    await source.chooseCloneFolder()
+    const before = (await source.listRepositories()).length
+    const clone = source.cloneRepository({ url: 'https://example.com/tools.git', name: 'tools' })
+    await source.cancelClone()
+    await expect(clone).rejects.toThrow('Clone cancelled')
+    expect(await source.listRepositories()).toHaveLength(before)
+  })
+
+  it('runs one clone at a time', async () => {
+    const source = new MockGitDataSource(undefined, 5)
+    await source.chooseCloneFolder()
+    const first = source.cloneRepository({ url: 'https://example.com/a.git', name: 'a' })
+    await expect(source.cloneRepository({ url: 'https://example.com/b.git', name: 'b' })).rejects.toThrow(
+      'A clone is already running',
+    )
+    await first
+  })
+})
 
 describe('MockGitDataSource checkout', () => {
   it('reports the sample’s uncommitted changes as coming along', async () => {

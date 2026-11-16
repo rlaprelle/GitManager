@@ -1,8 +1,9 @@
 import { errorMessage } from '../../src/lib/errorMessage'
 import type { GitDataSource } from '../../src/services/GitDataSource'
 import type { GitStatus, IpcResult } from '../../src/types/bridge'
-import type { CheckoutOptions, CheckoutTarget } from '../../src/types/git'
-import { IpcChannel } from '../shared/channels'
+import type { CheckoutOptions, CheckoutTarget, CloneRequest, CompareSide } from '../../src/types/git'
+import { IpcChannel, IpcEvent } from '../shared/channels'
+import type { UpdateChecks } from './updates'
 
 /** The part of ipcMain the handlers need, so they can be tested without Electron. */
 export interface IpcRegistrar {
@@ -13,6 +14,8 @@ export interface IpcServices {
   source: GitDataSource
   appVersion: string
   checkGit(): Promise<GitStatus>
+  /** Null when this run doesn't update itself (unpackaged: dev and tests). */
+  updates?: UpdateChecks | null
 }
 
 const MAX_COUNT = 10_000
@@ -22,15 +25,9 @@ const MAX_COUNT = 10_000
  * type before the data source sees it. Answers are IpcResults: Electron would otherwise wrap a
  * thrown error's message in "Error invoking remote method '...': Error: ...".
  */
-export function registerIpcHandlers(ipc: IpcRegistrar, { source, appVersion, checkGit }: IpcServices): void {
+export function registerIpcHandlers(ipc: IpcRegistrar, { source, appVersion, checkGit, updates = null }: IpcServices): void {
   const handle = <T>(channel: string, answer: (...args: unknown[]) => Promise<T> | T) =>
-    ipc.handle(channel, async (_event, ...args): Promise<IpcResult<T>> => {
-      try {
-        return { ok: true, value: await answer(...args) }
-      } catch (error) {
-        return { ok: false, message: errorMessage(error) }
-      }
-    })
+    ipc.handle(channel, (_event, ...args) => answered(() => answer(...args)))
 
   handle(IpcChannel.GetAppVersion, () => appVersion)
   handle(IpcChannel.GetGitStatus, () => checkGit())
@@ -39,15 +36,63 @@ export function registerIpcHandlers(ipc: IpcRegistrar, { source, appVersion, che
   handle(IpcChannel.GetHistory, (repoId, limit) => source.getHistory(text(repoId), count(limit)))
   handle(IpcChannel.GetCommitFiles, (repoId, hash) => source.getCommitFiles(text(repoId), text(hash)))
   handle(IpcChannel.GetFileDiff, (repoId, hash, path) => source.getFileDiff(text(repoId), text(hash), text(path)))
-  handle(IpcChannel.CompareFiles, (repoId, left, right) => source.compareFiles(text(repoId), text(left), text(right)))
+  handle(IpcChannel.CompareFiles, (left, right) => source.compareFiles(compareSide(left), compareSide(right)))
+  handle(IpcChannel.ChooseCompareFile, () => source.chooseCompareFile())
+  handle(IpcChannel.ListBranchFiles, (repoId, branch) => source.listBranchFiles(text(repoId), text(branch)))
   handle(IpcChannel.AddRepository, () => source.addRepository())
   handle(IpcChannel.RemoveRepository, (repoId) => source.removeRepository(text(repoId)))
+  handle(IpcChannel.ChooseCloneFolder, () => source.chooseCloneFolder())
+  // The one handler that talks back while it runs: progress goes to the window that asked.
+  ipc.handle(IpcChannel.CloneRepository, (event, request) =>
+    answered(() =>
+      source.cloneRepository(cloneRequest(request), (progress) => senderOf(event)?.send(IpcEvent.CloneProgress, progress)),
+    ),
+  )
+  handle(IpcChannel.CancelClone, () => source.cancelClone())
+  handle(IpcChannel.GetReadyUpdate, () => updates?.readyVersion() ?? null)
+  handle(IpcChannel.InstallUpdate, () => {
+    if (!updates) throw new Error('Only the installed app updates itself')
+    updates.install()
+  })
   handle(IpcChannel.Checkout, (repoId, target, options) =>
     source.checkout(text(repoId), checkoutTarget(target), checkoutOptions(options)),
   )
   handle(IpcChannel.Fetch, (repoId) => source.fetch(text(repoId)))
   handle(IpcChannel.Pull, (repoId, branch) => source.pull(text(repoId), text(branch)))
   handle(IpcChannel.Push, (repoId, branch) => source.push(text(repoId), text(branch)))
+}
+
+async function answered<T>(work: () => Promise<T> | T): Promise<IpcResult<T>> {
+  try {
+    return { ok: true, value: await work() }
+  } catch (error) {
+    return { ok: false, message: errorMessage(error) }
+  }
+}
+
+/** The window an IPC call came from, to send it events. */
+function senderOf(event: unknown): { send(channel: string, ...args: unknown[]): void } | null {
+  const sender = (event as { sender?: { send?: unknown } } | null)?.sender
+  return typeof sender?.send === 'function' ? (sender as { send(channel: string, ...args: unknown[]): void }) : null
+}
+
+const NOT_A_COMPARE_SIDE = 'Expected a file to compare: { kind: "repository", repoId, branch, path } or { kind: "file", fileId }'
+
+/** One side of a comparison, rebuilt from its checked fields so nothing else reaches the source. */
+function compareSide(value: unknown): CompareSide {
+  const side = value as Record<string, unknown> | null
+  if (typeof side !== 'object' || side === null) throw new Error(NOT_A_COMPARE_SIDE)
+  if (side['kind'] === 'file') return { kind: 'file', fileId: text(side['fileId']) }
+  if (side['kind'] !== 'repository') throw new Error(NOT_A_COMPARE_SIDE)
+  const branch = side['branch'] === null ? null : text(side['branch'])
+  return { kind: 'repository', repoId: text(side['repoId']), branch, path: text(side['path']) }
+}
+
+/** Exactly a URL and a folder name, as text; the source checks what they say. */
+function cloneRequest(value: unknown): CloneRequest {
+  const request = value as Partial<Record<keyof CloneRequest, unknown>> | null
+  if (typeof request !== 'object' || request === null) throw new Error('Expected a clone request: { url, name }')
+  return { url: text(request.url), name: text(request.name) }
 }
 
 function text(value: unknown): string {

@@ -3,26 +3,41 @@ import type { Repository } from '@/types/git'
 import { headLabel } from '@/lib/format'
 import GmIcon from './GmIcon.vue'
 
-defineProps<{
-  repositories: Repository[]
-  selectedId: string | undefined
-}>()
+withDefaults(
+  defineProps<{
+    repositories: Repository[]
+    selectedId: string | undefined
+    /** False hides Clone (a host that can't clone). */
+    canClone?: boolean
+  }>(),
+  { canClone: true },
+)
 
-defineEmits<{ select: [id: string]; add: []; remove: [id: string] }>()
+defineEmits<{ select: [id: string]; add: []; clone: []; remove: [id: string] }>()
+
+const headerButton =
+  'inline-flex size-7 cursor-pointer items-center justify-center rounded-md border-0 bg-transparent text-gm-soft hover:bg-gm-hover'
 </script>
 
 <template>
   <section class="max-h-[46%] flex-[0_1_auto] overflow-auto px-2 pt-3 pb-2">
     <div class="flex items-center justify-between px-2 pb-2">
       <h2 class="m-0 text-[11px] font-semibold tracking-[0.08em] text-gm-muted uppercase">Repositories</h2>
-      <button
-        type="button"
-        aria-label="Add repository"
-        class="inline-flex size-7 cursor-pointer items-center justify-center rounded-md border-0 bg-transparent text-gm-soft hover:bg-gm-hover"
-        @click="$emit('add')"
-      >
-        <GmIcon name="plus" />
-      </button>
+      <div class="flex items-center gap-0.5">
+        <button
+          v-if="canClone"
+          type="button"
+          aria-label="Clone repository"
+          title="Clone a repository"
+          :class="headerButton"
+          @click="$emit('clone')"
+        >
+          <GmIcon name="clone" />
+        </button>
+        <button type="button" aria-label="Add repository" title="Add a repository" :class="headerButton" @click="$emit('add')">
+          <GmIcon name="plus" />
+        </button>
+      </div>
     </div>
 
     <div class="flex flex-col gap-0.5">

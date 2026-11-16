@@ -4,7 +4,9 @@ import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositor
 import { sampleCompareDiff } from '@/data/sampleDiffs'
 import type { DiffMode } from '@/composables/useGitManager'
 import { sampleHistoryPage } from '@/services/MockGitDataSource'
+import PaneDivider from '../../PaneDivider.vue'
 import DiffPanel from '../DiffPanel.vue'
+import type { CompareView } from '../ComparePathInputs.vue'
 
 const inventory = sampleRepositories[0]!
 const history = sampleHistoryPage(inventory, 200).commits
@@ -36,11 +38,27 @@ function mountPanel(overrides: PanelOverrides = {}) {
       compareOpen,
       diffMode: overrides.diffMode ?? (compareOpen ? 'simple' : 'git'),
       hunks: compareOpen ? sampleCompareDiff : diffLoading || filesLoading ? [] : commit.files[0]!.hunks,
-      leftPath: SAMPLE_COMPARE_PATHS.left,
-      rightPath: SAMPLE_COMPARE_PATHS.right,
+      compareView: compareView(),
+      compareLabels: { left: 'application.yml', right: 'application-prod.yml' },
       diffMessage: overrides.diffMessage ?? null,
     },
   })
+}
+
+function compareView(overrides: Partial<CompareView> = {}): CompareView {
+  return {
+    leftSide: { repoId: null, branch: null, path: SAMPLE_COMPARE_PATHS.left, fileId: null },
+    rightSide: { repoId: null, branch: 'main', path: 'pom.xml', fileId: null },
+    leftBranches: ['main', 'origin/release/2.4'],
+    rightBranches: ['main', 'origin/release/2.4'],
+    repositories: [
+      { id: 'inventory', name: 'inventory-service' },
+      { id: 'pricing', name: 'pricing-api' },
+    ],
+    openRepoId: 'inventory',
+    canChooseFiles: false,
+    ...overrides,
+  }
 }
 
 function buttonByText(wrapper: ReturnType<typeof mountPanel>, text: string) {
@@ -93,8 +111,8 @@ describe('DiffPanel in commit mode', () => {
         compareOpen: false,
         diffMode: 'simple' as DiffMode,
         hunks: [{ oldStart: 1, newStart: 1, context: '', lines: ['-old', '+new'] }],
-        leftPath: '',
-        rightPath: '',
+        compareView: compareView(),
+        compareLabels: { left: '', right: '' },
       },
     })
     const row = wrapper.get('button[aria-pressed="true"]')
@@ -141,8 +159,8 @@ describe('DiffPanel without a commit', () => {
         compareOpen: false,
         diffMode: 'git' as DiffMode,
         hunks: [],
-        leftPath: '',
-        rightPath: '',
+        compareView: compareView(),
+        compareLabels: { left: '', right: '' },
       },
     })
   }
@@ -157,11 +175,33 @@ describe('DiffPanel without a commit', () => {
 })
 
 describe('DiffPanel in compare mode', () => {
-  it('replaces the file list with left and right path inputs', () => {
+  it('replaces the file list with each side’s repository, version and file', () => {
     const wrapper = mountPanel({ compareOpen: true })
     expect(wrapper.text()).not.toContain('files changed')
     expect(wrapper.get<HTMLInputElement>('#gm-left').element.value).toBe(SAMPLE_COMPARE_PATHS.left)
-    expect(wrapper.get<HTMLInputElement>('#gm-right').element.value).toBe(SAMPLE_COMPARE_PATHS.right)
+    expect(wrapper.get<HTMLInputElement>('#gm-right').element.value).toBe('pom.xml')
+    expect(wrapper.get<HTMLSelectElement>('select[aria-label="Left file: version"]').element.value).toBe('')
+    expect(wrapper.get<HTMLSelectElement>('select[aria-label="Right file: version"]').element.value).toBe('main')
+    expect(wrapper.get<HTMLSelectElement>('select[aria-label="Left file: repository"]').element.value).toBe('inventory')
+  })
+
+  it('offers Browse… for a branch’s files, and for the working tree only where there is a file picker', async () => {
+    const browserBuild = mountPanel({ compareOpen: true })
+    expect(browserBuild.find('button[aria-label="Browse for the left file"]').exists()).toBe(false)
+    await browserBuild.get('button[aria-label="Browse for the right file"]').trigger('click')
+    expect(browserBuild.emitted('browseBranchFiles')).toEqual([['right']])
+  })
+
+  it('emits version and repository changes per side', async () => {
+    const wrapper = mountPanel({ compareOpen: true })
+    await wrapper.get('select[aria-label="Left file: version"]').setValue('origin/release/2.4')
+    await wrapper.get('select[aria-label="Right file: version"]').setValue('')
+    await wrapper.get('select[aria-label="Right file: repository"]').setValue('pricing')
+    expect(wrapper.emitted('compareBranch')).toEqual([
+      ['left', 'origin/release/2.4'],
+      ['right', null],
+    ])
+    expect(wrapper.emitted('compareRepository')).toEqual([['right', 'pricing']])
   })
 
   it('disables the git diff and explains why', () => {
@@ -181,8 +221,24 @@ describe('DiffPanel in compare mode', () => {
     await wrapper.get('#gm-left').setValue('C:\\other.yml')
     await wrapper.get('button[aria-label="Swap left and right files"]').trigger('click')
     await buttonByText(wrapper, 'Back to 9f3a1c2').trigger('click')
-    expect(wrapper.emitted('update:leftPath')).toEqual([['C:\\other.yml']])
+    expect(wrapper.emitted('comparePath')).toEqual([['left', 'C:\\other.yml']])
     expect(wrapper.emitted('swap')).toHaveLength(1)
     expect(wrapper.emitted('closeCompare')).toHaveLength(1)
+  })
+})
+
+describe('DiffPanel file list divider', () => {
+  it('sits beside the file list, and passes resizes and resets up', () => {
+    const wrapper = mountPanel()
+    const divider = wrapper.getComponent(PaneDivider)
+    expect(divider.props('label')).toBe('Resize the file list')
+    divider.vm.$emit('resize', 250)
+    divider.vm.$emit('reset')
+    expect(wrapper.emitted('resizeFileList')).toEqual([[250]])
+    expect(wrapper.emitted('resetFileList')).toHaveLength(1)
+  })
+
+  it('isn’t there while comparing, which has no file list', () => {
+    expect(mountPanel({ compareOpen: true }).findComponent(PaneDivider).exists()).toBe(false)
   })
 })

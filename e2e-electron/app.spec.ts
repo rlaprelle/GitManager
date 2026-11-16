@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { type ElectronApplication, type Page, _electron as electron, expect, test } from '@playwright/test'
 import type { StoredRepository } from '../electron/main/git/GitCliDataSource'
 import {
@@ -53,6 +54,16 @@ async function launch(repositories?: StoredRepository[], env: Record<string, str
   userData = await mkdtemp(join(tmpdir(), 'git-manager-userdata-'))
   const listed = repositories ?? [{ id: 'sample', path: fixtures.sample }]
   await writeFile(join(userData, 'repositories.json'), JSON.stringify({ version: 1, repositories: listed }))
+  await start(env)
+}
+
+/** Closes the app and opens it again on the same data folder, as a user restarting it would. */
+async function relaunch(): Promise<void> {
+  await app?.close()
+  await start()
+}
+
+async function start(env: Record<string, string> = {}): Promise<void> {
   app = await electron.launch({
     args: ['.'],
     env: {
@@ -223,6 +234,23 @@ test.describe('with git installed', () => {
   })
 })
 
+test('remembers a dragged pane size after the app is closed and opened again', async () => {
+  await launch()
+  await expect(status()).toHaveText('Ready')
+  const divider = window.getByRole('separator', { name: 'Resize the sidebar' })
+  const widthBefore = Math.round((await sidebar().boundingBox())!.width)
+  const box = (await divider.boundingBox())!
+  await window.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await window.mouse.down()
+  await window.mouse.move(box.x + box.width / 2 + 100, box.y + box.height / 2, { steps: 4 })
+  await window.mouse.up()
+  expect(Math.round((await sidebar().boundingBox())!.width)).toBe(widthBefore + 100)
+
+  await relaunch()
+  await expect(status()).toHaveText('Ready')
+  expect(Math.round((await sidebar().boundingBox())!.width)).toBe(widthBefore + 100)
+})
+
 test('on first run, invites the user to add a repository and opens the one they choose', async () => {
   await launch([])
   await expect(window.getByRole('heading', { name: 'Add a repository to get started' })).toBeVisible()
@@ -230,6 +258,75 @@ test('on first run, invites the user to add a repository and opens the one they 
   await window.getByRole('button', { name: 'Add repository…' }).click()
   await expect(window.getByTestId('header-repo')).toHaveText('sample')
   await expect(status()).toHaveText('Added sample')
+})
+
+test('on first run, clones a repository from its URL into the folder the user picks, and remembers it', async () => {
+  await createRepositoryWithRemote(fixtures, 'clone-e2e')
+  const url = pathToFileURL(originOf(fixtures, 'clone-e2e')).href
+  const parent = await mkdtemp(join(tmpdir(), 'git-manager-clone-'))
+  try {
+    await launch([])
+    await folderPickerChooses(parent)
+    await window.getByRole('button', { name: 'Clone repository…' }).click()
+    const dialog = window.getByRole('dialog', { name: 'Clone a repository' })
+    await dialog.getByRole('button', { name: 'Browse…' }).click()
+    await expect(dialog.getByTestId('clone-folder')).toHaveText(parent)
+    await dialog.getByLabel('Repository URL').fill(url)
+    await expect(dialog.getByLabel('Folder name')).toHaveValue('clone-e2e-origin')
+    await dialog.getByLabel('Folder name').fill('cloned')
+    await dialog.getByRole('button', { name: 'Clone', exact: true }).click()
+
+    await expect(status()).toHaveText('Cloned cloned')
+    await expect(window.getByTestId('header-repo')).toHaveText('cloned')
+    await expect(window.getByTestId('header-branch')).toHaveText('main')
+    await expect(window.getByRole('button', { name: /Work locally/ })).toBeVisible()
+    expect(await savedRepositoryPaths()).toEqual([join(parent, 'cloned')])
+    expect(await readdir(join(parent, 'cloned'))).toContain('.git')
+  } finally {
+    await app?.close()
+    app = undefined
+    await rm(parent, { recursive: true, force: true })
+  }
+})
+
+test('compares a file picked anywhere on disk with a file as it is on a branch', async () => {
+  const outside = join(fixtures.root, 'compare-picked-README.md')
+  await writeFile(outside, '# Sample\n\nPicked from disk.\n')
+  await launch()
+  await expect(status()).toHaveText('Ready')
+  await diffViewer().getByRole('button', { name: 'Compare two files…' }).click()
+
+  await folderPickerChooses(outside) // the same dialog.showOpenDialog serves the file picker
+  await window.getByRole('button', { name: 'Browse for the left file' }).click()
+  await expect(window.getByLabel('Left file', { exact: true })).toHaveValue(outside)
+  await expect(window.getByLabel('Left file: version')).toHaveValue(':on-disk')
+
+  await window.getByLabel('Right file: version').selectOption('origin/main')
+  await window.getByRole('button', { name: 'Browse for the right file' }).click()
+  const files = window.getByRole('dialog', { name: /^Files on origin\/main/ })
+  await files.getByRole('button', { name: 'README.md', exact: true }).click()
+
+  await expect(window.getByTestId('left-label')).toHaveText('compare-picked-README.md')
+  await expect(window.getByTestId('right-label')).toHaveText('origin/main · README.md')
+  await expect(window.locator('[data-side="left"][data-cell="del"]').filter({ hasText: 'Picked from disk.' })).toHaveCount(1)
+})
+
+test('offers a restart when an update has downloaded, and asks main to install it', async () => {
+  await launch()
+  await expect(status()).toHaveText('Ready')
+  // Unpackaged runs never check for updates; stand in for the updater's two ends in main.
+  await app!.evaluate(({ ipcMain }) => {
+    ;(globalThis as { installs?: number }).installs = 0
+    ipcMain.removeHandler('update:install')
+    ipcMain.handle('update:install', () => {
+      ;(globalThis as { installs?: number }).installs! += 1
+      return { ok: true, value: undefined }
+    })
+  })
+  await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.send('update:ready', '9.9.9'))
+
+  await window.locator('footer').getByRole('button', { name: 'Version 9.9.9 is ready · Restart now' }).click()
+  await expect.poll(() => app!.evaluate(() => (globalThis as { installs?: number }).installs)).toBe(1)
 })
 
 test('lists a repository whose folder is gone, says so, and lets the user remove it', async () => {
@@ -408,6 +505,21 @@ test.describe('fetching, pulling and pushing', () => {
     await expect(window.getByRole('banner')).toContainText('↓1 vs origin')
     await expect(window.locator('footer')).toContainText('Last fetch: just now')
     expect(await tipOf(repo, 'origin/main')).toBe(await tipOf(colleague, 'main'))
+  })
+
+  test('each branch shows its tip’s short hash, and a fetch moves the remote branch’s hash', async () => {
+    await launch([{ id: 'repo', path: repo }])
+    const branchHash = (name: string) =>
+      sidebar().getByRole('button', { name: new RegExp(`^${name}(\\s|$)`) }).getByTestId('branch-hash')
+    const tip = (await tipOf(repo, 'main')).slice(0, 7)
+    await expect(branchHash('main')).toHaveText(tip)
+    await expect(branchHash('origin/main')).toHaveText(tip)
+
+    await colleaguePushes('theirs.txt')
+    await headerButton('Fetch').click()
+    await expect(status()).toHaveText('Fetched: 1 branch updated')
+    await expect(branchHash('origin/main')).toHaveText((await tipOf(colleague, 'main')).slice(0, 7))
+    await expect(branchHash('main')).toHaveText(tip)
   })
 
   test('Pull fast-forwards the checked-out branch, and the new commits show', async () => {

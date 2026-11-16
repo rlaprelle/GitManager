@@ -9,10 +9,25 @@ export const IpcChannel = {
   GetCommitFiles: 'git:get-commit-files',
   GetFileDiff: 'git:get-file-diff',
   CompareFiles: 'git:compare-files',
+  ChooseCompareFile: 'compare:choose-file',
+  ListBranchFiles: 'git:list-branch-files',
   AddRepository: 'repositories:add',
   RemoveRepository: 'repositories:remove',
+  ChooseCloneFolder: 'clone:choose-folder',
+  CloneRepository: 'clone:run',
+  CancelClone: 'clone:cancel',
+  GetReadyUpdate: 'update:ready-version',
+  InstallUpdate: 'update:install',
   Checkout: 'git:checkout',
   Fetch: 'git:fetch',
   Pull: 'git:pull',
   Push: 'git:push',
+} as const
+
+/** Messages the main process sends the window unasked (no handler, no answer). */
+export const IpcEvent = {
+  /** A running clone's progress: a CloneProgress, sent to the window that asked for the clone. */
+  CloneProgress: 'clone:progress',
+  /** An update has downloaded and waits for a restart: its version. */
+  UpdateReady: 'update:ready',
 } as const

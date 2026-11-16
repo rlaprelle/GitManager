@@ -1,9 +1,11 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositories'
 import type { GitDataSource, RepositoryOperation } from '@/services/GitDataSource'
 import { MockGitDataSource } from '@/services/MockGitDataSource'
 import { heldSource } from '@/composables/__tests__/heldSource'
+import PaneDivider from '@/components/PaneDivider.vue'
+import { PANE_SIZES_KEY } from '@/composables/usePaneSizes'
 import App from '../App.vue'
 
 async function mountApp(source: GitDataSource = new MockGitDataSource()) {
@@ -316,6 +318,165 @@ describe('App', () => {
     await flushPromises()
     expect(rows()).toHaveLength(250)
     expect(wrapper.find('[data-testid="show-more-history"]').exists()).toBe(false)
+  })
+
+  it('offers a restart into a downloaded update, from the status bar', async () => {
+    let announce: (version: string) => void = () => {}
+    const install = vi.fn(async () => {})
+    const wrapper = mount(App, {
+      props: {
+        source: new MockGitDataSource(),
+        comparePaths: SAMPLE_COMPARE_PATHS,
+        updates: {
+          readyVersion: async () => null,
+          onReady: (listener: (version: string) => void) => ((announce = listener), () => {}),
+          install,
+        },
+      },
+    })
+    await flushPromises()
+    expect(wrapper.get('footer').text()).not.toContain('Restart now')
+    announce('0.2.1')
+    await flushPromises()
+    await buttonByText(wrapper, 'Version 0.2.1 is ready · Restart now').trigger('click')
+    expect(install).toHaveBeenCalledTimes(1)
+  })
+
+  it('compares a file on a branch, picked from the branch’s file list', async () => {
+    HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+      this.setAttribute('open', '')
+    })
+    HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
+      this.removeAttribute('open')
+    })
+    const wrapper = await mountApp()
+    await buttonByText(wrapper, 'Compare two files…').trigger('click')
+    await flushPromises()
+    await wrapper.get('select[aria-label="Right file: version"]').setValue('origin/release/2.4')
+    await flushPromises()
+    await wrapper.get('button[aria-label="Browse for the right file"]').trigger('click')
+    await flushPromises()
+    const dialog = wrapper.get('dialog[aria-labelledby="branch-files-title"]')
+    expect(dialog.attributes('open')).toBeDefined()
+    await dialog.findAll('li button').find((button) => button.text() === 'pom.xml')!.trigger('click')
+    await flushPromises()
+    expect(dialog.attributes('open')).toBeUndefined()
+    expect(wrapper.get<HTMLInputElement>('#gm-right').element.value).toBe('pom.xml')
+    expect(wrapper.get('[data-testid="right-label"]').text()).toBe('origin/release/2.4 · pom.xml')
+  })
+
+  it('offers Browse… on a working-tree side only where the host has a file picker', async () => {
+    const withPicker = mount(App, {
+      props: { source: new MockGitDataSource(), comparePaths: SAMPLE_COMPARE_PATHS, canChooseFiles: true },
+    })
+    await flushPromises()
+    await buttonByText(withPicker, 'Compare two files…').trigger('click')
+    expect(withPicker.find('button[aria-label="Browse for the left file"]').exists()).toBe(true)
+    const withoutPicker = await mountApp()
+    await buttonByText(withoutPicker, 'Compare two files…').trigger('click')
+    expect(withoutPicker.find('button[aria-label="Browse for the left file"]').exists()).toBe(false)
+  })
+
+  describe('cloning', () => {
+    function stubDialogs() {
+      HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+        this.setAttribute('open', '')
+      })
+      HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
+        this.removeAttribute('open')
+      })
+    }
+
+    async function cloneThroughDialog(wrapper: Awaited<ReturnType<typeof mountApp>>) {
+      const dialog = wrapper.get('dialog[aria-labelledby="clone-title"]')
+      expect(dialog.attributes('open')).toBeDefined()
+      await buttonByText(wrapper, 'Browse…').trigger('click')
+      await flushPromises()
+      expect(dialog.get('[data-testid="clone-folder"]').text()).toBe('C:\\dev')
+      await dialog.get('input[placeholder^="https://"]').setValue('https://example.com/team/tools.git')
+      await dialog.get('form').trigger('submit')
+      await vi.waitFor(() => expect(wrapper.get('[data-testid="header-repo"]').text()).toBe('tools'))
+      expect(dialog.attributes('open')).toBeUndefined()
+    }
+
+    it('clones from the sidebar’s Clone button, then lists and opens the clone', async () => {
+      stubDialogs()
+      const wrapper = await mountApp(new MockGitDataSource(undefined, 0))
+      await wrapper.get('button[aria-label="Clone repository"]').trigger('click')
+      await cloneThroughDialog(wrapper)
+      expect(statusText(wrapper)).toBe('Cloned tools')
+      expect(wrapper.get('nav').text()).toContain('C:\\dev\\tools')
+    })
+
+    it('clones from the first-run screen', async () => {
+      stubDialogs()
+      const wrapper = await mountApp(new MockGitDataSource([], 0))
+      await buttonByText(wrapper, 'Clone repository…').trigger('click')
+      await cloneThroughDialog(wrapper)
+    })
+
+    it('offers Clone only on a host that clones', async () => {
+      const wrapper = mount(App, {
+        props: { source: new MockGitDataSource(), comparePaths: SAMPLE_COMPARE_PATHS, operations: ['checkout'] },
+      })
+      await flushPromises()
+      expect(wrapper.find('button[aria-label="Clone repository"]').exists()).toBe(false)
+    })
+  })
+
+  describe('resizable panes', () => {
+    afterEach(() => localStorage.clear())
+
+    const divider = (wrapper: Awaited<ReturnType<typeof mountApp>>, label: string) =>
+      wrapper.findAllComponents(PaneDivider).find((d) => d.props('label') === label)!
+
+    it('has a divider for each of the four pane boundaries', async () => {
+      const labels = (await mountApp()).findAllComponents(PaneDivider).map((d) => d.props('label'))
+      expect(labels).toEqual([
+        'Resize the repository list',
+        'Resize the sidebar',
+        'Resize the diff panel',
+        'Resize the file list',
+      ])
+    })
+
+    it('sizes each pane from its divider, remembers it, and puts it back on reset', async () => {
+      const wrapper = await mountApp()
+      const root = wrapper.get('div')
+      const panes = [
+        ['Resize the sidebar', '--gm-sidebar-size', wrapper.get('nav')],
+        ['Resize the repository list', '--gm-repositories-size', wrapper.get('nav section')],
+        ['Resize the diff panel', '--gm-diff-size', wrapper.get('[aria-label="Diff viewer"]')],
+        ['Resize the file list', '--gm-file-list-size', wrapper.get('[aria-label="Diff viewer"] .border-r')],
+      ] as const
+      for (const [label, variable, pane] of panes) {
+        expect(pane.classes().some((c) => c.includes(variable))).toBe(false)
+        divider(wrapper, label).vm.$emit('resize', 333)
+        await wrapper.vm.$nextTick()
+        expect(root.attributes('style')).toContain(`${variable}: 333px`)
+        expect(pane.classes().some((c) => c.includes(`var(${variable})`))).toBe(true)
+      }
+      expect(JSON.parse(localStorage.getItem(PANE_SIZES_KEY)!)).toEqual({
+        sidebar: 333,
+        repositories: 333,
+        diff: 333,
+        fileList: 333,
+      })
+
+      for (const [label, variable, pane] of panes) {
+        divider(wrapper, label).vm.$emit('reset')
+        await wrapper.vm.$nextTick()
+        expect(root.attributes('style') ?? '').not.toContain(variable)
+        expect(pane.classes().some((c) => c.includes(variable))).toBe(false)
+      }
+      expect(localStorage.getItem(PANE_SIZES_KEY)).toBe('{}')
+    })
+
+    it('starts from the remembered sizes', async () => {
+      localStorage.setItem(PANE_SIZES_KEY, '{"sidebar":340}')
+      const wrapper = await mountApp()
+      expect(wrapper.get('div').attributes('style')).toContain('--gm-sidebar-size: 340px')
+    })
   })
 
   it('applies a custom accent colour', async () => {

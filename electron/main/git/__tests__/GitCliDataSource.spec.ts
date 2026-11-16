@@ -1,8 +1,9 @@
 // @vitest-environment node
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { describeGitDataSourceContract } from '../../../../src/services/__tests__/gitDataSourceContract'
-import { mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { GitCliDataSource, type RepositoryCatalog, type StoredRepository } from '../GitCliDataSource'
 import {
   type Fixtures,
@@ -82,6 +83,9 @@ function choosing(chosenFolder: string | null, ...repositories: StoredRepository
   return new GitCliDataSource(memoryCatalog(repositories), async () => chosenFolder)
 }
 
+/** A working-tree file of a listed repository, as one side of a comparison. */
+const working = (repoId: string, path: string) => ({ kind: 'repository' as const, repoId, branch: null, path })
+
 const allFixtures = (): StoredRepository[] => [
   { id: 'sample', path: fixtures.sample },
   { id: 'empty', path: fixtures.empty },
@@ -94,12 +98,124 @@ describeGitDataSourceContract(
   async () => ({
     source: sourceFor(...allFixtures()),
     comparePaths: { left: 'config/left.yml', right: 'config/right.yml' },
+    // main has one commit origin/main lacks, which edits the README.
+    compareBranches: { left: 'main', right: 'origin/main', path: 'README.md' },
   }),
   async () => {
     const { source } = await checkoutRepository()
     return { source, repoId: 'repo', otherLocal: 'feature/local', remoteOnly: 'origin/feature/remote' }
   },
+  async () => {
+    const { parent, url } = await cloneSetup()
+    await mkdir(join(parent, 'taken'))
+    await writeFile(join(parent, 'taken', 'notes.txt'), 'mine\n')
+    return { source: choosing(parent), url, takenName: 'taken' }
+  },
 )
+
+let cloneSetups = 0
+
+/** A bare origin to clone over file:// (the smart transport, so git reports progress) and an empty folder to clone into. */
+async function cloneSetup(): Promise<{ parent: string; url: string }> {
+  const name = `clone-source-${++cloneSetups}`
+  await createRepositoryWithRemote(fixtures, name)
+  const parent = join(fixtures.root, `clone-into-${cloneSetups}`)
+  await mkdir(parent)
+  return { parent, url: pathToFileURL(originOf(fixtures, name)).href }
+}
+
+describe('GitCliDataSource comparing files from anywhere', () => {
+  it('compares a file picked anywhere on disk with one in a repository', async () => {
+    const outside = join(fixtures.root, 'picked-outside.yml')
+    await writeFile(outside, ['  name: left', '  size: 2', '  mode: fast', ''].join('\n'))
+    const source = new GitCliDataSource(memoryCatalog([{ id: 'sample', path: fixtures.sample }]), async () => null, async () => outside)
+    const picked = await source.chooseCompareFile()
+    expect(picked!.path).toBe(outside)
+    const hunks = await source.compareFiles({ kind: 'file', fileId: picked!.fileId }, working('sample', 'config/left.yml'))
+    expect(hunks.flatMap((hunk) => hunk.lines)).toEqual(expect.arrayContaining(['-  size: 2', '+  size: 1']))
+  })
+
+  it('answers null when the file picker is cancelled', async () => {
+    expect(await sourceFor().chooseCompareFile()).toBeNull()
+  })
+
+  it('copies a branch’s version out byte for byte, so a file that isn’t UTF-8 matches itself', async () => {
+    // Latin-1 'café': git diffs it as text (no NUL), and reading it as UTF-8 would change its bytes.
+    const folder = await createScratchRepository(fixtures, 'latin1')
+    await writeFile(join(folder, 'menu.txt'), Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x0a]))
+    await gitInFixture(fixtures, folder, 'add', 'menu.txt')
+    await gitInFixture(fixtures, folder, 'commit', '--quiet', '-m', 'Menu')
+    const source = sourceFor({ id: 'latin1', path: folder })
+    const onMain = { kind: 'repository' as const, repoId: 'latin1', branch: 'main', path: 'menu.txt' }
+    expect(await source.compareFiles(onMain, working('latin1', 'menu.txt'))).toEqual([])
+  })
+
+  it('compares files on branches of two different repositories', async () => {
+    const other = await createScratchRepository(fixtures, 'compare-other')
+    await commitInFixture(fixtures, other, 'README.md', '# Other\n', 'Describe the other')
+    const source = sourceFor({ id: 'sample', path: fixtures.sample }, { id: 'other', path: other })
+    const hunks = await source.compareFiles(
+      { kind: 'repository', repoId: 'sample', branch: 'origin/main', path: 'README.md' },
+      { kind: 'repository', repoId: 'other', branch: 'main', path: 'README.md' },
+    )
+    expect(hunks.flatMap((hunk) => hunk.lines)).toEqual(expect.arrayContaining(['-# Sample', '+# Other']))
+  })
+})
+
+describe('GitCliDataSource cloning', () => {
+  it('clones into an empty folder that is already there', async () => {
+    const { parent, url } = await cloneSetup()
+    await mkdir(join(parent, 'ready'))
+    const source = choosing(parent)
+    await source.chooseCloneFolder()
+    const { repository } = await source.cloneRepository({ url, name: 'ready' })
+    expect(repository!.currentBranch).toBe('main')
+    expect(await readdir(join(parent, 'ready'))).toContain('.git')
+  })
+
+  it('says why git couldn’t clone, not "Cloning into…"', async () => {
+    const { parent } = await cloneSetup()
+    const source = choosing(parent)
+    await source.chooseCloneFolder()
+    const missing = pathToFileURL(join(fixtures.root, 'no-such-origin.git')).href
+    await expect(source.cloneRepository({ url: missing, name: 'gone' })).rejects.toThrow(/does not appear to be a git repository|not found/)
+    expect(await readdir(parent)).toEqual([])
+  })
+
+  it('cancelling stops git and the ssh it started, and removes the folder the clone made', async () => {
+    const { parent } = await cloneSetup()
+    // A stand-in ssh that hangs as a slow server would, counting a heartbeat so the test can tell it stopped.
+    const heartbeat = join(fixtures.root, 'hanging-ssh-heartbeat').replaceAll('\\', '/')
+    const hangingSsh = join(fixtures.root, 'hanging-ssh.sh').replaceAll('\\', '/')
+    await writeFile(hangingSsh, `#!/bin/sh\ni=0\nwhile true; do i=$((i+1)); echo $i > '${heartbeat}'; sleep 0.1; done\n`)
+    const beat = () => readFile(heartbeat, 'utf8').catch(() => '')
+    const previous = process.env['GIT_SSH_COMMAND']
+    process.env['GIT_SSH_COMMAND'] = `sh '${hangingSsh}'`
+    try {
+      const source = choosing(parent)
+      await source.chooseCloneFolder()
+      const clone = source.cloneRepository({ url: 'ssh://git@example.invalid/team/repo.git', name: 'hanging' })
+      await vi.waitFor(async () => expect(await beat()).not.toBe(''), { timeout: 30_000, interval: 100 })
+      await source.cancelClone()
+      await expect(clone).rejects.toThrow('Clone cancelled')
+      expect(await readdir(parent)).toEqual([])
+      // Killing git alone would leave its ssh beating on.
+      const afterCancel = await beat()
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+      expect(await beat()).toBe(afterCancel)
+    } finally {
+      if (previous === undefined) delete process.env['GIT_SSH_COMMAND']
+      else process.env['GIT_SSH_COMMAND'] = previous
+    }
+  })
+
+  it('asks the folder picker with its own title, and keeps the last folder picked', async () => {
+    const titles: string[] = []
+    const source = new GitCliDataSource(memoryCatalog([]), async (title) => (titles.push(title), title === 'x' ? null : fixtures.root))
+    expect(await source.chooseCloneFolder()).toBe(fixtures.root)
+    expect(titles).toEqual(['Choose the folder to clone into'])
+  })
+})
 
 describe('GitCliDataSource reading the fixture repositories', () => {
   const sample = () => sourceFor(...allFixtures())
@@ -212,7 +328,7 @@ describe('GitCliDataSource reading the fixture repositories', () => {
   })
 
   it('compares two files in the working tree', async () => {
-    const hunks = await sample().compareFiles('sample', 'config/left.yml', 'config/right.yml')
+    const hunks = await sample().compareFiles(working('sample', 'config/left.yml'), working('sample', 'config/right.yml'))
     expect(hunks.flatMap((hunk) => hunk.lines)).toEqual([
       '-  name: left',
       '+  name: right',
@@ -225,9 +341,10 @@ describe('GitCliDataSource reading the fixture repositories', () => {
   it('refuses arguments that could reach git as options or leave the repository', async () => {
     const source = sample()
     await expect(source.getCommitFiles('sample', '--output=C:/evil.txt')).rejects.toThrow('Not a commit hash')
-    await expect(source.compareFiles('sample', '../outside.txt', 'config/left.yml')).rejects.toThrow('outside the repository')
-    await expect(source.compareFiles('sample', 'C:/Windows/win.ini', 'config/left.yml')).rejects.toThrow('outside the repository')
-    await expect(source.compareFiles('sample', '.', 'config/left.yml')).rejects.toThrow('outside the repository')
+    const left = working('sample', 'config/left.yml')
+    await expect(source.compareFiles(working('sample', '../outside.txt'), left)).rejects.toThrow('outside the repository')
+    await expect(source.compareFiles(working('sample', 'C:/Windows/win.ini'), left)).rejects.toThrow('outside the repository')
+    await expect(source.compareFiles(working('sample', '.'), left)).rejects.toThrow('outside the repository')
   })
 
   it('takes a file path literally, never as git pathspec magic', async () => {
@@ -244,7 +361,7 @@ describe('GitCliDataSource reading the fixture repositories', () => {
     const folder = await createScratchRepository(fixtures, 'dotted')
     await commitInFixture(fixtures, folder, '..left.txt', 'a\n', 'Add left')
     await commitInFixture(fixtures, folder, '..right.txt', 'b\n', 'Add right')
-    const hunks = await sourceFor({ id: 'dotted', path: folder }).compareFiles('dotted', '..left.txt', '..right.txt')
+    const hunks = await sourceFor({ id: 'dotted', path: folder }).compareFiles(working('dotted', '..left.txt'), working('dotted', '..right.txt'))
     expect(hunks.flatMap((hunk) => hunk.lines)).toEqual(['-a', '+b'])
   })
 

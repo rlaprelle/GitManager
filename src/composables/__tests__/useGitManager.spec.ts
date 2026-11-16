@@ -230,16 +230,21 @@ describe('useGitManager', () => {
   describe('compare two files', () => {
     it('loads the diff between the two paths in the open repository', async () => {
       const source = new MockGitDataSource()
-      const compared: string[][] = []
+      const compared: unknown[][] = []
       const compareFiles = source.compareFiles.bind(source)
-      source.compareFiles = (repoId, left, right) => {
-        compared.push([repoId, left, right])
-        return compareFiles(repoId, left, right)
+      source.compareFiles = (left, right) => {
+        compared.push([left, right])
+        return compareFiles(left, right)
       }
       const comparing = await loadedManager(source)
       await comparing.openCompare()
       expect(comparing.compareOpen.value).toBe(true)
-      expect(compared).toEqual([['inventory', SAMPLE_COMPARE_PATHS.left, SAMPLE_COMPARE_PATHS.right]])
+      expect(compared).toEqual([
+        [
+          { kind: 'repository', repoId: 'inventory', branch: null, path: SAMPLE_COMPARE_PATHS.left },
+          { kind: 'repository', repoId: 'inventory', branch: null, path: SAMPLE_COMPARE_PATHS.right },
+        ],
+      ])
       expect(comparing.activeHunks.value).toEqual(sampleCompareDiff)
       expect(comparing.status.value).toBe('Comparing two files')
     })
@@ -949,5 +954,169 @@ describe('useGitManager', () => {
       expect(failing.status.value).toBe('Failed: local changes would be overwritten')
       expect(failing.operationRunning.value).toBe(false)
     })
+  })
+})
+
+describe('useGitManager cloning', () => {
+  const request = { url: 'https://example.com/team/tools.git', name: 'tools' }
+
+  async function cloningManager(stepMs = 0) {
+    const source = new MockGitDataSource(undefined, stepMs)
+    const gm = await loadedManager(source)
+    gm.openCloneDialog()
+    await gm.chooseCloneFolder()
+    return { gm, source }
+  }
+
+  it('remembers the folder the user picked', async () => {
+    const { gm } = await cloningManager()
+    expect(gm.cloneFolder.value).toBe('C:\\dev')
+  })
+
+  it('shows progress while cloning, then lists and opens the clone and closes the dialog', async () => {
+    const { gm } = await cloningManager(1)
+    const progress: string[] = []
+    const clone = gm.cloneRepository(request)
+    expect(gm.runningOperation.value).toBe('clone')
+    const timer = setInterval(() => progress.push(gm.cloneProgress.value ?? ''), 1)
+    await clone
+    clearInterval(timer)
+    expect(progress).toContain('Cloning tools… Receiving objects 40%')
+    expect(gm.cloneDialogOpen.value).toBe(false)
+    expect(gm.repository.value?.name).toBe('tools')
+    expect(gm.repositories.value.map((repo) => repo.name)).toContain('tools')
+    expect(gm.status.value).toBe('Cloned tools')
+    expect(gm.cloneProgress.value).toBeNull()
+    expect(gm.runningOperation.value).toBeNull()
+  })
+
+  it('keeps the dialog open with the reason when the clone fails, so it can be corrected', async () => {
+    const { gm } = await cloningManager()
+    await gm.cloneRepository({ url: 'https://example.com/pricing-api.git', name: 'pricing-api' })
+    expect(gm.cloneDialogOpen.value).toBe(true)
+    expect(gm.cloneError.value).toBe('C:\\dev\\pricing-api already exists and isn’t empty')
+    expect(gm.status.value).toBe('Failed: C:\\dev\\pricing-api already exists and isn’t empty')
+    expect(gm.repository.value?.name).toBe('inventory-service')
+  })
+
+  it('cancelling stops the clone and says so, without calling it a failure', async () => {
+    const { gm } = await cloningManager(20)
+    const clone = gm.cloneRepository(request)
+    await gm.cancelClone()
+    await clone
+    expect(gm.status.value).toBe('Clone cancelled')
+    expect(gm.cloneError.value).toBeNull()
+    expect(gm.repositories.value.map((repo) => repo.name)).not.toContain('tools')
+  })
+
+  it('won’t close the dialog while its clone runs, and runs no other operation meanwhile', async () => {
+    const { gm } = await cloningManager(5)
+    const clone = gm.cloneRepository(request)
+    gm.closeCloneDialog()
+    expect(gm.cloneDialogOpen.value).toBe(true)
+    await gm.fetchRemote()
+    expect(gm.status.value).toMatch(/^Cloning tools…/)
+    await clone
+  })
+
+  it('clones from the first-run screen, with no repository open', async () => {
+    const empty = new MockGitDataSource([], 0)
+    const gm = await loadedManager(empty)
+    expect(gm.repository.value).toBeUndefined()
+    await gm.chooseCloneFolder()
+    await gm.cloneRepository(request)
+    expect(gm.repository.value?.name).toBe('tools')
+    expect(gm.branches.value.local.map((branch) => branch.name)).toContain('main')
+    expect(gm.commits.value.length).toBeGreaterThan(0)
+  })
+
+  it('reports a failed folder pick in the status bar', async () => {
+    const source = new MockGitDataSource(undefined, 0)
+    source.chooseCloneFolder = async () => {
+      throw new Error('picker unavailable')
+    }
+    const gm = await loadedManager(source)
+    await gm.chooseCloneFolder()
+    expect(gm.status.value).toBe('Failed: picker unavailable')
+    expect(gm.cloneFolder.value).toBeNull()
+  })
+})
+
+describe('useGitManager comparing files from branches, repositories and disk', () => {
+  async function comparing(source = new MockGitDataSource()) {
+    const gm = await loadedManager(source)
+    await gm.openCompare()
+    return gm
+  }
+
+  it('compares a file as it is on two branches, and says where each side comes from', async () => {
+    const gm = await comparing()
+    await gm.setCompareBranch('left', 'main')
+    await gm.setComparePath('left', 'pom.xml')
+    await gm.setCompareBranch('right', 'origin/release/2.4')
+    await gm.setComparePath('right', 'pom.xml')
+    expect(gm.activeHunks.value.length).toBeGreaterThan(0)
+    expect(gm.compareLabels.value).toEqual({ left: 'main · pom.xml', right: 'origin/release/2.4 · pom.xml' })
+    expect(gm.leftBranches.value).toContain('origin/release/2.4')
+  })
+
+  it('compares with another repository, offering that repository’s branches', async () => {
+    const gm = await comparing()
+    await gm.setCompareRepository('right', 'pricing')
+    expect(gm.rightSide.value.repoId).toBe('pricing')
+    expect(gm.rightBranches.value).toEqual(expect.arrayContaining(['main', 'origin/main']))
+    expect(gm.rightBranches.value).not.toContain('feature/stock-reservations')
+    expect(gm.compareLabels.value.right).toBe('pricing-api · application-prod.yml')
+    // Choosing the open repository again means "whichever is open".
+    await gm.setCompareRepository('right', 'inventory')
+    expect(gm.rightSide.value.repoId).toBeNull()
+  })
+
+  it('picks a branch’s file from the in-app list', async () => {
+    const gm = await comparing()
+    await gm.setCompareBranch('left', 'main')
+    await gm.openBranchFilePicker('left')
+    expect(gm.branchFilePicker.value).toMatchObject({ which: 'left', branch: 'main', loading: false })
+    expect(gm.branchFilePicker.value!.files).toContain('pom.xml')
+    await gm.pickBranchFile('pom.xml')
+    expect(gm.branchFilePicker.value).toBeNull()
+    expect(gm.leftSide.value).toMatchObject({ branch: 'main', path: 'pom.xml' })
+  })
+
+  it('offers no branch list for a working-tree side', async () => {
+    const gm = await comparing()
+    await gm.openBranchFilePicker('left')
+    expect(gm.branchFilePicker.value).toBeNull()
+  })
+
+  it('compares a file picked on disk by the id the source gave it, until the side changes', async () => {
+    const source = new MockGitDataSource()
+    source.chooseCompareFile = async () => ({ fileId: 'picked-1', path: 'D:\\notes\\old.yml' })
+    const sent: unknown[] = []
+    source.compareFiles = async (left) => (sent.push(left), [])
+    const gm = await comparing(source)
+    await gm.chooseCompareFile('left')
+    expect(sent.at(-1)).toEqual({ kind: 'file', fileId: 'picked-1' })
+    expect(gm.compareLabels.value.left).toBe('old.yml')
+    await gm.setCompareBranch('left', 'main')
+    expect(gm.leftSide.value).toEqual({ repoId: null, branch: 'main', path: '', fileId: null })
+  })
+
+  it('drops a failed comparison’s message once a comparison works', async () => {
+    const gm = await comparing()
+    await gm.setCompareBranch('left', 'main')
+    expect(gm.status.value).toMatch(/^Couldn’t compare files: .* isn’t on main$/)
+    await gm.setComparePath('left', 'pom.xml')
+    expect(gm.status.value).toBe('Comparing two files')
+  })
+
+  it('swaps everything about the two sides', async () => {
+    const gm = await comparing()
+    await gm.setCompareBranch('left', 'main')
+    await gm.setCompareRepository('right', 'pricing')
+    const [left, right] = [gm.leftSide.value, gm.rightSide.value]
+    await gm.swapComparePaths()
+    expect(gm.leftSide.value).toEqual(right)
+    expect(gm.rightSide.value).toEqual(left)
   })
 })
