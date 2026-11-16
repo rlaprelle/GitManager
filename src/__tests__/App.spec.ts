@@ -320,6 +320,28 @@ describe('App', () => {
     expect(wrapper.find('[data-testid="show-more-history"]').exists()).toBe(false)
   })
 
+  it('offers a restart into a downloaded update, from the status bar', async () => {
+    let announce: (version: string) => void = () => {}
+    const install = vi.fn(async () => {})
+    const wrapper = mount(App, {
+      props: {
+        source: new MockGitDataSource(),
+        comparePaths: SAMPLE_COMPARE_PATHS,
+        updates: {
+          readyVersion: async () => null,
+          onReady: (listener: (version: string) => void) => ((announce = listener), () => {}),
+          install,
+        },
+      },
+    })
+    await flushPromises()
+    expect(wrapper.get('footer').text()).not.toContain('Restart now')
+    announce('0.2.1')
+    await flushPromises()
+    await buttonByText(wrapper, 'Version 0.2.1 is ready · Restart now').trigger('click')
+    expect(install).toHaveBeenCalledTimes(1)
+  })
+
   describe('cloning', () => {
     function stubDialogs() {
       HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {

@@ -81,6 +81,26 @@ describe('registerIpcHandlers', () => {
     expect(await handlers.get(IpcChannel.CancelClone)!(window)).toEqual({ ok: true, value: undefined })
   })
 
+  it('reports no update and refuses to install one when this run doesn’t update itself', async () => {
+    const invoke = registeredHandlers()
+    expect(await invoke(IpcChannel.GetReadyUpdate)).toEqual({ ok: true, value: null })
+    expect(await invoke(IpcChannel.InstallUpdate)).toEqual({ ok: false, message: 'Only the installed app updates itself' })
+  })
+
+  it('reports a downloaded update and restarts into it', async () => {
+    const handlers = new Map<string, Handler>()
+    let installed = 0
+    registerIpcHandlers({ handle: (channel, listener) => handlers.set(channel, listener as Handler) }, {
+      source: new MockGitDataSource(),
+      appVersion: '1.2.3',
+      checkGit: async () => ({ state: 'missing', minimum: '2.30' }),
+      updates: { readyVersion: () => '0.2.1', install: () => void installed++ },
+    })
+    expect(await handlers.get(IpcChannel.GetReadyUpdate)!({})).toEqual({ ok: true, value: '0.2.1' })
+    expect(await handlers.get(IpcChannel.InstallUpdate)!({})).toEqual({ ok: true, value: undefined })
+    expect(installed).toBe(1)
+  })
+
   it('passes the source only a clone request of two pieces of text', async () => {
     const invoke = registeredHandlers()
     expect(await invoke(IpcChannel.CloneRepository, 'https://host/tools.git')).toEqual({

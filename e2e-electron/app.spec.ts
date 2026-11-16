@@ -289,6 +289,24 @@ test('on first run, clones a repository from its URL into the folder the user pi
   }
 })
 
+test('offers a restart when an update has downloaded, and asks main to install it', async () => {
+  await launch()
+  await expect(status()).toHaveText('Ready')
+  // Unpackaged runs never check for updates; stand in for the updater's two ends in main.
+  await app!.evaluate(({ ipcMain }) => {
+    ;(globalThis as { installs?: number }).installs = 0
+    ipcMain.removeHandler('update:install')
+    ipcMain.handle('update:install', () => {
+      ;(globalThis as { installs?: number }).installs! += 1
+      return { ok: true, value: undefined }
+    })
+  })
+  await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.send('update:ready', '9.9.9'))
+
+  await window.locator('footer').getByRole('button', { name: 'Version 9.9.9 is ready · Restart now' }).click()
+  await expect.poll(() => app!.evaluate(() => (globalThis as { installs?: number }).installs)).toBe(1)
+})
+
 test('lists a repository whose folder is gone, says so, and lets the user remove it', async () => {
   const gone = join(fixtures.root, 'moved-away')
   await launch([

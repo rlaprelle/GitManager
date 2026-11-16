@@ -1,11 +1,14 @@
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BrowserWindow, Menu, app, dialog, ipcMain } from 'electron'
+import electronUpdater from 'electron-updater'
 import windowIcon from '../../build/icon.ico?asset'
 import { GitCliDataSource } from './git/GitCliDataSource'
 import { checkGit } from './git/gitVersion'
+import { startUpdateChecks, type UpdaterLike } from './updates'
 import { registerIpcHandlers } from './ipc'
 import { RepositoryStore } from './repositoryStore'
+import { IpcEvent } from '../shared/channels'
 
 // Must match appId in electron-builder.yml so taskbar pinning and the
 // installer's shortcuts refer to the same app.
@@ -76,6 +79,15 @@ async function chooseFolder(title: string): Promise<string | null> {
   return result.canceled ? null : (result.filePaths[0] ?? null)
 }
 
+/** electron-updater is CommonJS: its autoUpdater is reached through the default export under ESM. */
+function autoUpdater(): UpdaterLike {
+  return electronUpdater.autoUpdater
+}
+
+function tellWindowUpdateIsReady(version: string): void {
+  for (const window of BrowserWindow.getAllWindows()) window.webContents.send(IpcEvent.UpdateReady, version)
+}
+
 /**
  * Dev and test runs (unpackaged) keep their own data folder, so they never touch the installed
  * app's repository list. Tests point it at a temporary folder with GIT_MANAGER_USER_DATA.
@@ -103,7 +115,9 @@ if (!developerToolsAllowed()) Menu.setApplicationMenu(null)
 void app.whenReady().then(() => {
   const repositories = new RepositoryStore(join(app.getPath('userData'), 'repositories.json'))
   const source = new GitCliDataSource(repositories, chooseFolder)
-  registerIpcHandlers(ipcMain, { source, appVersion: app.getVersion(), checkGit })
+  // Only the installed app updates itself: dev and test runs have no app-update.yml, and must never restart.
+  const updates = app.isPackaged ? startUpdateChecks(autoUpdater(), tellWindowUpdateIsReady) : null
+  registerIpcHandlers(ipcMain, { source, appVersion: app.getVersion(), checkGit, updates })
   createMainWindow()
 })
 

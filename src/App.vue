@@ -4,6 +4,8 @@ import { ALL_OPERATIONS, type GitDataSource, type RepositoryOperation } from '@/
 import { useGitManager } from '@/composables/useGitManager'
 import { useNow } from '@/composables/useNow'
 import { usePaneSizes } from '@/composables/usePaneSizes'
+import { useUpdateNotice } from '@/composables/useUpdateNotice'
+import type { UpdateSource } from '@/types/bridge'
 import { PANE_LIMITS } from '@/lib/paneLayout'
 import { pluralize } from '@/lib/format'
 import AppHeader from '@/components/AppHeader.vue'
@@ -25,6 +27,8 @@ const props = withDefaults(
     accent?: string
     /** The operations that change a repository this host offers; the others' buttons are hidden. */
     operations?: readonly RepositoryOperation[]
+    /** The installed desktop app's updates; the browser build has none. */
+    updates?: UpdateSource
   }>(),
   { operations: () => ALL_OPERATIONS },
 )
@@ -94,6 +98,8 @@ const {
   showMoreHistory,
   // The data source is a service, not state: unwrap it in case a parent passed it in reactive props.
 } = useGitManager(toRaw(props.source), { comparePaths: props.comparePaths })
+
+const updateNotice = useUpdateNotice(props.updates)
 
 /** Date labels ('Today 11:42', '12 min ago') are formatted against this, so they stay right while the app is open. */
 const now = useNow()
@@ -286,12 +292,21 @@ onUnmounted(() => {
         :current-branch="headLabel"
         :last-fetch="repository.lastFetch"
         :now="now"
+        :update-version="updateNotice.readyVersion.value"
+        :update-problem="updateNotice.problem.value"
+        @install-update="updateNotice.install"
       />
     </template>
 
     <template v-else-if="!loading && repositories.length === 0">
       <NoRepositories :can-clone="canClone" @add="addRepository" @clone="openCloneDialog" />
-      <StatusBar :status="status" :now="now" />
+      <StatusBar
+        :status="status"
+        :now="now"
+        :update-version="updateNotice.readyVersion.value"
+        :update-problem="updateNotice.problem.value"
+        @install-update="updateNotice.install"
+      />
     </template>
 
     <div v-else class="flex flex-auto items-center justify-center text-gm-muted" role="status">

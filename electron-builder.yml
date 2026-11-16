@@ -1,4 +1,5 @@
-# Windows-only installer for Git Manager. Run with `npm run dist`.
+# Windows-only installer for Git Manager. `npm run dist` builds it locally; the
+# release workflow (.github/workflows/release.yml) builds and publishes it.
 # Unsigned for now: SmartScreen shows "Windows protected your PC" on downloaded
 # copies until we pay for a code-signing certificate.
 
@@ -18,6 +19,10 @@ win:
   # Generated from build/icon.svg + icon-small.svg by `npm run icon`; also the installer's icon.
   icon: build/icon.ico
   executableName: GitManager
+  # The installer is unsigned, so there is no signature to check an update against; electron-updater
+  # would skip the check anyway (with a warning) and refuses outright from electron-builder 28. An
+  # update is trusted by its SHA-512 in latest.yml, downloaded over HTTPS from GitHub.
+  verifyUpdateCodeSignature: false
 
 nsis:
   # Assisted installer, current user only: no admin rights, no UAC prompt.
@@ -33,3 +38,11 @@ extraResources:
     to: licenses/Inter-OFL.txt
   - from: node_modules/@fontsource-variable/jetbrains-mono/LICENSE
     to: licenses/JetBrains-Mono-OFL.txt
+
+# Where releases go, and where the installed app looks for updates (baked into
+# app-update.yml). A draft: the workflow uploads, someone publishes it on GitHub.
+publish:
+  provider: github
+  owner: rlaprelle
+  repo: GitManager
+  releaseType: draft

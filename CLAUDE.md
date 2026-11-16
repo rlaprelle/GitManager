@@ -15,7 +15,8 @@ npm run build          # vue-tsc -b && vite build → dist/
 npm run dev:app        # electron-vite dev: Electron window, renderer from Vite on 5173
 npm run build:app      # vue-tsc -b && electron-vite build → out/
 npm run test:e2e:app   # electron-vite build, then Playwright against out/ (playwright.electron.config.ts)
-npm run dist           # build:app, then electron-builder NSIS installer → release/
+npm run dist           # build:app, then electron-builder NSIS installer → release/ (never publishes)
+npm version 0.2.1; git push --follow-tags   # release: the v* tag runs .github/workflows/release.yml → draft GitHub release
 npm run icon           # node scripts/build-icon.ts: build/icon*.svg → build/icon.ico (committed)
 ```
 
@@ -54,6 +55,8 @@ src/types/bridge.ts              GitManagerBridge: window.gitManager (preload �
 electron/main/index.ts           Electron main: window, data folder, folder picker, wiring
 electron/main/ipc.ts             handler per channel: type checks, IpcResult envelopes (testable without Electron)
 electron/main/repositoryStore.ts repositories.json in userData
+electron/main/updates.ts         auto-update (packaged only): check at start + every 4 h, download, offer restart
+.github/workflows/release.yml    v* tag → all suites → electron-builder --publish always → draft release
 electron/main/git/               GitCliDataSource, runGit, parsers, git version check; __tests__/fixtures.ts
 electron/main/git/network.ts     how fetch/pull/push run: askpass + GCM allowed, stall limits, user's ssh respected
 electron/main/git/fetchHead.ts   last fetch time (FETCH_HEAD's), and putting FETCH_HEAD back after a failed fetch
@@ -136,6 +139,7 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - `scripts/*.ts` run under Node's type stripping: explicit `.ts` import extensions (`allowImportingTsExtensions` in `tsconfig.node.json`) and erasable syntax only (no enums, no parameter properties).
 - **Unpackaged runs use a separate data folder** (`%APPDATA%\git-manager-dev`, or `GIT_MANAGER_USER_DATA`), never the installed app's `repositories.json`. e2e-electron gives each test its own temp folder; stub the folder picker with `app.evaluate(({ dialog }) => { dialog.showOpenDialog = ... })`.
 - **Git test fixtures** (`electron/main/git/__tests__/fixtures.ts`; `createScratchRepository`, `createRepositoryWithRemote` (fresh repo + bare origin, for checkout), `commitInFixture`, `gitInFixture`, `switchToNewBranchInFixture` for changes "outside the app") build throwaway repos with an empty global config (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`) so the developer's git settings can't change them. The real-git spec and e2e-electron also run the app's own git with that config (checkout runs hooks). Each `git` call is a process: give real-git specs long timeouts.
+- **Auto-update** (`electron/main/updates.ts`, electron-updater, bundled like everything else): only when `app.isPackaged`. Unsigned installer → `win.verifyUpdateCodeSignature: false` in `electron-builder.yml` (required from electron-builder 28). Releases are drafts (`publish.releaseType`): installed apps update only after someone publishes one. The release workflow rejects a tag that doesn't match `package.json`. e2e-electron can't run the real updater: it sends `update:ready` from main and replaces the `update:install` handler via `app.evaluate`. Real updates are checked by hand on a published release.
 - **Clone** (`electron/main/git/cloneInto.ts`): the parent folder comes only from `chooseCloneFolder` (main remembers it; the renderer never sends a folder); URL and name are checked by `src/lib/clone.ts` before git runs (scheme allowlist, no `-…`/`::`; Windows folder-name rules; destination missing or empty). Cancel aborts `runGit`'s `signal`, which kills the **process tree** (`taskkill /T`): killing git alone leaves ssh/remote helpers running, and a test's heartbeat stand-in ssh proves it. An already-aborted signal stops git at once. Progress reaches the renderer as `IpcEvent.CloneProgress` (main→window), not through `IpcChannel`, whose entries must all have handlers. `MockGitDataSource(repos, cloneStepMs)`: pass `0` in unit tests. The composable remembers a Cancel pressed before the source started (it waits for a refresh first).
 - **Only fetch, pull, push and clone may sign in** (`runGit(…, { network })`, built by `networkAccessFor`): everything else keeps `GCM_INTERACTIVE=never`. Never put network access on a read. Tests can't see the sign-in windows; `network.spec.ts` checks what git receives (a `!env` alias) and GitCliDataSource.spec uses a stand-in `core.sshCommand` script that records its environment. Remote fixtures: `createRepositoryWithRemote` + `cloneOriginInFixture` (a colleague) + `originOf`; origin already has `feature/local` (cloned from the repo).
 - **A failed fetch puts FETCH_HEAD back** (`preservingFetchHead` in `fetchHead.ts`): git empties it before connecting, and `lastFetch` is its time.

@@ -13,5 +13,10 @@ void bridge.getGitStatus().then((status) => {
     mountGitRequired(status)
     return
   }
-  mountApp({ source: new IpcGitDataSource(bridge.git), comparePaths: { left: '', right: '' }, operations: ALL_OPERATIONS })
+  mountApp({
+    source: new IpcGitDataSource(bridge.git),
+    comparePaths: { left: '', right: '' },
+    operations: ALL_OPERATIONS,
+    updates: bridge.updates,
+  })
 })
