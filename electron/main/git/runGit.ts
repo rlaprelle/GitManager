@@ -94,6 +94,22 @@ function stopProcessTree(child: ChildProcess): void {
   execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {})
 }
 
+/** Runs git like runGit, resolving with stdout as bytes: file contents, which may be binary. */
+export function runGitBytes(cwd: string, args: string[]): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      'git',
+      [...FIXED_SETTINGS, ...args],
+      { cwd, encoding: 'buffer', maxBuffer: MAX_OUTPUT_BYTES, windowsHide: true, env: environmentFor(undefined) },
+      (error, stdout, stderr) => {
+        if (!error) return resolve(stdout)
+        const message = stderr.toString('utf8')
+        reject(new GitError(gitMessage(message) || error.message, message))
+      },
+    )
+  })
+}
+
 function environmentFor(network: NetworkAccess | undefined): NodeJS.ProcessEnv {
   if (!network) return { ...process.env, ...ENVIRONMENT, ...NO_SIGN_IN }
   // Started from a shell that sets GCM_INTERACTIVE=never, the app would pass it on and sign-in could never show.

@@ -289,6 +289,28 @@ test('on first run, clones a repository from its URL into the folder the user pi
   }
 })
 
+test('compares a file picked anywhere on disk with a file as it is on a branch', async () => {
+  const outside = join(fixtures.root, 'compare-picked-README.md')
+  await writeFile(outside, '# Sample\n\nPicked from disk.\n')
+  await launch()
+  await expect(status()).toHaveText('Ready')
+  await diffViewer().getByRole('button', { name: 'Compare two files…' }).click()
+
+  await folderPickerChooses(outside) // the same dialog.showOpenDialog serves the file picker
+  await window.getByRole('button', { name: 'Browse for the left file' }).click()
+  await expect(window.getByLabel('Left file', { exact: true })).toHaveValue(outside)
+  await expect(window.getByLabel('Left file: version')).toHaveValue(':on-disk')
+
+  await window.getByLabel('Right file: version').selectOption('origin/main')
+  await window.getByRole('button', { name: 'Browse for the right file' }).click()
+  const files = window.getByRole('dialog', { name: /^Files on origin\/main/ })
+  await files.getByRole('button', { name: 'README.md', exact: true }).click()
+
+  await expect(window.getByTestId('left-label')).toHaveText('compare-picked-README.md')
+  await expect(window.getByTestId('right-label')).toHaveText('origin/main · README.md')
+  await expect(window.locator('[data-side="left"][data-cell="del"]').filter({ hasText: 'Picked from disk.' })).toHaveCount(1)
+})
+
 test('offers a restart when an update has downloaded, and asks main to install it', async () => {
   await launch()
   await expect(status()).toHaveText('Ready')

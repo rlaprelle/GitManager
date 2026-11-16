@@ -14,13 +14,16 @@ import type {
   CheckoutTarget,
   CloneProgress,
   CloneRequest,
+  CompareSide,
   FileChange,
   HistoryPage,
   Hunk,
   OperationResult,
+  PickedFile,
   Repository,
 } from '../../../src/types/git'
 import { cloneInto, planClone } from './cloneInto'
+import { type CompareLookup, PickedFiles, compareSides, requireBranch } from './compareSides'
 import { lastFetchTime, preservingFetchHead } from './fetchHead'
 import { networkAccessFor } from './network'
 import {
@@ -67,6 +70,9 @@ export interface RepositoryCatalog {
 /** Asks the user for a folder (`title` heads the picker); null when they cancel. */
 export type ChooseFolder = (title: string) => Promise<string | null>
 
+/** Asks the user for a file; null when they cancel. */
+export type ChooseFile = () => Promise<string | null>
+
 const FOLDER_NOT_FOUND = 'Folder not found'
 
 /** The remote a new branch is published to when there is more than one. */
@@ -101,7 +107,21 @@ export class GitCliDataSource implements GitDataSource {
   constructor(
     private readonly repositories: RepositoryCatalog,
     private readonly chooseFolder: ChooseFolder,
+    private readonly chooseFile: ChooseFile = async () => null,
   ) {}
+
+  /** Files picked for comparing, by the ids the renderer was given. */
+  private readonly pickedFiles = new PickedFiles()
+
+  private readonly compareLookup: CompareLookup = {
+    folderOf: (repoId) => this.folderOf(repoId),
+    branchNamesOf: async (folder) => {
+      const { local, remote } = await this.branchesAt(folder)
+      return [...local, ...remote].map((branch) => branch.name)
+    },
+    insideFolder: (folder, path) => insideFolder(folder, path),
+    pickedFiles: this.pickedFiles,
+  }
 
   /** The folder the user last picked to clone into. Main-process state: the renderer never names a folder. */
   private cloneFolder: string | null = null
@@ -227,13 +247,21 @@ export class GitCliDataSource implements GitDataSource {
     return parseUnifiedDiff(diff)
   }
 
-  async compareFiles(repoId: string, leftPath: string, rightPath: string): Promise<Hunk[]> {
+  /** See `compareSides.ts`: each side is put on disk (a branch's version as a temporary copy), then diffed. */
+  async compareFiles(left: CompareSide, right: CompareSide): Promise<Hunk[]> {
+    return parseUnifiedDiff(await compareSides(this.compareLookup, left, right))
+  }
+
+  async chooseCompareFile(): Promise<PickedFile | null> {
+    const chosen = await this.chooseFile()
+    return chosen === null ? null : this.pickedFiles.add(normalize(chosen))
+  }
+
+  async listBranchFiles(repoId: string, branch: string): Promise<string[]> {
     const folder = await this.folderOf(repoId)
-    const left = insideFolder(folder, leftPath)
-    const right = insideFolder(folder, rightPath)
-    // Exit code 1 means "the files differ", which is the answer, not a failure.
-    const diff = await git(folder, ['diff', '--no-index', '--no-ext-diff', '--', left, right], [1])
-    return parseUnifiedDiff(diff)
+    await requireBranch(this.compareLookup, folder, branch)
+    const listing = await git(folder, ['ls-tree', '-r', '-z', '--name-only', branch])
+    return listing.split('\0').filter(Boolean)
   }
 
   /**

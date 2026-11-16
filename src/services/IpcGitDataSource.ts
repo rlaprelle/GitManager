@@ -7,10 +7,12 @@ import type {
   CheckoutTarget,
   CloneProgress,
   CloneRequest,
+  CompareSide,
   FileChange,
   HistoryPage,
   Hunk,
   OperationResult,
+  PickedFile,
   Repository,
 } from '@/types/git'
 import type { GitDataSource } from './GitDataSource'
@@ -42,8 +44,18 @@ export class IpcGitDataSource implements GitDataSource {
     return this.git.getFileDiff(repoId, hash, path)
   }
 
-  compareFiles(repoId: string, leftPath: string, rightPath: string): Promise<Hunk[]> {
-    return this.git.compareFiles(repoId, leftPath, rightPath)
+  /** Plain copies: the composable keeps the sides in refs, whose proxies IPC can't clone. */
+  compareFiles(left: CompareSide, right: CompareSide): Promise<Hunk[]> {
+    return this.git.compareFiles(plainSide(left), plainSide(right))
+  }
+
+  /** Main shows the file picker, and keeps the path; the renderer gets an id for it. */
+  chooseCompareFile(): Promise<PickedFile | null> {
+    return this.git.chooseCompareFile()
+  }
+
+  listBranchFiles(repoId: string, branch: string): Promise<string[]> {
+    return this.git.listBranchFiles(repoId, branch)
   }
 
   /** Main shows the folder picker. */
@@ -95,4 +107,10 @@ export class IpcGitDataSource implements GitDataSource {
   push(repoId: string, branch: string): Promise<OperationResult> {
     return this.git.push(repoId, branch)
   }
+}
+
+function plainSide(side: CompareSide): CompareSide {
+  return side.kind === 'file'
+    ? { kind: 'file', fileId: side.fileId }
+    : { kind: 'repository', repoId: side.repoId, branch: side.branch, path: side.path }
 }

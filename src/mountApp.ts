@@ -17,6 +17,8 @@ export interface AppOptions {
   operations: readonly RepositoryOperation[]
   /** Desktop only: the installed app's updates. */
   updates?: UpdateSource
+  /** Desktop only: a file picker, so Compare can take any file on disk. */
+  canChooseFiles?: boolean
 }
 
 export function mountApp(options: AppOptions): void {

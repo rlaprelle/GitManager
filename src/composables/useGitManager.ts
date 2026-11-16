@@ -6,6 +6,7 @@ import type {
   CheckoutTarget,
   CloneRequest,
   Commit,
+  CompareSide,
   FileChange,
   HistoryPage,
   Hunk,
@@ -15,7 +16,7 @@ import type {
 import { destinationOf, remotesToCheckOut } from '@/lib/checkout'
 import { CLONE_CANCELLED, cloneProgressLabel } from '@/lib/clone'
 import { errorMessage } from '@/lib/errorMessage'
-import { headLabel as describeHead, pluralize, shortHash, syncLabel } from '@/lib/format'
+import { headLabel as describeHead, pluralize, shortHash, splitPath, syncLabel } from '@/lib/format'
 import { latestLoad } from './latestLoad'
 
 export type DiffMode = 'git' | 'simple'
@@ -88,8 +89,14 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   let cloneCancelRequested = false
 
   const compareOpen = ref(false)
-  const leftPath = ref(options.comparePaths.left)
-  const rightPath = ref(options.comparePaths.right)
+  const leftSide = ref<CompareChoice>(workingTreeChoice(options.comparePaths.left))
+  const rightSide = ref<CompareChoice>(workingTreeChoice(options.comparePaths.right))
+  const leftPath = computed(() => leftSide.value.path)
+  const rightPath = computed(() => rightSide.value.path)
+  /** Other repositories' branches, for a side that compares a file from one; the open one's are `branches`. */
+  const otherBranches = ref<Record<string, Branches>>({})
+  /** The in-app list of a branch's files, open for one side. */
+  const branchFilePicker = ref<BranchFilePicker | null>(null)
 
   // ---- derived state ----
 
@@ -154,7 +161,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   }
 
   function compareMessage(): string | null {
-    if (compareLoad.loading.value || !leftPath.value.trim() || !rightPath.value.trim()) return null
+    if (compareLoad.loading.value || !bothSidesChosen()) return null
     if (compareLoad.failed.value) return 'Couldn’t compare these files'
     return compareLoad.value.value.length === 0 ? 'The two files are the same' : null
   }
@@ -283,18 +290,126 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   // ---- compare two files ----
 
   async function refreshCompare(): Promise<void> {
-    const repo = repository.value
-    if (!repo) return
+    const sides = comparedSides()
     // Desktop starts with both inputs empty; there's nothing to compare until both are filled in.
-    if (!leftPath.value.trim() || !rightPath.value.trim()) {
+    if (!sides) {
       compareLoad.clear()
       return
     }
-    await compareLoad.run(() => source.compareFiles(repo.id, leftPath.value, rightPath.value), reportCompareFailure)
+    const compared = await compareLoad.run(() => source.compareFiles(...sides), reportCompareFailure)
+    // A side changed mid-way (a branch picked before its file) may have failed; once it works, say so.
+    if (compared && status.value.startsWith(COMPARE_FAILED)) status.value = 'Comparing two files'
+  }
+
+  function bothSidesChosen(): boolean {
+    return leftSide.value.path.trim() !== '' && rightSide.value.path.trim() !== ''
+  }
+
+  /** What to send the source for each side, once both are chosen; a side with no repository is the open one. */
+  function comparedSides(): [CompareSide, CompareSide] | null {
+    const open = repository.value
+    if (!open || !bothSidesChosen()) return null
+    return [toCompareSide(leftSide.value, open.id), toCompareSide(rightSide.value, open.id)]
+  }
+
+  function sideRef(which: CompareWhich) {
+    return which === 'left' ? leftSide : rightSide
+  }
+
+  async function updateSide(which: CompareWhich, change: Partial<CompareChoice>): Promise<void> {
+    const side = sideRef(which)
+    side.value = { ...side.value, ...change }
+    await refreshCompare()
+  }
+
+  /** A typed path is the repository's (working tree or branch), never a picked file. */
+  async function setComparePath(which: CompareWhich, path: string): Promise<void> {
+    await updateSide(which, { path, fileId: null })
+  }
+
+  /** Another repository's files: its working tree to start with, and its branches for the Version list. */
+  async function setCompareRepository(which: CompareWhich, repoId: string | null): Promise<void> {
+    const keep = sideRef(which).value
+    const path = keep.fileId === null ? keep.path : ''
+    const other = repoId !== null && repoId !== repository.value?.id ? repoId : null
+    if (other !== null) await loadOtherBranches(other)
+    await updateSide(which, { repoId: other, branch: null, fileId: null, path })
+  }
+
+  async function setCompareBranch(which: CompareWhich, branch: string | null): Promise<void> {
+    const keep = sideRef(which).value
+    await updateSide(which, { branch, fileId: null, path: keep.fileId === null ? keep.path : '' })
+  }
+
+  async function loadOtherBranches(repoId: string): Promise<void> {
+    if (otherBranches.value[repoId]) return
+    try {
+      const loaded = await source.getBranches(repoId)
+      otherBranches.value = { ...otherBranches.value, [repoId]: loaded }
+    } catch (error) {
+      status.value = `Couldn’t load branches: ${errorMessage(error)}`
+    }
+  }
+
+  /** The branches a side may compare from: the open repository's, or the other repository's it names. */
+  function compareBranchesOf(which: CompareWhich): string[] {
+    const repoId = sideRef(which).value.repoId
+    const listed = repoId === null ? branches.value : otherBranches.value[repoId]
+    return listed ? [...listed.local, ...listed.remote].map((branch) => branch.name) : []
+  }
+  const leftBranches = computed(() => compareBranchesOf('left'))
+  const rightBranches = computed(() => compareBranchesOf('right'))
+
+  /** A file anywhere on disk, through the host's file picker (desktop only). */
+  async function chooseCompareFile(which: CompareWhich): Promise<void> {
+    await attempt(async () => {
+      const picked = await source.chooseCompareFile()
+      if (picked) await updateSide(which, { repoId: null, branch: null, path: picked.path, fileId: picked.fileId })
+    })
+  }
+
+  /** Opens the in-app list of the side's branch's files (the file picker can't see inside git). */
+  async function openBranchFilePicker(which: CompareWhich): Promise<void> {
+    const side = sideRef(which).value
+    const repoId = side.repoId ?? repository.value?.id
+    if (!repoId || side.branch === null) return
+    branchFilePicker.value = { which, branch: side.branch, files: [], loading: true }
+    try {
+      const files = await source.listBranchFiles(repoId, side.branch)
+      const picker = branchFilePicker.value
+      if (picker?.which === which) branchFilePicker.value = { ...picker, files, loading: false }
+    } catch (error) {
+      branchFilePicker.value = null
+      status.value = `Couldn’t list the files on ${side.branch}: ${errorMessage(error)}`
+    }
+  }
+
+  async function pickBranchFile(path: string): Promise<void> {
+    const picker = branchFilePicker.value
+    if (!picker) return
+    branchFilePicker.value = null
+    await setComparePath(picker.which, path)
+  }
+
+  function closeBranchFilePicker(): void {
+    branchFilePicker.value = null
+  }
+
+  /**
+   * Where each side comes from, for the diff's column headings, as short as says it: the file name, after
+   * its branch if it has one, after its repository if that isn't the open one ('pricing-api · main · pom.xml').
+   */
+  const compareLabels = computed(() => ({ left: labelOf(leftSide.value), right: labelOf(rightSide.value) }))
+
+  function labelOf(side: CompareChoice): string {
+    const name = splitPath(side.path).name
+    if (side.fileId !== null) return name
+    const otherRepo = side.repoId === null ? null : repositories.value.find((repo) => repo.id === side.repoId)?.name
+    return [otherRepo, side.branch, name].filter(Boolean).join(' · ')
   }
 
   function reportCompareFailure(error: unknown): void {
-    status.value = `Couldn’t compare files: ${errorMessage(error)}`
+    status.value = `${COMPARE_FAILED}: ${errorMessage(error)}`
   }
 
   async function openCompare(): Promise<void> {
@@ -309,17 +424,16 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   }
 
   async function setLeftPath(path: string): Promise<void> {
-    leftPath.value = path
-    await refreshCompare()
+    await setComparePath('left', path)
   }
 
   async function setRightPath(path: string): Promise<void> {
-    rightPath.value = path
-    await refreshCompare()
+    await setComparePath('right', path)
   }
 
+  /** Swaps everything about the two sides: repository, version and file. */
   async function swapComparePaths(): Promise<void> {
-    ;[leftPath.value, rightPath.value] = [rightPath.value, leftPath.value]
+    ;[leftSide.value, rightSide.value] = [rightSide.value, leftSide.value]
     await refreshCompare()
   }
 
@@ -595,14 +709,15 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     await Promise.all([
       branchesLoad.refresh(() => source.getBranches(open.id), reportFailure('branches')),
       reloadHistoryKeepingSelection(open.id),
-      rereadComparedFiles(open.id),
+      rereadComparedFiles(),
     ])
   }
 
-  /** The compared files are the working tree's, so they may have changed while the window was away. */
-  async function rereadComparedFiles(repoId: string): Promise<void> {
-    if (!compareOpen.value || !leftPath.value.trim() || !rightPath.value.trim()) return
-    await compareLoad.refresh(() => source.compareFiles(repoId, leftPath.value, rightPath.value), reportCompareFailure)
+  /** Compared files may be working-tree files or branches, which may have changed while the window was away. */
+  async function rereadComparedFiles(): Promise<void> {
+    const sides = comparedSides()
+    if (!compareOpen.value || !sides) return
+    await compareLoad.refresh(() => source.compareFiles(...sides), reportCompareFailure)
   }
 
   /**
@@ -674,6 +789,19 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     compareOpen,
     leftPath,
     rightPath,
+    leftSide,
+    rightSide,
+    leftBranches,
+    rightBranches,
+    compareLabels,
+    branchFilePicker,
+    setComparePath,
+    setCompareRepository,
+    setCompareBranch,
+    chooseCompareFile,
+    openBranchFilePicker,
+    pickBranchFile,
+    closeBranchFilePicker,
     historyLoading: historyLoad.loading,
     loadingMoreHistory,
     runningOperation,
@@ -736,4 +864,36 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
 function checkedOutBranch(repo: Repository): string {
   if (repo.currentBranch === null) throw new Error('no branch is checked out')
   return repo.currentBranch
+}
+
+const COMPARE_FAILED = 'Couldn’t compare files'
+
+export type CompareWhich = 'left' | 'right'
+
+/** What the user chose for one side of a comparison. */
+export interface CompareChoice {
+  /** null: the open repository (and it follows when another is opened). */
+  repoId: string | null
+  /** null: the working tree. */
+  branch: string | null
+  /** In the repository; or the picked file's path, to show. */
+  path: string
+  /** Set when the file was picked on disk; the source knows it by this id. */
+  fileId: string | null
+}
+
+export interface BranchFilePicker {
+  which: CompareWhich
+  branch: string
+  files: string[]
+  loading: boolean
+}
+
+function workingTreeChoice(path: string): CompareChoice {
+  return { repoId: null, branch: null, path, fileId: null }
+}
+
+function toCompareSide(choice: CompareChoice, openRepoId: string): CompareSide {
+  if (choice.fileId !== null) return { kind: 'file', fileId: choice.fileId }
+  return { kind: 'repository', repoId: choice.repoId ?? openRepoId, branch: choice.branch, path: choice.path }
 }

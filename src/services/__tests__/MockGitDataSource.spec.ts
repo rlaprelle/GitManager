@@ -5,7 +5,11 @@ import { describeGitDataSourceContract } from './gitDataSourceContract'
 
 describeGitDataSourceContract(
   'MockGitDataSource',
-  async () => ({ source: new MockGitDataSource(), comparePaths: SAMPLE_COMPARE_PATHS }),
+  async () => ({
+    source: new MockGitDataSource(),
+    comparePaths: SAMPLE_COMPARE_PATHS,
+    compareBranches: { left: 'main', right: 'origin/release/2.4', path: 'pom.xml' },
+  }),
   // inventory-service has feature/stock-reservations checked out, and no local release/2.4.
   async () => ({ source: new MockGitDataSource(), repoId: 'inventory', otherLocal: 'main', remoteOnly: 'origin/release/2.4' }),
   // The samples live in the folder the mock "picks", so their names are taken.

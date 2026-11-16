@@ -101,6 +101,19 @@ describe('registerIpcHandlers', () => {
     expect(installed).toBe(1)
   })
 
+  it('passes the source only well-formed sides to compare', async () => {
+    const invoke = registeredHandlers()
+    const side = { kind: 'repository', repoId: 'inventory', branch: 'main', path: 'pom.xml' }
+    const ok = (await invoke(IpcChannel.CompareFiles, side, { ...side, branch: 'origin/release/2.4' })) as { ok: boolean }
+    expect(ok.ok).toBe(true)
+    const refused = 'Expected a file to compare: { kind: "repository", repoId, branch, path } or { kind: "file", fileId }'
+    expect(await invoke(IpcChannel.CompareFiles, 'pom.xml', side)).toEqual({ ok: false, message: refused })
+    expect(await invoke(IpcChannel.CompareFiles, { kind: 'disk', path: 'C:/x' }, side)).toEqual({ ok: false, message: refused })
+    expect(await invoke(IpcChannel.CompareFiles, { ...side, branch: 3 }, side)).toEqual({ ok: false, message: 'Expected text, got number' })
+    expect(await invoke(IpcChannel.CompareFiles, { kind: 'file', fileId: 7 }, side)).toEqual({ ok: false, message: 'Expected text, got number' })
+    expect(await invoke(IpcChannel.ListBranchFiles, 'inventory', ['main'])).toEqual({ ok: false, message: 'Expected text, got object' })
+  })
+
   it('passes the source only a clone request of two pieces of text', async () => {
     const invoke = registeredHandlers()
     expect(await invoke(IpcChannel.CloneRepository, 'https://host/tools.git')).toEqual({

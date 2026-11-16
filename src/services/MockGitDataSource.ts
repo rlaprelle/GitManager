@@ -14,11 +14,13 @@ import type {
   CheckoutTarget,
   CloneProgress,
   CloneRequest,
+  CompareSide,
   FileChange,
   HistoryPage,
   Hunk,
   LocalBranch,
   OperationResult,
+  PickedFile,
   Repository,
 } from '@/types/git'
 import type { GitDataSource } from './GitDataSource'
@@ -155,10 +157,39 @@ export class MockGitDataSource implements GitDataSource {
   }
 
   /** Every pair of paths gets the sample diff; the sample pair reversed gets it inverted. */
-  async compareFiles(repoId: string, leftPath: string, rightPath: string): Promise<Hunk[]> {
-    this.repository(repoId)
-    const isReversedSample = leftPath === SAMPLE_COMPARE_PATHS.right && rightPath === SAMPLE_COMPARE_PATHS.left
-    return isReversedSample ? invertHunks(sampleCompareDiff) : structuredClone(sampleCompareDiff)
+  /**
+   * The samples have no file contents, so any two different files differ by the sample diff. One order
+   * gives it and the other its inverse (the sample pair's own order, SAMPLE_COMPARE_PATHS, is the forward
+   * one), so swapping inverts it as in git. A file compared with itself has no differences.
+   */
+  async compareFiles(left: CompareSide, right: CompareSide): Promise<Hunk[]> {
+    const [leftKey, rightKey] = await Promise.all([this.compareKey(left), this.compareKey(right)])
+    if (leftKey === rightKey) return []
+    return leftKey > rightKey ? structuredClone(sampleCompareDiff) : invertHunks(sampleCompareDiff)
+  }
+
+  /** A browser has no file picker; the browser build doesn't offer one. */
+  async chooseCompareFile(): Promise<PickedFile | null> {
+    return null
+  }
+
+  /** The samples don't store trees: every branch has every file the repository's commits touched. */
+  async listBranchFiles(repoId: string, branch: string): Promise<string[]> {
+    const repo = this.repository(repoId)
+    if (![...repo.localBranches, ...repo.remoteBranches].some((candidate) => candidate.name === branch)) {
+      throw new Error(`No branch named ${branch}`)
+    }
+    return [...new Set(repo.commits.flatMap((commit) => commit.files.map((file) => file.path)))].sort()
+  }
+
+  private async compareKey(side: CompareSide): Promise<string> {
+    if (side.kind === 'file') throw new Error('That file is no longer chosen; choose it again')
+    this.repository(side.repoId)
+    if (side.branch === null) return `${side.repoId}|working|${side.path}`
+    if (!(await this.listBranchFiles(side.repoId, side.branch)).includes(side.path)) {
+      throw new Error(`${side.path} isn’t on ${side.branch}`)
+    }
+    return `${side.repoId}|${side.branch}|${side.path}`
   }
 
   /** The samples have no detached HEAD, so there are never commits to leave and `options` changes nothing. */

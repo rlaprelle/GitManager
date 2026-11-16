@@ -130,7 +130,9 @@ src/
       ChangedFileList.vue    the commit's changed files
       UnifiedDiff.vue        git-style diff
       SideBySideDiff.vue     simple (two-column) diff
-      ComparePathInputs.vue  left/right path inputs and the swap button
+      ComparePathInputs.vue  the two compare sides and the swap button
+      CompareSidePicker.vue  one side: repository, version (working tree / branch), path, Browse…
+      BranchFileDialog.vue   a branch's files, filtered, to pick one (native <dialog>)
 e2e/git-manager.spec.ts      Playwright acceptance tests (browser)
 e2e/support/pageChecks.ts    checks shared by both suites: resource origins, fonts, CSP
 e2e-electron/app.spec.ts     Playwright acceptance tests (built desktop app)
@@ -183,7 +185,9 @@ Decisions that shape this model:
 | `getHistory(repoId, limit)` | `HistoryPage` | The newest `limit` sample commits, without files. | `log HEAD --branches --remotes --date-order`, `limit + 1` commits to know `hasMore`; labels are branches only (no tags), local first; laid out with `layoutLanes`. |
 | `getCommitFiles(repoId, hash)` | `FileChange[]` | The commit's paths and statuses. | `diff-tree --name-status -M` against the first parent (`--root` for a root commit): a moved file is one R entry with its `oldPath` (git's default 50% similarity). A type change counts as M. |
 | `getFileDiff(repoId, hash, path)` | `Hunk[]` | That file's sample hunks. | `diff-tree -p -M` the same way, with both paths of a renamed file in the pathspec so git pairs them; parsed by `parseUnifiedDiff`. A binary file, or a rename without edits, has no hunks. |
-| `compareFiles(repoId, left, right)` | `Hunk[]` | Always `sampleCompareDiff`, inverted when the sample paths are swapped. | `diff --no-index` on two paths relative to the repository, refused outside its folder. |
+| `compareFiles(left, right)` | `Hunk[]` | Two different sides differ by `sampleCompareDiff` (one order inverted, so a swap inverts it); a side compared with itself, `[]`. Branch paths must be in `listBranchFiles`. | Each `CompareSide` is put on disk, then `diff --no-index` (`compareSides.ts`): a working-tree path as it is (refused outside its repository), a picked file by the id main gave it, a branch's version via `cat-file blob branch:path` as **bytes** into a temporary folder (deleted after). Branches must be in the repository's list. |
+| `chooseCompareFile()` | `PickedFile \| null` | `null`: the browser has no file picker, and the UI hides Browse… there. | Native file picker; main keeps id → path (`PickedFiles`), so the renderer never sends a disk path. |
+| `listBranchFiles(repoId, branch)` | `string[]` | Every path the sample's commits touched. | `ls-tree -r -z --name-only branch`, for a branch the repository has. |
 | `addRepository()` | `AddRepositoryResult` | Explains what the desktop app would ask for. | Native folder picker; the chosen folder's top folder (`rev-parse --show-toplevel`) is added, or the listed entry returned. |
 | `chooseCloneFolder()` | `string \| null` | Answers `C:\dev`, the samples' folder. | Native folder picker; main keeps the folder, so the renderer never names one. |
 | `cloneRepository({ url, name }, onProgress?)` | `AddRepositoryResult` | Checks as real git does, then adds a copy of the `pricing` sample under the new name, after a few timed progress steps (`cloneStepMs`). | `git -c protocol.ext.allow=never clone --progress -- url name` in the chosen folder, with network access (signs in like fetch). Refused first: a URL `cloneUrlProblem` rejects (only https/http/ssh/git/file and scp-like; never `-…`, `ext::`, `fd::`), a name `folderNameProblem` rejects, a non-empty destination. Progress parsed from stderr (`latestCloneProgress`) and sent as `IpcEvent.CloneProgress`. |

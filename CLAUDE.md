@@ -62,6 +62,7 @@ electron/main/git/network.ts     how fetch/pull/push run: askpass + GCM allowed,
 electron/main/git/fetchHead.ts   last fetch time (FETCH_HEAD's), and putting FETCH_HEAD back after a failed fetch
 electron/main/git/cloneInto.ts   clone: planClone (checks before git) + cloneInto (progress, cancel, clean-up)
 src/lib/clone.ts                 clone rules shared by both sources: URL/name checks, name from URL, progress parsing, CLONE_CANCELLED
+electron/main/git/compareSides.ts compare: each CompareSide onto disk (branch version as bytes into a temp folder), then diff --no-index
 electron/preload/index.ts        contextBridge → window.gitManager
 electron/shared/channels.ts      IPC channel names (main + preload)
 electron.vite.config.ts         desktop build; renderer spreads vite.config.ts
@@ -82,7 +83,7 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - Line/geometry logic lives in `src/lib/` (pure, unit-tested); components only render rows.
 - Real git = new `GitDataSource` impl passed to `App` in `src/main.ts`. Don't leak backend concerns above the service layer.
 - Renderer reaches Electron only through `window.gitManager` (`GitManagerBridge`). New main-process capability → channel in `channels.ts`, handler in `ipc.ts` (check every argument's type; answer `IpcResult`), method on the bridge type + preload (`call()` unwraps), test in `electron/main/__tests__/ipc.spec.ts` (it asserts every channel has a handler). Every bridge method is async.
-- Nothing from the renderer reaches git unchecked: repositories by id only (never a folder), hashes match `COMMIT_HASH`, paths after `--`, compare paths inside the repo. Run git only through `runGit` (execFile, no shell).
+- Nothing from the renderer reaches git unchecked: repositories by id only (never a folder), hashes match `COMMIT_HASH`, paths after `--`, compare paths inside the repo (or a branch git listed, or a file picked in main, by id: `PickedFiles`). Run git only through `runGit` (execFile, no shell).
 - Browser mode keeps `MockGitDataSource`; the desktop entry (`src/desktop.ts`) must never import sample data — e2e-electron greps the built bundle.
 - `App`'s `operations` prop (`RepositoryOperation[]`; `ALL_OPERATIONS` from both entries) decides which write buttons show. Don't offer an operation before it exists in `GitCliDataSource`.
 - Checkout targets are `{ local }` / `{ remote }`, checked against `for-each-ref`'s list before reaching git. `confirm` results (leaving a detached HEAD's commits) go through `pendingCheckout` + `ConfirmDialog`; one operation at a time (`operationRunning`, refresh skipped meanwhile). Anything crossing IPC must be a plain object: Vue refs hold proxies, which IPC can't clone.
@@ -144,6 +145,7 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - **Only fetch, pull, push and clone may sign in** (`runGit(…, { network })`, built by `networkAccessFor`): everything else keeps `GCM_INTERACTIVE=never`. Never put network access on a read. Tests can't see the sign-in windows; `network.spec.ts` checks what git receives (a `!env` alias) and GitCliDataSource.spec uses a stand-in `core.sshCommand` script that records its environment. Remote fixtures: `createRepositoryWithRemote` + `cloneOriginInFixture` (a colleague) + `originOf`; origin already has `feature/local` (cloned from the repo).
 - **A failed fetch puts FETCH_HEAD back** (`preservingFetchHead` in `fetchHead.ts`): git empties it before connecting, and `lastFetch` is its time.
 - **On Windows a missing working folder fails like missing git** (`spawn git ENOENT`): check the folder exists before running git in it.
+- **Compare sides** (`CompareSide`: `{ kind: 'repository', repoId, branch | null, path }` or `{ kind: 'file', fileId }`). The composable keeps a `CompareChoice` per side (`repoId: null` = the open repository) and labels them short (`labelOf`). A branch's file is read as bytes (`runGitBytes`): reading it as text would change a non-UTF-8 file (a Latin-1 fixture proves it). Picked files are desktop only (`canChooseFiles`, from `desktop.ts`).
 - **Git's diff lists a change's removals before its additions**; `invertHunks` keeps that order, so a swapped compare matches real git.
 - In `page.evaluate` callbacks in e2e-electron, the page variable is named `window`; use `globalThis` for the browser's window.
 - **Desktop renderer entry is `desktop.html`** (`out/renderer/desktop.html`; dev URL + `/desktop.html`), not `index.html`.

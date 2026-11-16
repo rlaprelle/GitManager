@@ -18,5 +18,6 @@ void bridge.getGitStatus().then((status) => {
     comparePaths: { left: '', right: '' },
     operations: ALL_OPERATIONS,
     updates: bridge.updates,
+    canChooseFiles: true,
   })
 })

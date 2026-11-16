@@ -342,6 +342,41 @@ describe('App', () => {
     expect(install).toHaveBeenCalledTimes(1)
   })
 
+  it('compares a file on a branch, picked from the branch’s file list', async () => {
+    HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+      this.setAttribute('open', '')
+    })
+    HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
+      this.removeAttribute('open')
+    })
+    const wrapper = await mountApp()
+    await buttonByText(wrapper, 'Compare two files…').trigger('click')
+    await flushPromises()
+    await wrapper.get('select[aria-label="Right file: version"]').setValue('origin/release/2.4')
+    await flushPromises()
+    await wrapper.get('button[aria-label="Browse for the right file"]').trigger('click')
+    await flushPromises()
+    const dialog = wrapper.get('dialog[aria-labelledby="branch-files-title"]')
+    expect(dialog.attributes('open')).toBeDefined()
+    await dialog.findAll('li button').find((button) => button.text() === 'pom.xml')!.trigger('click')
+    await flushPromises()
+    expect(dialog.attributes('open')).toBeUndefined()
+    expect(wrapper.get<HTMLInputElement>('#gm-right').element.value).toBe('pom.xml')
+    expect(wrapper.get('[data-testid="right-label"]').text()).toBe('origin/release/2.4 · pom.xml')
+  })
+
+  it('offers Browse… on a working-tree side only where the host has a file picker', async () => {
+    const withPicker = mount(App, {
+      props: { source: new MockGitDataSource(), comparePaths: SAMPLE_COMPARE_PATHS, canChooseFiles: true },
+    })
+    await flushPromises()
+    await buttonByText(withPicker, 'Compare two files…').trigger('click')
+    expect(withPicker.find('button[aria-label="Browse for the left file"]').exists()).toBe(true)
+    const withoutPicker = await mountApp()
+    await buttonByText(withoutPicker, 'Compare two files…').trigger('click')
+    expect(withoutPicker.find('button[aria-label="Browse for the left file"]').exists()).toBe(false)
+  })
+
   describe('cloning', () => {
     function stubDialogs() {
       HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {

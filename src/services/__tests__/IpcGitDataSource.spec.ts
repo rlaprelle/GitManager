@@ -17,6 +17,8 @@ function recordingBridge() {
     getCommitFiles: (...args) => (calls.push(['getCommitFiles', ...args]), mock.getCommitFiles(...args)),
     getFileDiff: (...args) => (calls.push(['getFileDiff', ...args]), mock.getFileDiff(...args)),
     compareFiles: (...args) => (calls.push(['compareFiles', ...args]), mock.compareFiles(...args)),
+    chooseCompareFile: (...args) => (calls.push(['chooseCompareFile', ...args]), mock.chooseCompareFile()),
+    listBranchFiles: (...args) => (calls.push(['listBranchFiles', ...args]), mock.listBranchFiles(...args)),
     addRepository: (...args) => (calls.push(['addRepository', ...args]), mock.addRepository()),
     removeRepository: (...args) => (calls.push(['removeRepository', ...args]), mock.removeRepository(...args)),
     chooseCloneFolder: (...args) => (calls.push(['chooseCloneFolder', ...args]), mock.chooseCloneFolder()),
@@ -47,7 +49,12 @@ describe('IpcGitDataSource', () => {
     await source.getHistory('inventory', 5)
     await source.getCommitFiles('inventory', '9f3a1c2')
     await source.getFileDiff('inventory', '9f3a1c2', 'src/main/resources/application.yml')
-    await source.compareFiles('inventory', 'a.yml', 'b.yml')
+    await source.compareFiles(
+      reactive({ kind: 'repository' as const, repoId: 'inventory', branch: null, path: 'a.yml' }),
+      { kind: 'repository', repoId: 'inventory', branch: 'main', path: 'pom.xml' },
+    )
+    await source.chooseCompareFile()
+    await source.listBranchFiles('inventory', 'main')
     await source.addRepository()
     await source.removeRepository('pricing')
     await source.chooseCloneFolder()
@@ -63,7 +70,13 @@ describe('IpcGitDataSource', () => {
       ['getHistory', 'inventory', 5],
       ['getCommitFiles', 'inventory', '9f3a1c2'],
       ['getFileDiff', 'inventory', '9f3a1c2', 'src/main/resources/application.yml'],
-      ['compareFiles', 'inventory', 'a.yml', 'b.yml'],
+      [
+        'compareFiles',
+        { kind: 'repository', repoId: 'inventory', branch: null, path: 'a.yml' },
+        { kind: 'repository', repoId: 'inventory', branch: 'main', path: 'pom.xml' },
+      ],
+      ['chooseCompareFile'],
+      ['listBranchFiles', 'inventory', 'main'],
       ['addRepository'],
       ['removeRepository', 'pricing'],
       ['chooseCloneFolder'],
