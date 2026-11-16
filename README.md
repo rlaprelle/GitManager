@@ -76,14 +76,21 @@ npm run icon           # regenerate build/icon.ico after editing build/icon.svg 
 
 ### Cutting a release
 
-Releases are built by GitHub Actions (`.github/workflows/release.yml`) when a version tag is pushed. Typecheck and all four test suites must pass first. Then the installer and `latest.yml` (what installed apps check) go to a **draft** release. In PowerShell, on `main`:
+Releases are built by GitHub Actions (`.github/workflows/release.yml`), started by hand, from `main`. The version is `package.json`'s.
 
-```powershell
-npm version 0.2.1          # bumps package.json, commits, and tags v0.2.1
-git push --follow-tags     # the tag starts the workflow
-```
+1. On `dev`, bump the version without tagging. In PowerShell:
 
-Then open the draft on the Releases page, add notes, and **Publish release**. Installed apps see it only once it's published. The workflow refuses a tag that doesn't match `package.json`'s version.
+   ```powershell
+   npm version 0.2.3 --no-git-tag-version
+   ```
+
+   Then commit, and merge `dev` into `main` as usual.
+2. On GitHub, open **Actions → Release → Run workflow**, on `main`.
+
+   The workflow refuses a version that's already tagged or already has a release, including an unpublished draft. Then it runs typecheck and all four test suites, builds the installer, and makes a **draft** release, aimed at the commit it tested, with the installer and `latest.yml` (what installed apps check). If anything fails, it leaves nothing behind.
+3. Open the draft on the Releases page, add notes, and **Publish release**. Publishing creates the tag `v0.2.3`, so a tag always means a published release. Installed apps see the release only once it's published.
+
+Don't create releases or push `v*` tags by hand. The workflow would refuse that version afterwards, and the release would have no installer.
 
 Because the installer is unsigned, an update is trusted by the SHA-512 checksum in `latest.yml`, downloaded over HTTPS from GitHub; there is no signature to check. Anyone who can publish a release here can therefore ship code to every installed copy.
 
