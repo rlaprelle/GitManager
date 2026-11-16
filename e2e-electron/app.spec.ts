@@ -53,6 +53,16 @@ async function launch(repositories?: StoredRepository[], env: Record<string, str
   userData = await mkdtemp(join(tmpdir(), 'git-manager-userdata-'))
   const listed = repositories ?? [{ id: 'sample', path: fixtures.sample }]
   await writeFile(join(userData, 'repositories.json'), JSON.stringify({ version: 1, repositories: listed }))
+  await start(env)
+}
+
+/** Closes the app and opens it again on the same data folder, as a user restarting it would. */
+async function relaunch(): Promise<void> {
+  await app?.close()
+  await start()
+}
+
+async function start(env: Record<string, string> = {}): Promise<void> {
   app = await electron.launch({
     args: ['.'],
     env: {
@@ -221,6 +231,23 @@ test.describe('with git installed', () => {
     const violations = await policyViolationsOnReload(window, () => expect(status()).toHaveText('Ready'))
     expect(violations).toEqual([])
   })
+})
+
+test('remembers a dragged pane size after the app is closed and opened again', async () => {
+  await launch()
+  await expect(status()).toHaveText('Ready')
+  const divider = window.getByRole('separator', { name: 'Resize the sidebar' })
+  const widthBefore = Math.round((await sidebar().boundingBox())!.width)
+  const box = (await divider.boundingBox())!
+  await window.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await window.mouse.down()
+  await window.mouse.move(box.x + box.width / 2 + 100, box.y + box.height / 2, { steps: 4 })
+  await window.mouse.up()
+  expect(Math.round((await sidebar().boundingBox())!.width)).toBe(widthBefore + 100)
+
+  await relaunch()
+  await expect(status()).toHaveText('Ready')
+  expect(Math.round((await sidebar().boundingBox())!.width)).toBe(widthBefore + 100)
 })
 
 test('on first run, invites the user to add a repository and opens the one they choose', async () => {

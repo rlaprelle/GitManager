@@ -3,12 +3,15 @@ import { computed, onMounted, onUnmounted, toRaw } from 'vue'
 import { ALL_OPERATIONS, type GitDataSource, type RepositoryOperation } from '@/services/GitDataSource'
 import { useGitManager } from '@/composables/useGitManager'
 import { useNow } from '@/composables/useNow'
+import { usePaneSizes } from '@/composables/usePaneSizes'
+import { PANE_LIMITS } from '@/lib/paneLayout'
 import { pluralize } from '@/lib/format'
 import AppHeader from '@/components/AppHeader.vue'
 import BranchList from '@/components/BranchList.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import CommitHistory from '@/components/CommitHistory.vue'
 import NoRepositories from '@/components/NoRepositories.vue'
+import PaneDivider from '@/components/PaneDivider.vue'
 import RepositoryList from '@/components/RepositoryList.vue'
 import StatusBar from '@/components/StatusBar.vue'
 import DiffPanel from '@/components/diff/DiffPanel.vue'
@@ -94,6 +97,20 @@ const pendingCommits = computed(() => pluralize(pendingCheckout.value?.commitsLe
 
 const accentStyle = computed(() => (props.accent ? { '--color-gm-accent': props.accent } : {}))
 
+/** Sizes the user dragged the panes to; published as CSS variables on the root for the panes below. */
+const { sizes: paneSizes, paneVars, setPaneSize, resetPaneSize } = usePaneSizes()
+const rootStyle = computed(() => ({ ...accentStyle.value, ...paneVars.value }))
+
+/*
+ * A dragged size applies at desktop width only (narrow screens stack the panes) and overrides the pane's
+ * own flex sizing (!). min() keeps a size remembered from a bigger window from crowding out the neighbour:
+ * the subtracted px are PANE_LIMITS' reserves.
+ */
+const sizedSidebar = 'min-[860px]:flex-[0_0_min(var(--gm-sidebar-size),calc(100%_-_720px))]!'
+const sizedRepositories =
+  'min-[860px]:flex-[0_0_var(--gm-repositories-size)]! min-[860px]:max-h-[calc(100%_-_140px)]!'
+const sizedDiff = 'min-[860px]:flex-[0_0_min(var(--gm-diff-size),calc(100%_-_220px))]!'
+
 // Changes made outside the app (a commit, a branch switch, an edited file) show up when the
 // window regains focus, quietly, or on F5, which also says so in the status bar.
 function refreshOnFocus(): void {
@@ -121,7 +138,7 @@ onUnmounted(() => {
 <template>
   <div
     class="flex h-screen min-h-[640px] flex-col overflow-hidden bg-gm-window font-sans text-[13px] text-gm-text max-[860px]:h-auto"
-    :style="accentStyle"
+    :style="rootStyle"
   >
     <template v-if="repository">
       <AppHeader
@@ -143,13 +160,24 @@ onUnmounted(() => {
         <nav
           aria-label="Repositories and branches"
           class="flex min-w-0 flex-[1_1_260px] flex-col border-r border-gm-line bg-gm-sidebar"
+          :class="paneSizes.sidebar !== null && sizedSidebar"
         >
           <RepositoryList
+            :class="paneSizes.repositories !== null && sizedRepositories"
             :repositories="repositories"
             :selected-id="repository.id"
             @select="selectRepository"
             @add="addRepository"
             @remove="removeRepository"
+          />
+          <PaneDivider
+            orientation="horizontal"
+            controls="previous"
+            :min="PANE_LIMITS.repositories.min"
+            :reserve="PANE_LIMITS.repositories.reserve"
+            label="Resize the repository list"
+            @resize="setPaneSize('repositories', $event)"
+            @reset="resetPaneSize('repositories')"
           />
           <BranchList
             :local-branches="branches.local"
@@ -166,6 +194,16 @@ onUnmounted(() => {
           />
         </nav>
 
+        <PaneDivider
+          orientation="vertical"
+          controls="previous"
+          :min="PANE_LIMITS.sidebar.min"
+          :reserve="PANE_LIMITS.sidebar.reserve"
+          label="Resize the sidebar"
+          @resize="setPaneSize('sidebar', $event)"
+          @reset="resetPaneSize('sidebar')"
+        />
+
         <main class="flex min-w-0 flex-[999_1_560px] flex-col bg-gm-main">
           <CommitHistory
             :commits="commits"
@@ -179,7 +217,18 @@ onUnmounted(() => {
             @select="selectCommit"
             @show-more="showMoreHistory"
           />
+          <PaneDivider
+            orientation="horizontal"
+            controls="next"
+            :min="PANE_LIMITS.diff.min"
+            :reserve="PANE_LIMITS.diff.reserve"
+            label="Resize the diff panel"
+            @resize="setPaneSize('diff', $event)"
+            @reset="resetPaneSize('diff')"
+          />
           <DiffPanel
+            :class="paneSizes.diff !== null && sizedDiff"
+            :file-list-sized="paneSizes.fileList !== null"
             :commit="commit"
             :empty-message="diffEmptyMessage"
             :files="files"
@@ -199,6 +248,8 @@ onUnmounted(() => {
             @update:left-path="setLeftPath"
             @update:right-path="setRightPath"
             @swap="swapComparePaths"
+            @resize-file-list="setPaneSize('fileList', $event)"
+            @reset-file-list="resetPaneSize('fileList')"
           />
         </main>
       </div>

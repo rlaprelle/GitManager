@@ -100,6 +100,7 @@ src/
     useGitManager.ts         state, derived state and actions
     latestLoad.ts            one async area: value, loading and failed flags, latest response wins
     useNow.ts                a clock ticking every minute, for date labels
+    usePaneSizes.ts          dragged pane sizes: localStorage, published as --gm-*-size CSS variables
   lib/
     diff.ts                  hunks → unified lines, side-by-side rows; invertHunks
     graph.ts                 GraphRow → SVG segments, curves and dot; lane colours and width
@@ -108,6 +109,7 @@ src/
     parseDiff.ts             `git diff` output → hunks
     format.ts                labels: dates, last fetch, short hash, sync, paths, plurals
     refs.ts                  remote branch names: their remotes, and how a commit's branch label shows
+    paneLayout.ts            pane limits, clamping, arrow-key steps, saved sizes (parse/serialize)
   components/
     AppHeader.vue            repo name, branch chip, Fetch / Pull / Push
     RepositoryList.vue       repository list, "N changed" badge, problem, Add / Remove
@@ -117,6 +119,7 @@ src/
     CommitGraphCell.vue      one row of the graph as inline SVG
     RefBadge.vue             branch labels on a commit (head / local / remote)
     StatusBar.vue            footer status line (role="status")
+    PaneDivider.vue          draggable separator between two panes (pointer, arrow keys, double-click resets)
     GmIcon.vue               the inline SVG icon set
     NoRepositories.vue       first run: "Add a repository to get started"
     GitRequired.vue          "Git Manager needs Git for Windows" (git missing or too old)
@@ -302,6 +305,7 @@ Each history row is 32px tall. Lane *n* is at x = 14 + 18·n, and the graph colu
 - `App` accepts an optional `accent` prop, which overrides `--color-gm-accent` on the root element.
 - Fonts: Inter for the interface and JetBrains Mono for code, hashes and paths. Both are bundled variable fonts imported in `src/main.ts` (families `'Inter Variable'` and `'JetBrains Mono Variable'` in the `@theme` tokens), so one file per script subset covers every weight and nothing loads from another host.
 - Above 860px the window is fixed-height with a minimum of 640px, matching the desktop app's minimum window size. The sidebar (260px basis) and main column sit in a flex row that does **not** wrap there: a wrapping row takes its height from its content, which would let a long history push the diff panel off the window. The history takes the space the diff panel leaves (at least 220px) and scrolls inside; the diff panel is 400px and shrinks to 240px if it has to.
+- **Resizable panes (above 860px).** Four `PaneDivider`s sit on the pane boundaries: sidebar | main, repositories / branches, history / diff panel, file list | diff. A divider takes no layout space (negative margins straddle the shared border) and measures the layout itself: the pane it controls (`controls: 'previous' | 'next'`) and their parent, so a drag or arrow key keeps the pane within `PANE_LIMITS` (`lib/paneLayout.ts`): its own minimum, and a reserve for the neighbour (the main area keeps 720px so the file list and diff stay side by side; the diff column 480px; History 220px; the branches 140px). It emits a size; `usePaneSizes` keeps it per pane (null = untouched: the pane's own flex sizing, exactly as before), saves the set to `localStorage` (`gm.paneSizes`; in Electron that lives in the data folder), and publishes it as `--gm-*-size` on App's root. A sized pane gets an `!important` flex class, gated on `min-[860px]:`, whose `min(size, 100% − reserve)` keeps a size remembered from a larger window from crowding the neighbour out. Those reserves are written into the classes in `App.vue`/`DiffPanel.vue` as well as in `PANE_LIMITS`; change both together. Dividers are `role="separator"` with `aria-valuenow/min/max` kept current by a `ResizeObserver`.
 - Below 860px the row wraps, the columns stack, and the page stops being a fixed full-height window (`max-[860px]:h-auto`) and scrolls normally. The commit table keeps a minimum width of 760px and scrolls sideways inside its own pane, so the page itself never scrolls horizontally.
 - In a history row, branch badges and the message share the description column: the message gives up space first (down to 8 characters), then the badges shrink with an ellipsis and show their full name as a tooltip.
 

@@ -3,7 +3,9 @@ import { computed } from 'vue'
 import type { Commit, FileChange, Hunk } from '@/types/git'
 import type { DiffMode } from '@/composables/useGitManager'
 import { shortHash, splitPath } from '@/lib/format'
+import { PANE_LIMITS } from '@/lib/paneLayout'
 import GmIcon from '../GmIcon.vue'
+import PaneDivider from '../PaneDivider.vue'
 import ChangedFileList from './ChangedFileList.vue'
 import ComparePathInputs from './ComparePathInputs.vue'
 import DiffModeToggle from './DiffModeToggle.vue'
@@ -26,6 +28,8 @@ const props = defineProps<{
   rightPath: string
   /** Shown instead of the diff: no text changes, files that are the same, or a failed load. */
   diffMessage?: string | null
+  /** True once the file list has a dragged width (App publishes it as --gm-file-list-size). */
+  fileListSized?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -36,6 +40,8 @@ const emit = defineEmits<{
   'update:leftPath': [path: string]
   'update:rightPath': [path: string]
   swap: []
+  resizeFileList: [width: number]
+  resetFileList: []
 }>()
 
 const file = computed<FileChange | undefined>(
@@ -54,6 +60,9 @@ const rightLabel = computed(() => {
   if (props.compareOpen) return splitPath(props.rightPath).name
   return file.value ? `${splitPath(file.value.path).name} @ ${shortHash(props.commit?.hash ?? '')}` : ''
 })
+
+/** Desktop width only, overriding the list's own flex sizing; the diff column keeps PANE_LIMITS' 480 px. */
+const sizedFileList = 'min-[860px]:flex-[0_0_min(var(--gm-file-list-size),calc(100%_-_480px))]!'
 
 const toolbarButton =
   'inline-flex h-8 cursor-pointer items-center gap-2 rounded-lg border border-gm-line-strong bg-gm-raised px-3 text-gm-text hover:bg-gm-hover'
@@ -93,8 +102,19 @@ const toolbarButton =
         v-if="!compareOpen"
         :files="files"
         :loading="filesLoading"
+        :class="fileListSized && sizedFileList"
         :selected-index="selectedFileIndex"
         @select="emit('selectFile', $event)"
+      />
+      <PaneDivider
+        v-if="!compareOpen"
+        orientation="vertical"
+        controls="previous"
+        :min="PANE_LIMITS.fileList.min"
+        :reserve="PANE_LIMITS.fileList.reserve"
+        label="Resize the file list"
+        @resize="emit('resizeFileList', $event)"
+        @reset="emit('resetFileList')"
       />
 
       <div class="flex h-full min-w-0 flex-[999_1_480px] flex-col">
