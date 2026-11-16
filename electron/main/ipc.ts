@@ -1,8 +1,8 @@
 import { errorMessage } from '../../src/lib/errorMessage'
 import type { GitDataSource } from '../../src/services/GitDataSource'
 import type { GitStatus, IpcResult } from '../../src/types/bridge'
-import type { CheckoutOptions, CheckoutTarget } from '../../src/types/git'
-import { IpcChannel } from '../shared/channels'
+import type { CheckoutOptions, CheckoutTarget, CloneRequest } from '../../src/types/git'
+import { IpcChannel, IpcEvent } from '../shared/channels'
 
 /** The part of ipcMain the handlers need, so they can be tested without Electron. */
 export interface IpcRegistrar {
@@ -24,13 +24,7 @@ const MAX_COUNT = 10_000
  */
 export function registerIpcHandlers(ipc: IpcRegistrar, { source, appVersion, checkGit }: IpcServices): void {
   const handle = <T>(channel: string, answer: (...args: unknown[]) => Promise<T> | T) =>
-    ipc.handle(channel, async (_event, ...args): Promise<IpcResult<T>> => {
-      try {
-        return { ok: true, value: await answer(...args) }
-      } catch (error) {
-        return { ok: false, message: errorMessage(error) }
-      }
-    })
+    ipc.handle(channel, (_event, ...args) => answered(() => answer(...args)))
 
   handle(IpcChannel.GetAppVersion, () => appVersion)
   handle(IpcChannel.GetGitStatus, () => checkGit())
@@ -42,12 +36,41 @@ export function registerIpcHandlers(ipc: IpcRegistrar, { source, appVersion, che
   handle(IpcChannel.CompareFiles, (repoId, left, right) => source.compareFiles(text(repoId), text(left), text(right)))
   handle(IpcChannel.AddRepository, () => source.addRepository())
   handle(IpcChannel.RemoveRepository, (repoId) => source.removeRepository(text(repoId)))
+  handle(IpcChannel.ChooseCloneFolder, () => source.chooseCloneFolder())
+  // The one handler that talks back while it runs: progress goes to the window that asked.
+  ipc.handle(IpcChannel.CloneRepository, (event, request) =>
+    answered(() =>
+      source.cloneRepository(cloneRequest(request), (progress) => senderOf(event)?.send(IpcEvent.CloneProgress, progress)),
+    ),
+  )
+  handle(IpcChannel.CancelClone, () => source.cancelClone())
   handle(IpcChannel.Checkout, (repoId, target, options) =>
     source.checkout(text(repoId), checkoutTarget(target), checkoutOptions(options)),
   )
   handle(IpcChannel.Fetch, (repoId) => source.fetch(text(repoId)))
   handle(IpcChannel.Pull, (repoId, branch) => source.pull(text(repoId), text(branch)))
   handle(IpcChannel.Push, (repoId, branch) => source.push(text(repoId), text(branch)))
+}
+
+async function answered<T>(work: () => Promise<T> | T): Promise<IpcResult<T>> {
+  try {
+    return { ok: true, value: await work() }
+  } catch (error) {
+    return { ok: false, message: errorMessage(error) }
+  }
+}
+
+/** The window an IPC call came from, to send it events. */
+function senderOf(event: unknown): { send(channel: string, ...args: unknown[]): void } | null {
+  const sender = (event as { sender?: { send?: unknown } } | null)?.sender
+  return typeof sender?.send === 'function' ? (sender as { send(channel: string, ...args: unknown[]): void }) : null
+}
+
+/** Exactly a URL and a folder name, as text; the source checks what they say. */
+function cloneRequest(value: unknown): CloneRequest {
+  const request = value as Partial<Record<keyof CloneRequest, unknown>> | null
+  if (typeof request !== 'object' || request === null) throw new Error('Expected a clone request: { url, name }')
+  return { url: text(request.url), name: text(request.name) }
 }
 
 function text(value: unknown): string {

@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { type ElectronApplication, type Page, _electron as electron, expect, test } from '@playwright/test'
 import type { StoredRepository } from '../electron/main/git/GitCliDataSource'
 import {
@@ -257,6 +258,35 @@ test('on first run, invites the user to add a repository and opens the one they 
   await window.getByRole('button', { name: 'Add repository…' }).click()
   await expect(window.getByTestId('header-repo')).toHaveText('sample')
   await expect(status()).toHaveText('Added sample')
+})
+
+test('on first run, clones a repository from its URL into the folder the user picks, and remembers it', async () => {
+  await createRepositoryWithRemote(fixtures, 'clone-e2e')
+  const url = pathToFileURL(originOf(fixtures, 'clone-e2e')).href
+  const parent = await mkdtemp(join(tmpdir(), 'git-manager-clone-'))
+  try {
+    await launch([])
+    await folderPickerChooses(parent)
+    await window.getByRole('button', { name: 'Clone repository…' }).click()
+    const dialog = window.getByRole('dialog', { name: 'Clone a repository' })
+    await dialog.getByRole('button', { name: 'Browse…' }).click()
+    await expect(dialog.getByTestId('clone-folder')).toHaveText(parent)
+    await dialog.getByLabel('Repository URL').fill(url)
+    await expect(dialog.getByLabel('Folder name')).toHaveValue('clone-e2e-origin')
+    await dialog.getByLabel('Folder name').fill('cloned')
+    await dialog.getByRole('button', { name: 'Clone', exact: true }).click()
+
+    await expect(status()).toHaveText('Cloned cloned')
+    await expect(window.getByTestId('header-repo')).toHaveText('cloned')
+    await expect(window.getByTestId('header-branch')).toHaveText('main')
+    await expect(window.getByRole('button', { name: /Work locally/ })).toBeVisible()
+    expect(await savedRepositoryPaths()).toEqual([join(parent, 'cloned')])
+    expect(await readdir(join(parent, 'cloned'))).toContain('.git')
+  } finally {
+    await app?.close()
+    app = undefined
+    await rm(parent, { recursive: true, force: true })
+  }
 })
 
 test('lists a repository whose folder is gone, says so, and lets the user remove it', async () => {

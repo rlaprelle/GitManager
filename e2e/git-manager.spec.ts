@@ -181,6 +181,59 @@ test('at the smallest desktop size branch labels stay inside the description col
   expect(overflowing).toEqual([])
 })
 
+test.describe('cloning a repository', () => {
+  const cloneDialog = (page: Page) => page.getByRole('dialog', { name: 'Clone a repository' })
+
+  async function fillCloneDialog(page: Page, url: string) {
+    await sidebar(page).getByRole('button', { name: 'Clone repository' }).click()
+    await expect(cloneDialog(page)).toBeVisible()
+    await cloneDialog(page).getByRole('button', { name: 'Browse…' }).click()
+    await expect(cloneDialog(page).getByTestId('clone-folder')).toHaveText('C:\\dev')
+    await cloneDialog(page).getByLabel('Repository URL').fill(url)
+  }
+
+  test('clones from a URL into the chosen folder, then lists and opens the clone', async ({ page }) => {
+    await fillCloneDialog(page, 'https://github.com/rlaprelle/tools.git')
+    await expect(cloneDialog(page).getByLabel('Folder name')).toHaveValue('tools')
+    await expect(cloneDialog(page).getByTestId('clone-destination')).toHaveText('C:\\dev\\tools')
+    await cloneDialog(page).getByRole('button', { name: 'Clone', exact: true }).click()
+
+    await expect(cloneDialog(page).getByRole('status')).toContainText('Cloning tools…')
+    await expect(cloneDialog(page)).toBeHidden()
+    await expect(status(page)).toHaveText('Cloned tools')
+    await expect(header(page).getByTestId('header-repo')).toHaveText('tools')
+    await expect(sidebar(page).getByRole('button', { name: /^tools/ })).toBeVisible()
+  })
+
+  test('Cancel clone stops it, and nothing is added', async ({ page }) => {
+    await fillCloneDialog(page, 'https://github.com/rlaprelle/tools.git')
+    await cloneDialog(page).getByRole('button', { name: 'Clone', exact: true }).click()
+    await cloneDialog(page).getByRole('button', { name: 'Cancel clone' }).click()
+    await expect(status(page)).toHaveText('Clone cancelled')
+    await expect(sidebar(page).getByRole('button', { name: /^tools/ })).toHaveCount(0)
+    await cloneDialog(page).getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(cloneDialog(page)).toBeHidden()
+  })
+
+  test('a clone that fails keeps the dialog open and says why', async ({ page }) => {
+    await fillCloneDialog(page, 'https://github.com/rlaprelle/pricing-api.git')
+    await cloneDialog(page).getByRole('button', { name: 'Clone', exact: true }).click()
+    await expect(cloneDialog(page).getByRole('alert')).toHaveText('C:\\dev\\pricing-api already exists and isn’t empty')
+    await cloneDialog(page).getByLabel('Folder name').fill('pricing-copy')
+    await cloneDialog(page).getByRole('button', { name: 'Clone', exact: true }).click()
+    await expect(header(page).getByTestId('header-repo')).toHaveText('pricing-copy')
+  })
+
+  test('refuses a URL git could run as a command, and Esc closes the dialog', async ({ page }) => {
+    await fillCloneDialog(page, 'ext::sh -c calc')
+    await cloneDialog(page).getByLabel('Folder name').click()
+    await expect(cloneDialog(page)).toContainText('isn’t a repository URL')
+    await expect(cloneDialog(page).getByRole('button', { name: 'Clone', exact: true })).toBeDisabled()
+    await page.keyboard.press('Escape')
+    await expect(cloneDialog(page)).toBeHidden()
+  })
+})
+
 test.describe('resizing the panes', () => {
   const separator = (page: Page, label: string) => page.getByRole('separator', { name: label })
   const widthOf = async (locator: Locator) => Math.round((await locator.boundingBox())!.width)

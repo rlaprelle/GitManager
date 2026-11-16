@@ -320,6 +320,53 @@ describe('App', () => {
     expect(wrapper.find('[data-testid="show-more-history"]').exists()).toBe(false)
   })
 
+  describe('cloning', () => {
+    function stubDialogs() {
+      HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+        this.setAttribute('open', '')
+      })
+      HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
+        this.removeAttribute('open')
+      })
+    }
+
+    async function cloneThroughDialog(wrapper: Awaited<ReturnType<typeof mountApp>>) {
+      const dialog = wrapper.get('dialog[aria-labelledby="clone-title"]')
+      expect(dialog.attributes('open')).toBeDefined()
+      await buttonByText(wrapper, 'Browse…').trigger('click')
+      await flushPromises()
+      expect(dialog.get('[data-testid="clone-folder"]').text()).toBe('C:\\dev')
+      await dialog.get('input[placeholder^="https://"]').setValue('https://example.com/team/tools.git')
+      await dialog.get('form').trigger('submit')
+      await vi.waitFor(() => expect(wrapper.get('[data-testid="header-repo"]').text()).toBe('tools'))
+      expect(dialog.attributes('open')).toBeUndefined()
+    }
+
+    it('clones from the sidebar’s Clone button, then lists and opens the clone', async () => {
+      stubDialogs()
+      const wrapper = await mountApp(new MockGitDataSource(undefined, 0))
+      await wrapper.get('button[aria-label="Clone repository"]').trigger('click')
+      await cloneThroughDialog(wrapper)
+      expect(statusText(wrapper)).toBe('Cloned tools')
+      expect(wrapper.get('nav').text()).toContain('C:\\dev\\tools')
+    })
+
+    it('clones from the first-run screen', async () => {
+      stubDialogs()
+      const wrapper = await mountApp(new MockGitDataSource([], 0))
+      await buttonByText(wrapper, 'Clone repository…').trigger('click')
+      await cloneThroughDialog(wrapper)
+    })
+
+    it('offers Clone only on a host that clones', async () => {
+      const wrapper = mount(App, {
+        props: { source: new MockGitDataSource(), comparePaths: SAMPLE_COMPARE_PATHS, operations: ['checkout'] },
+      })
+      await flushPromises()
+      expect(wrapper.find('button[aria-label="Clone repository"]').exists()).toBe(false)
+    })
+  })
+
   describe('resizable panes', () => {
     afterEach(() => localStorage.clear())
 

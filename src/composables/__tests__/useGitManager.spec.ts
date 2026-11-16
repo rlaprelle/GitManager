@@ -951,3 +951,88 @@ describe('useGitManager', () => {
     })
   })
 })
+
+describe('useGitManager cloning', () => {
+  const request = { url: 'https://example.com/team/tools.git', name: 'tools' }
+
+  async function cloningManager(stepMs = 0) {
+    const source = new MockGitDataSource(undefined, stepMs)
+    const gm = await loadedManager(source)
+    gm.openCloneDialog()
+    await gm.chooseCloneFolder()
+    return { gm, source }
+  }
+
+  it('remembers the folder the user picked', async () => {
+    const { gm } = await cloningManager()
+    expect(gm.cloneFolder.value).toBe('C:\\dev')
+  })
+
+  it('shows progress while cloning, then lists and opens the clone and closes the dialog', async () => {
+    const { gm } = await cloningManager(1)
+    const progress: string[] = []
+    const clone = gm.cloneRepository(request)
+    expect(gm.runningOperation.value).toBe('clone')
+    const timer = setInterval(() => progress.push(gm.cloneProgress.value ?? ''), 1)
+    await clone
+    clearInterval(timer)
+    expect(progress).toContain('Cloning tools… Receiving objects 40%')
+    expect(gm.cloneDialogOpen.value).toBe(false)
+    expect(gm.repository.value?.name).toBe('tools')
+    expect(gm.repositories.value.map((repo) => repo.name)).toContain('tools')
+    expect(gm.status.value).toBe('Cloned tools')
+    expect(gm.cloneProgress.value).toBeNull()
+    expect(gm.runningOperation.value).toBeNull()
+  })
+
+  it('keeps the dialog open with the reason when the clone fails, so it can be corrected', async () => {
+    const { gm } = await cloningManager()
+    await gm.cloneRepository({ url: 'https://example.com/pricing-api.git', name: 'pricing-api' })
+    expect(gm.cloneDialogOpen.value).toBe(true)
+    expect(gm.cloneError.value).toBe('C:\\dev\\pricing-api already exists and isn’t empty')
+    expect(gm.status.value).toBe('Failed: C:\\dev\\pricing-api already exists and isn’t empty')
+    expect(gm.repository.value?.name).toBe('inventory-service')
+  })
+
+  it('cancelling stops the clone and says so, without calling it a failure', async () => {
+    const { gm } = await cloningManager(20)
+    const clone = gm.cloneRepository(request)
+    await gm.cancelClone()
+    await clone
+    expect(gm.status.value).toBe('Clone cancelled')
+    expect(gm.cloneError.value).toBeNull()
+    expect(gm.repositories.value.map((repo) => repo.name)).not.toContain('tools')
+  })
+
+  it('won’t close the dialog while its clone runs, and runs no other operation meanwhile', async () => {
+    const { gm } = await cloningManager(5)
+    const clone = gm.cloneRepository(request)
+    gm.closeCloneDialog()
+    expect(gm.cloneDialogOpen.value).toBe(true)
+    await gm.fetchRemote()
+    expect(gm.status.value).toMatch(/^Cloning tools…/)
+    await clone
+  })
+
+  it('clones from the first-run screen, with no repository open', async () => {
+    const empty = new MockGitDataSource([], 0)
+    const gm = await loadedManager(empty)
+    expect(gm.repository.value).toBeUndefined()
+    await gm.chooseCloneFolder()
+    await gm.cloneRepository(request)
+    expect(gm.repository.value?.name).toBe('tools')
+    expect(gm.branches.value.local.map((branch) => branch.name)).toContain('main')
+    expect(gm.commits.value.length).toBeGreaterThan(0)
+  })
+
+  it('reports a failed folder pick in the status bar', async () => {
+    const source = new MockGitDataSource(undefined, 0)
+    source.chooseCloneFolder = async () => {
+      throw new Error('picker unavailable')
+    }
+    const gm = await loadedManager(source)
+    await gm.chooseCloneFolder()
+    expect(gm.status.value).toBe('Failed: picker unavailable')
+    expect(gm.cloneFolder.value).toBeNull()
+  })
+})

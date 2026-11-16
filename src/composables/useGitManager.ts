@@ -4,6 +4,7 @@ import type {
   Branches,
   CheckoutOptions,
   CheckoutTarget,
+  CloneRequest,
   Commit,
   FileChange,
   HistoryPage,
@@ -12,6 +13,7 @@ import type {
   Repository,
 } from '@/types/git'
 import { destinationOf, remotesToCheckOut } from '@/lib/checkout'
+import { CLONE_CANCELLED, cloneProgressLabel } from '@/lib/clone'
 import { errorMessage } from '@/lib/errorMessage'
 import { headLabel as describeHead, pluralize, shortHash, syncLabel } from '@/lib/format'
 import { latestLoad } from './latestLoad'
@@ -74,6 +76,16 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   const runningOperation = ref<RepositoryOperation | null>(null)
   const operationRunning = computed(() => runningOperation.value !== null)
   const pendingCheckout = ref<PendingCheckout | null>(null)
+
+  const cloneDialogOpen = ref(false)
+  /** The folder clones go into, once the user has picked one. */
+  const cloneFolder = ref<string | null>(null)
+  /** While a clone runs: 'Cloning tools… Receiving objects 42%'. */
+  const cloneProgress = ref<string | null>(null)
+  /** Why the last clone failed, shown in the dialog so the user can correct it and try again. */
+  const cloneError = ref<string | null>(null)
+  /** Cancel was pressed before the source had started the clone (it waits for a refresh first). */
+  let cloneCancelRequested = false
 
   const compareOpen = ref(false)
   const leftPath = ref(options.comparePaths.left)
@@ -443,7 +455,73 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   async function addChosenRepository(): Promise<void> {
     const { repository: added, message } = await source.addRepository()
     if (message) status.value = message
-    if (!added) return
+    if (added) await listAndOpen(added)
+  }
+
+  // ---- cloning ----
+
+  function openCloneDialog(): void {
+    cloneError.value = null
+    cloneDialogOpen.value = true
+  }
+
+  /** Closes the dialog, unless its clone is running: Cancel stops the clone first. */
+  function closeCloneDialog(): void {
+    if (runningOperation.value === 'clone') return
+    cloneDialogOpen.value = false
+  }
+
+  async function chooseCloneFolder(): Promise<void> {
+    await attempt(async () => {
+      const chosen = await source.chooseCloneFolder()
+      if (chosen !== null) cloneFolder.value = chosen
+    })
+  }
+
+  /**
+   * Clones, showing git's progress in the dialog and the status bar, then lists and opens the clone
+   * and closes the dialog. Works with no repository open (the first-run screen). A failure stays in
+   * the dialog; a cancelled clone just says so.
+   */
+  async function cloneRepository(request: CloneRequest): Promise<void> {
+    if (operationRunning.value) return
+    runningOperation.value = 'clone'
+    cloneError.value = null
+    cloneCancelRequested = false
+    const showProgress = (label: string) => {
+      cloneProgress.value = label
+      status.value = label
+    }
+    try {
+      await refreshInFlight
+      if (cloneCancelRequested) throw new Error(CLONE_CANCELLED)
+      showProgress(cloneProgressLabel(request.name, null))
+      const { repository: cloned, message } = await source.cloneRepository(
+        { url: request.url, name: request.name },
+        (progress) => showProgress(cloneProgressLabel(request.name, progress)),
+      )
+      cloneDialogOpen.value = false
+      if (cloned) await listAndOpen(cloned)
+      status.value = message
+    } catch (error) {
+      const reason = errorMessage(error)
+      const cancelled = reason === CLONE_CANCELLED
+      status.value = cancelled ? CLONE_CANCELLED : `Failed: ${reason}`
+      cloneError.value = cancelled ? null : reason
+    } finally {
+      cloneProgress.value = null
+      runningOperation.value = null
+    }
+  }
+
+  async function cancelClone(): Promise<void> {
+    if (runningOperation.value !== 'clone') return
+    cloneCancelRequested = true
+    await source.cancelClone()
+  }
+
+  /** Puts a repository the source just added on the list (once) and opens it. */
+  async function listAndOpen(added: Repository): Promise<void> {
     if (!repositories.value.some((repo) => repo.id === added.id)) repositories.value.push(added)
     await openRepository(repositories.value.find((repo) => repo.id === added.id)!)
   }
@@ -641,6 +719,15 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     push,
     addRepository,
     removeRepository,
+    cloneDialogOpen,
+    cloneFolder,
+    cloneProgress,
+    cloneError,
+    openCloneDialog,
+    closeCloneDialog,
+    chooseCloneFolder,
+    cloneRepository,
+    cancelClone,
     refresh,
     showMoreHistory,
   }

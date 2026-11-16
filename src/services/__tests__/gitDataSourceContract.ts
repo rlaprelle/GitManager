@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { invertHunks } from '@/lib/diff'
-import type { Commit, Hunk, Repository } from '@/types/git'
+import type { CloneProgress, Commit, Hunk, Repository } from '@/types/git'
 import type { GitDataSource } from '../GitDataSource'
 
 /**
@@ -26,6 +26,17 @@ export interface CheckoutSubject {
   remoteOnly: string
 }
 
+/**
+ * A source for the clone rules: a fresh one per call, whose chooseCloneFolder picks a folder that
+ * already holds a non-empty folder `takenName`.
+ */
+export interface CloneSubject {
+  source: GitDataSource
+  /** A repository URL that clones without a network, with `main` as its default branch. */
+  url: string
+  takenName: string
+}
+
 /** Enough to cover every sample commit while keeping real-git runs quick. */
 const COMMITS_CHECKED_PER_REPOSITORY = 25
 const WHOLE_HISTORY = 10_000
@@ -34,7 +45,49 @@ export function describeGitDataSourceContract(
   name: string,
   createSubject: () => Promise<ContractSubject>,
   createCheckoutSubject: () => Promise<CheckoutSubject>,
+  createCloneSubject: () => Promise<CloneSubject>,
 ): void {
+  describe(`${name} follows the GitDataSource contract for clone`, () => {
+    const listedNames = async (source: GitDataSource) => (await source.listRepositories()).map((repo) => repo.name)
+
+    it('clones into a new folder in the chosen one, reporting progress, and lists the clone', async () => {
+      const { source, url } = await createCloneSubject()
+      const folder = await source.chooseCloneFolder()
+      expect(folder).toBeTruthy()
+      const heard: CloneProgress[] = []
+      const { repository, message } = await source.cloneRepository({ url, name: 'cloned' }, (progress) => heard.push(progress))
+      expect(message).toBe('Cloned cloned')
+      expect(repository).toMatchObject({ name: 'cloned', currentBranch: 'main', changedFileCount: 0, problem: null })
+      expect(repository!.path.toLowerCase()).toBe(`${folder}\\cloned`.toLowerCase())
+      expect(await listedNames(source)).toContain('cloned')
+      expect((await source.getHistory(repository!.id, 5)).commits.length).toBeGreaterThan(0)
+      expect(heard.length).toBeGreaterThan(0)
+      for (const progress of heard) expect(progress.percent).toBeGreaterThanOrEqual(0)
+    })
+
+    it('refuses to clone before a folder is chosen', async () => {
+      const { source, url } = await createCloneSubject()
+      await expect(source.cloneRepository({ url, name: 'cloned' })).rejects.toThrow('Choose a folder to clone into first')
+    })
+
+    it('refuses, before git runs, a URL or name it mustn’t use, or a folder that isn’t empty', async () => {
+      const { source, url, takenName } = await createCloneSubject()
+      await source.chooseCloneFolder()
+      const before = await listedNames(source)
+      await expect(source.cloneRepository({ url: '--upload-pack=calc.exe', name: 'x' })).rejects.toThrow('isn’t a repository URL')
+      await expect(source.cloneRepository({ url: 'ext::sh -c calc', name: 'x' })).rejects.toThrow('isn’t a repository URL')
+      await expect(source.cloneRepository({ url, name: '..' })).rejects.toThrow('can’t be a folder name')
+      await expect(source.cloneRepository({ url, name: 'a\\b' })).rejects.toThrow('can’t be a folder name')
+      await expect(source.cloneRepository({ url, name: takenName })).rejects.toThrow('already exists and isn’t empty')
+      expect(await listedNames(source)).toEqual(before)
+    })
+
+    it('does nothing when asked to cancel with no clone running', async () => {
+      const { source } = await createCloneSubject()
+      await expect(source.cancelClone()).resolves.toBeUndefined()
+    })
+  })
+
   describe(`${name} follows the GitDataSource contract for checkout`, () => {
     const currentBranchOf = async ({ source, repoId }: CheckoutSubject) =>
       (await source.listRepositories()).find((repo) => repo.id === repoId)!.currentBranch

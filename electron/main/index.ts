@@ -69,8 +69,8 @@ function loadRenderer(window: BrowserWindow): void {
 }
 
 /** The native folder picker, over the app window. Tests replace dialog.showOpenDialog. */
-async function chooseRepositoryFolder(): Promise<string | null> {
-  const options = { title: 'Add repository', properties: ['openDirectory' as const] }
+async function chooseFolder(title: string): Promise<string | null> {
+  const options = { title, properties: ['openDirectory' as const, 'createDirectory' as const] }
   const window = BrowserWindow.getAllWindows()[0]
   const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
   return result.canceled ? null : (result.filePaths[0] ?? null)
@@ -102,7 +102,7 @@ if (!developerToolsAllowed()) Menu.setApplicationMenu(null)
 
 void app.whenReady().then(() => {
   const repositories = new RepositoryStore(join(app.getPath('userData'), 'repositories.json'))
-  const source = new GitCliDataSource(repositories, chooseRepositoryFolder)
+  const source = new GitCliDataSource(repositories, chooseFolder)
   registerIpcHandlers(ipcMain, { source, appVersion: app.getVersion(), checkGit })
   createMainWindow()
 })

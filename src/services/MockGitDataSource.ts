@@ -2,6 +2,7 @@ import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositor
 import { sampleCompareDiff } from '@/data/sampleDiffs'
 import type { SampleCommit, SampleRepository } from '@/data/sampleTypes'
 import { localNameOf, switchedMessage } from '@/lib/checkout'
+import { CLONE_CANCELLED, cloneUrlProblem, folderNameProblem } from '@/lib/clone'
 import { invertHunks } from '@/lib/diff'
 import { fetchedMessage, publishedMessage, pulledMessage, pushedMessage } from '@/lib/remoteOperations'
 import { layoutLanes, primaryBranchTip } from '@/lib/laneLayout'
@@ -11,6 +12,8 @@ import type {
   CheckoutOptions,
   CheckoutResult,
   CheckoutTarget,
+  CloneProgress,
+  CloneRequest,
   FileChange,
   HistoryPage,
   Hunk,
@@ -22,6 +25,21 @@ import type { GitDataSource } from './GitDataSource'
 
 /** The sample repositories have one remote. */
 const SAMPLE_REMOTES = ['origin']
+
+/** Where the browser's pretend clones go: the samples' own folder. */
+export const SAMPLE_CLONE_FOLDER = 'C:\\dev'
+
+/** A pretend clone is a copy of this sample, which has its default branch checked out. */
+const CLONE_TEMPLATE_ID = 'pricing'
+
+/** The progress a pretend clone reports, one step per tick. */
+const CLONE_STEPS: CloneProgress[] = [
+  { phase: 'Receiving objects', percent: 0 },
+  { phase: 'Receiving objects', percent: 40 },
+  { phase: 'Receiving objects', percent: 100 },
+  { phase: 'Resolving deltas', percent: 50 },
+  { phase: 'Resolving deltas', percent: 100 },
+]
 
 /**
  * In-memory stand-in for a git backend, serving the design's sample repos. Checkout and push
@@ -36,23 +54,79 @@ export class MockGitDataSource implements GitDataSource {
    * Checkout changes `repositories`. By default they're this source's own copy of the samples;
    * repositories passed in stay the caller's, so a test can change them "outside the app".
    */
-  constructor(private readonly repositories: SampleRepository[] = structuredClone(sampleRepositories)) {}
+  constructor(
+    private readonly repositories: SampleRepository[] = structuredClone(sampleRepositories),
+    /** How long each step of a pretend clone takes: long enough to see, and to cancel. Tests pass 0. */
+    private readonly cloneStepMs = 150,
+  ) {}
+
+  /** The folder chooseCloneFolder "picked"; null until it is called. */
+  private cloneFolder: string | null = null
+
+  /** Stops the pretend clone that is running, if one is. */
+  private stopRunningClone: (() => void) | null = null
+
+  private clones = 0
 
   async listRepositories(): Promise<Repository[]> {
-    return this.listed().map(({ id, name, path, currentBranch, changedFileCount, lastFetch }) => ({
-      id,
-      name,
-      path,
-      currentBranch,
-      changedFileCount,
-      lastFetch,
-      problem: null,
-    }))
+    return this.listed().map(summaryOf)
   }
 
   /** A browser can't open a folder picker, so this explains what the desktop app would ask for. */
   async addRepository(): Promise<AddRepositoryResult> {
     return { repository: null, message: 'Add repository: choose a folder that contains a .git directory' }
+  }
+
+  /** A browser has no folder picker; the samples' folder stands in for the one the user would pick. */
+  async chooseCloneFolder(): Promise<string | null> {
+    this.cloneFolder = SAMPLE_CLONE_FOLDER
+    return this.cloneFolder
+  }
+
+  /** Checks the request as real git's source does, then adds a copy of a sample under the new name. */
+  async cloneRepository(request: CloneRequest, onProgress?: (progress: CloneProgress) => void): Promise<AddRepositoryResult> {
+    const problem = cloneUrlProblem(request.url) ?? folderNameProblem(request.name)
+    if (problem) throw new Error(problem)
+    if (this.cloneFolder === null) throw new Error('Choose a folder to clone into first')
+    if (this.stopRunningClone) throw new Error('A clone is already running')
+    const path = `${this.cloneFolder}\\${request.name}`
+    // Removed repositories count: taking one off the list leaves its folder where it was.
+    if (this.repositories.some((repo) => repo.path.toLowerCase() === path.toLowerCase())) {
+      throw new Error(`${path} already exists and isn’t empty`)
+    }
+    await this.pretendToClone(onProgress ?? (() => {}))
+    // From the bundled samples, not this source's list, which may be empty (the first-run screen).
+    const template = sampleRepositories.find((repo) => repo.id === CLONE_TEMPLATE_ID)!
+    const clone: SampleRepository = {
+      ...structuredClone(template),
+      id: `clone-${++this.clones}`,
+      name: request.name,
+      path,
+      changedFileCount: 0,
+      lastFetch: new Date().toISOString(),
+    }
+    this.repositories.push(clone)
+    return { repository: summaryOf(clone), message: `Cloned ${request.name}` }
+  }
+
+  async cancelClone(): Promise<void> {
+    this.stopRunningClone?.()
+  }
+
+  private pretendToClone(onProgress: (progress: CloneProgress) => void): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      let step = 0
+      const timer = setInterval(() => {
+        if (step < CLONE_STEPS.length) onProgress({ ...CLONE_STEPS[step++]! })
+        else finish(resolve)
+      }, this.cloneStepMs)
+      const finish = (settle: () => void) => {
+        clearInterval(timer)
+        this.stopRunningClone = null
+        settle()
+      }
+      this.stopRunningClone = () => finish(() => reject(new Error(CLONE_CANCELLED)))
+    })
   }
 
   async removeRepository(repoId: string): Promise<OperationResult> {
@@ -163,6 +237,10 @@ export class MockGitDataSource implements GitDataSource {
     if (!commit) throw new Error(`Unknown commit: ${hash}`)
     return commit
   }
+}
+
+function summaryOf({ id, name, path, currentBranch, changedFileCount, lastFetch }: SampleRepository): Repository {
+  return { id, name, path, currentBranch, changedFileCount, lastFetch, problem: null }
 }
 
 /** A sample repository's newest `limit` commits, laid out with the same function the real git source uses. */
