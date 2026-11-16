@@ -38,6 +38,7 @@ src/mountApp.ts                  mounts App or GitRequired; fonts + styles
 src/data/sample*.ts              sample repos stored whole (sampleTypes.ts), diffs, SAMPLE_COMPARE_PATHS
 src/composables/latestLoad.ts    one async area: value + loading, only the latest load applies
 src/composables/useGitManager.ts ALL state, derived state, actions
+src/composables/usePaneSizes.ts  dragged pane sizes (layout, not git state): localStorage + --gm-*-size CSS vars
 src/lib/{diff,graph,format}.ts   pure functions (diff rows, graph geometry, labels)
 src/lib/checkout.ts              checkout wording + names (switchedMessage, localNameOf, remotesToCheckOut, destinationOf)
 src/lib/refs.ts                  remote branch names: splitRemoteBranch, remoteNamesOf, refKind (badge: head/remote/local by the branch list)
@@ -45,6 +46,7 @@ src/lib/remoteOperations.ts      fetch/pull/push wording (both sources) + remote
 src/lib/laneLayout.ts            parents → GraphRow (lane 0 = primary branch line; ≤ 8 lanes)
 src/lib/laneTable.ts             LaneTable: which commits each lane is heading to, while layoutLanes runs
 src/lib/parseDiff.ts             git diff output → Hunk[]
+src/lib/paneLayout.ts            PANE_LIMITS (min + neighbour's reserve), clamping, arrow-key steps, saved sizes
 src/components/**                presentational: props in, emits out
 src/App.vue                      wires composable ↔ components; layout
 src/style.css                    @theme tokens (--color-gm-*), base styles
@@ -107,6 +109,7 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - Responsive: `max-[860px]:` variant is the narrow breakpoint. Page must never scroll horizontally (e2e enforces at phone width); wide content scrolls inside its own pane.
 - Smallest desktop size is 1024×640 content (Electron `minWidth`/`minHeight` with `useContentSize`; root `min-h-[640px]`). Both e2e suites assert no page scroll there — change all three together.
 - Test selectors: role/label first; repository buttons by anchored name (`/^name/`), since each row's Remove button is named "Remove name from the list"; then `data-testid` (`header-repo`, `header-branch`, `unified-diff`, `side-by-side-diff`, `left-label`, `right-label`, `commit-description`, `branch-hash`); a branch button's name is the branch (plus HEAD/sync label), and its tip hash is the button's accessible *description*, so name matches never include it; diff rows and branch badges expose `data-kind`, side-by-side cells `data-side`/`data-cell`.
+- Pane sizes: `PaneDivider` (between two panes, measures them itself) → `usePaneSizes` in App → `--gm-*-size` vars + an `!important`, `min-[860px]:`-gated flex class on the sized pane. The reserves in those classes' `min(…, 100% - Npx)` duplicate `PANE_LIMITS`; change both together. A null size means the pane's own default flex sizing, so the default layout is unchanged. jsdom has no `PointerEvent`: `PaneDivider.spec` dispatches MouseEvents with a `pointerId`.
 - Every new capability gets: lib/composable unit test, component test, `src/__tests__/App.spec.ts` wiring test if it crosses components, and a Playwright test that drives the UI.
 
 ## Constraints / quirks

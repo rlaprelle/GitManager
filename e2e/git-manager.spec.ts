@@ -1,4 +1,4 @@
-import { type Page, expect, test } from '@playwright/test'
+import { type Locator, type Page, expect, test } from '@playwright/test'
 import {
   contentSecurityPolicy,
   foreignResourceUrls,
@@ -179,6 +179,105 @@ test('at the smallest desktop size branch labels stay inside the description col
     .getByTestId('commit-description')
     .evaluateAll((cells) => cells.filter((cell) => cell.scrollWidth > cell.clientWidth).map((cell) => cell.textContent))
   expect(overflowing).toEqual([])
+})
+
+test.describe('resizing the panes', () => {
+  const separator = (page: Page, label: string) => page.getByRole('separator', { name: label })
+  const widthOf = async (locator: Locator) => Math.round((await locator.boundingBox())!.width)
+  const heightOf = async (locator: Locator) => Math.round((await locator.boundingBox())!.height)
+
+  /** Drags a divider with the mouse, from its centre, by (dx, dy). */
+  async function drag(page: Page, label: string, dx: number, dy: number) {
+    const box = (await separator(page, label).boundingBox())!
+    const x = box.x + box.width / 2
+    const y = box.y + box.height / 2
+    await page.mouse.move(x, y)
+    await page.mouse.down()
+    await page.mouse.move(x + dx / 2, y + dy / 2)
+    await page.mouse.move(x + dx, y + dy)
+    await page.mouse.up()
+  }
+
+  test('dragging the sidebar’s edge widens it, the width survives a reload, and double-click resets it', async ({ page }) => {
+    const before = await widthOf(sidebar(page))
+    await drag(page, 'Resize the sidebar', 90, 0)
+    expect(await widthOf(sidebar(page))).toBe(before + 90)
+    await expect(separator(page, 'Resize the sidebar')).toHaveAttribute('aria-valuenow', String(before + 90))
+
+    await page.reload()
+    await expect(header(page)).toBeVisible()
+    expect(await widthOf(sidebar(page))).toBe(before + 90)
+
+    await separator(page, 'Resize the sidebar').dblclick()
+    expect(await widthOf(sidebar(page))).toBe(before)
+    await page.reload()
+    await expect(header(page)).toBeVisible()
+    expect(await widthOf(sidebar(page))).toBe(before)
+  })
+
+  test('the repository list, diff panel and file list resize by dragging too', async ({ page }) => {
+    const repositoryList = sidebar(page).locator('section').first()
+    const repositoriesBefore = await heightOf(repositoryList)
+    await drag(page, 'Resize the repository list', 0, -60)
+    expect(await heightOf(repositoryList)).toBe(repositoriesBefore - 60)
+
+    expect(await heightOf(diffViewer(page))).toBe(400)
+    await drag(page, 'Resize the diff panel', 0, -100)
+    expect(await heightOf(diffViewer(page))).toBe(500)
+
+    const list = separator(page, 'Resize the file list')
+    const before = Number(await list.getAttribute('aria-valuenow'))
+    await drag(page, 'Resize the file list', 80, 0)
+    await expect(list).toHaveAttribute('aria-valuenow', String(before + 80))
+  })
+
+  test('the dividers move with the arrow keys', async ({ page }) => {
+    await separator(page, 'Resize the diff panel').focus()
+    await page.keyboard.press('ArrowUp')
+    await page.keyboard.press('Shift+ArrowUp')
+    expect(await heightOf(diffViewer(page))).toBe(400 + 16 + 64)
+
+    const sidebarBefore = await widthOf(sidebar(page))
+    await separator(page, 'Resize the sidebar').focus()
+    await page.keyboard.press('ArrowLeft')
+    expect(await widthOf(sidebar(page))).toBe(sidebarBefore - 16)
+  })
+
+  test('at the smallest desktop size, dragging every divider to its limit still fits the window', async ({ page }) => {
+    await page.setViewportSize(SMALLEST_DESKTOP)
+    await drag(page, 'Resize the sidebar', 600, 0)
+    await drag(page, 'Resize the repository list', 0, 600)
+    await drag(page, 'Resize the diff panel', 0, -600)
+    await drag(page, 'Resize the file list', 600, 0)
+
+    const overflow = await page.evaluate(() => ({
+      x: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      y: document.documentElement.scrollHeight - document.documentElement.clientHeight,
+    }))
+    expect(overflow).toEqual({ x: 0, y: 0 })
+    // Each neighbour keeps its share: History, the branches, and the diff beside the file list.
+    expect(await heightOf(page.getByRole('region', { name: 'Commit graph' }))).toBeGreaterThanOrEqual(220)
+    await expect(sidebar(page).getByRole('heading', { name: 'Branches' })).toBeInViewport()
+    const diff = page.getByTestId('unified-diff')
+    await expect(diff).toBeInViewport()
+    const listBox = (await separator(page, 'Resize the file list').boundingBox())!
+    expect((await diff.boundingBox())!.y).toBeLessThan(listBox.y + listBox.height) // side by side, not wrapped below
+  })
+
+  test('a size remembered from a bigger window gives way when the window is smaller', async ({ page }) => {
+    const before = await widthOf(sidebar(page))
+    await drag(page, 'Resize the sidebar', 400, 0)
+    expect(await widthOf(sidebar(page))).toBe(before + 400)
+    await page.setViewportSize(SMALLEST_DESKTOP)
+    expect(await widthOf(sidebar(page))).toBe(SMALLEST_DESKTOP.width - 720)
+  })
+
+  test('at phone width there are no dividers, and the panes stack as before', async ({ page }) => {
+    await drag(page, 'Resize the sidebar', 90, 0)
+    await page.setViewportSize({ width: 390, height: 844 })
+    await expect(page.getByRole('separator')).toHaveCount(0)
+    expect(await widthOf(sidebar(page))).toBe(390)
+  })
 })
 
 test('loads nothing from other hosts and renders in the bundled fonts', async ({ page }) => {

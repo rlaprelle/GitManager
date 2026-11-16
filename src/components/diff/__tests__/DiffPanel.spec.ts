@@ -4,6 +4,7 @@ import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositor
 import { sampleCompareDiff } from '@/data/sampleDiffs'
 import type { DiffMode } from '@/composables/useGitManager'
 import { sampleHistoryPage } from '@/services/MockGitDataSource'
+import PaneDivider from '../../PaneDivider.vue'
 import DiffPanel from '../DiffPanel.vue'
 
 const inventory = sampleRepositories[0]!
@@ -184,5 +185,21 @@ describe('DiffPanel in compare mode', () => {
     expect(wrapper.emitted('update:leftPath')).toEqual([['C:\\other.yml']])
     expect(wrapper.emitted('swap')).toHaveLength(1)
     expect(wrapper.emitted('closeCompare')).toHaveLength(1)
+  })
+})
+
+describe('DiffPanel file list divider', () => {
+  it('sits beside the file list, and passes resizes and resets up', () => {
+    const wrapper = mountPanel()
+    const divider = wrapper.getComponent(PaneDivider)
+    expect(divider.props('label')).toBe('Resize the file list')
+    divider.vm.$emit('resize', 250)
+    divider.vm.$emit('reset')
+    expect(wrapper.emitted('resizeFileList')).toEqual([[250]])
+    expect(wrapper.emitted('resetFileList')).toHaveLength(1)
+  })
+
+  it('isn’t there while comparing, which has no file list', () => {
+    expect(mountPanel({ compareOpen: true }).findComponent(PaneDivider).exists()).toBe(false)
   })
 })

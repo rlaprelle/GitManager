@@ -1,9 +1,11 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositories'
 import type { GitDataSource, RepositoryOperation } from '@/services/GitDataSource'
 import { MockGitDataSource } from '@/services/MockGitDataSource'
 import { heldSource } from '@/composables/__tests__/heldSource'
+import PaneDivider from '@/components/PaneDivider.vue'
+import { PANE_SIZES_KEY } from '@/composables/usePaneSizes'
 import App from '../App.vue'
 
 async function mountApp(source: GitDataSource = new MockGitDataSource()) {
@@ -316,6 +318,61 @@ describe('App', () => {
     await flushPromises()
     expect(rows()).toHaveLength(250)
     expect(wrapper.find('[data-testid="show-more-history"]').exists()).toBe(false)
+  })
+
+  describe('resizable panes', () => {
+    afterEach(() => localStorage.clear())
+
+    const divider = (wrapper: Awaited<ReturnType<typeof mountApp>>, label: string) =>
+      wrapper.findAllComponents(PaneDivider).find((d) => d.props('label') === label)!
+
+    it('has a divider for each of the four pane boundaries', async () => {
+      const labels = (await mountApp()).findAllComponents(PaneDivider).map((d) => d.props('label'))
+      expect(labels).toEqual([
+        'Resize the repository list',
+        'Resize the sidebar',
+        'Resize the diff panel',
+        'Resize the file list',
+      ])
+    })
+
+    it('sizes each pane from its divider, remembers it, and puts it back on reset', async () => {
+      const wrapper = await mountApp()
+      const root = wrapper.get('div')
+      const panes = [
+        ['Resize the sidebar', '--gm-sidebar-size', wrapper.get('nav')],
+        ['Resize the repository list', '--gm-repositories-size', wrapper.get('nav section')],
+        ['Resize the diff panel', '--gm-diff-size', wrapper.get('[aria-label="Diff viewer"]')],
+        ['Resize the file list', '--gm-file-list-size', wrapper.get('[aria-label="Diff viewer"] .border-r')],
+      ] as const
+      for (const [label, variable, pane] of panes) {
+        expect(pane.classes().some((c) => c.includes(variable))).toBe(false)
+        divider(wrapper, label).vm.$emit('resize', 333)
+        await wrapper.vm.$nextTick()
+        expect(root.attributes('style')).toContain(`${variable}: 333px`)
+        expect(pane.classes().some((c) => c.includes(`var(${variable})`))).toBe(true)
+      }
+      expect(JSON.parse(localStorage.getItem(PANE_SIZES_KEY)!)).toEqual({
+        sidebar: 333,
+        repositories: 333,
+        diff: 333,
+        fileList: 333,
+      })
+
+      for (const [label, variable, pane] of panes) {
+        divider(wrapper, label).vm.$emit('reset')
+        await wrapper.vm.$nextTick()
+        expect(root.attributes('style') ?? '').not.toContain(variable)
+        expect(pane.classes().some((c) => c.includes(variable))).toBe(false)
+      }
+      expect(localStorage.getItem(PANE_SIZES_KEY)).toBe('{}')
+    })
+
+    it('starts from the remembered sizes', async () => {
+      localStorage.setItem(PANE_SIZES_KEY, '{"sidebar":340}')
+      const wrapper = await mountApp()
+      expect(wrapper.get('div').attributes('style')).toContain('--gm-sidebar-size: 340px')
+    })
   })
 
   it('applies a custom accent colour', async () => {
