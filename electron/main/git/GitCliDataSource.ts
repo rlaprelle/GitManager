@@ -12,12 +12,15 @@ import type {
   CheckoutOptions,
   CheckoutResult,
   CheckoutTarget,
+  CloneProgress,
+  CloneRequest,
   FileChange,
   HistoryPage,
   Hunk,
   OperationResult,
   Repository,
 } from '../../../src/types/git'
+import { cloneInto, planClone } from './cloneInto'
 import { lastFetchTime, preservingFetchHead } from './fetchHead'
 import { networkAccessFor } from './network'
 import {
@@ -61,8 +64,8 @@ export interface RepositoryCatalog {
   remove(id: string): Promise<void>
 }
 
-/** Asks the user for a folder; null when they cancel. */
-export type ChooseFolder = () => Promise<string | null>
+/** Asks the user for a folder (`title` heads the picker); null when they cancel. */
+export type ChooseFolder = (title: string) => Promise<string | null>
 
 const FOLDER_NOT_FOUND = 'Folder not found'
 
@@ -100,6 +103,12 @@ export class GitCliDataSource implements GitDataSource {
     private readonly chooseFolder: ChooseFolder,
   ) {}
 
+  /** The folder the user last picked to clone into. Main-process state: the renderer never names a folder. */
+  private cloneFolder: string | null = null
+
+  /** Stops the clone that is running, if one is. */
+  private stopRunningClone: AbortController | null = null
+
   async listRepositories(): Promise<Repository[]> {
     const stored = await this.repositories.list()
     return Promise.all(stored.map((repo) => this.summarize(repo)))
@@ -107,7 +116,7 @@ export class GitCliDataSource implements GitDataSource {
 
   /** Adds the repository the chosen folder belongs to, by its top folder, so a subfolder works too. */
   async addRepository(): Promise<AddRepositoryResult> {
-    const chosen = await this.chooseFolder()
+    const chosen = await this.chooseFolder('Add repository')
     if (chosen === null) return { repository: null, message: '' }
     const topFolder = await git(chosen, ['rev-parse', '--show-toplevel']).catch(() => {
       throw new GitError(`${chosen} isn’t inside a git repository`)
@@ -115,6 +124,33 @@ export class GitCliDataSource implements GitDataSource {
     const { repository: stored, added } = await this.repositories.add(normalize(topFolder.trim()))
     const repository = await this.summarize(stored)
     return { repository, message: added ? `Added ${repository.name}` : `${repository.name} is already in the list` }
+  }
+
+  async chooseCloneFolder(): Promise<string | null> {
+    const chosen = await this.chooseFolder('Choose the folder to clone into')
+    if (chosen !== null) this.cloneFolder = normalize(chosen)
+    return chosen === null ? null : this.cloneFolder
+  }
+
+  /** Clones into the folder chooseCloneFolder remembered (see `cloneInto.ts`), then lists and summarizes the clone. */
+  async cloneRepository(request: CloneRequest, onProgress?: (progress: CloneProgress) => void): Promise<AddRepositoryResult> {
+    const parent = this.cloneFolder
+    if (parent === null) throw new GitError('Choose a folder to clone into first')
+    if (this.stopRunningClone) throw new GitError('A clone is already running')
+    const stop = new AbortController()
+    this.stopRunningClone = stop
+    try {
+      const plan = await planClone(parent, request)
+      await cloneInto(parent, plan, stop.signal, onProgress)
+      const { repository: stored } = await this.repositories.add(normalize(plan.destination))
+      return { repository: await this.summarize(stored), message: `Cloned ${plan.name}` }
+    } finally {
+      this.stopRunningClone = null
+    }
+  }
+
+  async cancelClone(): Promise<void> {
+    this.stopRunningClone?.abort()
   }
 
   async removeRepository(repoId: string): Promise<OperationResult> {

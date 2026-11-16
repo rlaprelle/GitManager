@@ -5,6 +5,8 @@ import type {
   CheckoutOptions,
   CheckoutResult,
   CheckoutTarget,
+  CloneProgress,
+  CloneRequest,
   FileChange,
   HistoryPage,
   Hunk,
@@ -51,6 +53,25 @@ export class IpcGitDataSource implements GitDataSource {
 
   removeRepository(repoId: string): Promise<OperationResult> {
     return this.git.removeRepository(repoId)
+  }
+
+  /** Main shows the folder picker, and remembers the folder. */
+  chooseCloneFolder(): Promise<string | null> {
+    return this.git.chooseCloneFolder()
+  }
+
+  /** Listens for progress events while the clone runs; sends a plain copy of the request. */
+  async cloneRepository(request: CloneRequest, onProgress?: (progress: CloneProgress) => void): Promise<AddRepositoryResult> {
+    const stopListening = onProgress ? this.git.onCloneProgress(onProgress) : () => {}
+    try {
+      return await this.git.cloneRepository({ url: request.url, name: request.name })
+    } finally {
+      stopListening()
+    }
+  }
+
+  cancelClone(): Promise<void> {
+    return this.git.cancelClone()
   }
 
   /**

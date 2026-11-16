@@ -116,3 +116,15 @@ export interface AddRepositoryResult {
   /** For the status bar; '' when there's nothing to say (the user cancelled). */
   message: string
 }
+
+/** What to clone, and the name of the folder to clone it into (inside the folder the user picked). */
+export interface CloneRequest {
+  url: string
+  name: string
+}
+
+/** How far a clone has got, as git reports it ('Receiving objects', 42). */
+export interface CloneProgress {
+  phase: string
+  percent: number
+}

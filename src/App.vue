@@ -8,6 +8,7 @@ import { PANE_LIMITS } from '@/lib/paneLayout'
 import { pluralize } from '@/lib/format'
 import AppHeader from '@/components/AppHeader.vue'
 import BranchList from '@/components/BranchList.vue'
+import CloneDialog from '@/components/CloneDialog.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import CommitHistory from '@/components/CommitHistory.vue'
 import NoRepositories from '@/components/NoRepositories.vue'
@@ -80,6 +81,15 @@ const {
   push,
   addRepository,
   removeRepository,
+  cloneDialogOpen,
+  cloneFolder,
+  cloneProgress,
+  cloneError,
+  openCloneDialog,
+  closeCloneDialog,
+  chooseCloneFolder,
+  cloneRepository,
+  cancelClone,
   refresh,
   showMoreHistory,
   // The data source is a service, not state: unwrap it in case a parent passed it in reactive props.
@@ -92,6 +102,7 @@ const now = useNow()
 const diffEmptyMessage = computed(() => (historyLoading.value ? '' : (historyMessage.value ?? '')))
 
 const canCheckout = computed(() => props.operations.includes('checkout'))
+const canClone = computed(() => props.operations.includes('clone'))
 
 const pendingCommits = computed(() => pluralize(pendingCheckout.value?.commitsLeft ?? 0, 'commit', 'commits'))
 
@@ -166,8 +177,10 @@ onUnmounted(() => {
             :class="paneSizes.repositories !== null && sizedRepositories"
             :repositories="repositories"
             :selected-id="repository.id"
+            :can-clone="canClone"
             @select="selectRepository"
             @add="addRepository"
+            @clone="openCloneDialog"
             @remove="removeRepository"
           />
           <PaneDivider
@@ -277,12 +290,24 @@ onUnmounted(() => {
     </template>
 
     <template v-else-if="!loading && repositories.length === 0">
-      <NoRepositories @add="addRepository" />
+      <NoRepositories :can-clone="canClone" @add="addRepository" @clone="openCloneDialog" />
       <StatusBar :status="status" :now="now" />
     </template>
 
     <div v-else class="flex flex-auto items-center justify-center text-gm-muted" role="status">
       {{ loading ? 'Loading repositories…' : status }}
     </div>
+
+    <CloneDialog
+      :open="cloneDialogOpen"
+      :folder="cloneFolder"
+      :cloning="runningOperation === 'clone'"
+      :progress="cloneProgress"
+      :error="cloneError"
+      @choose-folder="chooseCloneFolder"
+      @clone="cloneRepository"
+      @close="closeCloneDialog"
+      @cancel-clone="cancelClone"
+    />
   </div>
 </template>

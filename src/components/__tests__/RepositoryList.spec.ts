@@ -63,4 +63,12 @@ describe('RepositoryList', () => {
     await wrapper.get('button[aria-label="Add repository"]').trigger('click')
     expect(wrapper.emitted('add')).toHaveLength(1)
   })
+
+  it('emits clone from the clone-repository button, which a host that can’t clone hides', async () => {
+    const wrapper = mountList()
+    await wrapper.get('button[aria-label="Clone repository"]').trigger('click')
+    expect(wrapper.emitted('clone')).toHaveLength(1)
+    const noClone = mount(RepositoryList, { props: { repositories: listed, selectedId: 'inventory', canClone: false } })
+    expect(noClone.find('button[aria-label="Clone repository"]').exists()).toBe(false)
+  })
 })

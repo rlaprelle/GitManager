@@ -1,6 +1,8 @@
 import type {
   AddRepositoryResult,
   Branches,
+  CloneProgress,
+  CloneRequest,
   CheckoutOptions,
   CheckoutResult,
   CheckoutTarget,
@@ -12,9 +14,9 @@ import type {
 } from '@/types/git'
 
 /** The operations that change a repository; a host shows the buttons only for those it offers. */
-export type RepositoryOperation = 'checkout' | 'fetch' | 'pull' | 'push'
+export type RepositoryOperation = 'checkout' | 'fetch' | 'pull' | 'push' | 'clone'
 
-export const ALL_OPERATIONS: readonly RepositoryOperation[] = ['checkout', 'fetch', 'pull', 'push']
+export const ALL_OPERATIONS: readonly RepositoryOperation[] = ['checkout', 'fetch', 'pull', 'push', 'clone']
 
 /**
  * Everything the UI needs from git, one call per thing the screen shows, so a real
@@ -35,6 +37,23 @@ export interface GitDataSource {
    * already listed returns it again; `repository` is null when nothing was added.
    */
   addRepository(): Promise<AddRepositoryResult>
+  /**
+   * Asks for the folder to clone into (the desktop app shows a folder picker) and remembers it for
+   * cloneRepository, so the renderer never names a folder. Null when the user cancelled.
+   */
+  chooseCloneFolder(): Promise<string | null>
+  /**
+   * Clones `url` into a new folder `name` inside the chosen folder, adds it to the list and returns
+   * it. Rejects, before git runs, a URL `cloneUrlProblem` refuses, a name `folderNameProblem` refuses,
+   * a folder of that name that isn't empty, no chosen folder yet, and a second clone while one runs.
+   * `onProgress` hears git's progress as it goes.
+   */
+  cloneRepository(request: CloneRequest, onProgress?: (progress: CloneProgress) => void): Promise<AddRepositoryResult>
+  /**
+   * Stops the running clone, if any, and removes what it made (the folder, when the clone created
+   * it). The clone then rejects with CLONE_CANCELLED.
+   */
+  cancelClone(): Promise<void>
   /** Takes a repository off the list. Never touches its folder. */
   removeRepository(repoId: string): Promise<OperationResult>
   /**

@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { type ChildProcess, execFile } from 'node:child_process'
 
 /** A git command failed; the message is git's own explanation, without its "fatal:" prefix. */
 export class GitError extends Error {
@@ -22,6 +22,10 @@ export interface RunGitOptions {
   okExitCodes?: number[]
   /** For commands that talk to a remote (fetch, pull, push); see `network.ts`. Others never sign in. */
   network?: NetworkAccess
+  /** Hears stderr as it arrives (clone's progress); the whole of it still comes with a failure. */
+  onStderr?: (chunk: string) => void
+  /** Aborting stops git and everything it started (a transfer's helpers, ssh). The call then rejects. */
+  signal?: AbortSignal
 }
 
 /** How a command that talks to a remote runs: where git and ssh ask for sign-in, and when a stalled transfer fails. */
@@ -60,7 +64,7 @@ const MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 /** Runs the installed git with an argument list (no shell) in `cwd`, resolving with its stdout. */
 export function runGit(cwd: string, args: string[], options: RunGitOptions = {}): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(
+    const child = execFile(
       'git',
       [...FIXED_SETTINGS, ...(options.network?.settings ?? []), ...args],
       { cwd, encoding: 'utf8', maxBuffer: MAX_OUTPUT_BYTES, windowsHide: true, env: environmentFor(options.network) },
@@ -71,7 +75,23 @@ export function runGit(cwd: string, args: string[], options: RunGitOptions = {})
         reject(new GitError(gitMessage(stderr) || error.message, stderr, stdout))
       },
     )
+    if (options.onStderr) child.stderr?.on('data', (chunk: string) => options.onStderr!(chunk))
+    if (options.signal?.aborted) stopProcessTree(child)
+    else options.signal?.addEventListener('abort', () => stopProcessTree(child), { once: true })
   })
+}
+
+/**
+ * Ends git and the processes it started. On Windows, killing git alone would leave git-remote-https
+ * or ssh running, holding the half-made clone's folder open so it can't be deleted.
+ */
+function stopProcessTree(child: ChildProcess): void {
+  if (child.pid === undefined || child.exitCode !== null) return
+  if (process.platform !== 'win32') {
+    child.kill()
+    return
+  }
+  execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {})
 }
 
 function environmentFor(network: NetworkAccess | undefined): NodeJS.ProcessEnv {

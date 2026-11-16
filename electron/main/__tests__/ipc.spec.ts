@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import type { GitDataSource } from '../../../src/services/GitDataSource'
 import { MockGitDataSource } from '../../../src/services/MockGitDataSource'
-import { IpcChannel } from '../../shared/channels'
+import { IpcChannel, IpcEvent } from '../../shared/channels'
 import { type IpcRegistrar, registerIpcHandlers } from '../ipc'
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>
@@ -60,6 +60,37 @@ describe('registerIpcHandlers', () => {
       value: { repository: null, message: 'Add repository: choose a folder that contains a .git directory' },
     })
     expect(await invoke(IpcChannel.RemoveRepository, 'pricing')).toEqual({ ok: true, value: { message: 'Removed pricing-api from the list' } })
+  })
+
+  it('clones into the chosen folder, sending progress to the window that asked', async () => {
+    const handlers = new Map<string, Handler>()
+    registerIpcHandlers({ handle: (channel, listener) => handlers.set(channel, listener as Handler) }, {
+      source: new MockGitDataSource(undefined, 0),
+      appVersion: '1.2.3',
+      checkGit: async () => ({ state: 'missing', minimum: '2.30' }),
+    })
+    const sent: unknown[][] = []
+    const window = { sender: { send: (...args: unknown[]) => sent.push(args) } }
+    expect(await handlers.get(IpcChannel.ChooseCloneFolder)!(window)).toEqual({ ok: true, value: 'C:\\dev' })
+    const result = (await handlers.get(IpcChannel.CloneRepository)!(window, { url: 'https://host/tools.git', name: 'tools' })) as {
+      ok: true
+      value: { message: string }
+    }
+    expect(result.value.message).toBe('Cloned tools')
+    expect(sent[0]).toEqual([IpcEvent.CloneProgress, { phase: 'Receiving objects', percent: 0 }])
+    expect(await handlers.get(IpcChannel.CancelClone)!(window)).toEqual({ ok: true, value: undefined })
+  })
+
+  it('passes the source only a clone request of two pieces of text', async () => {
+    const invoke = registeredHandlers()
+    expect(await invoke(IpcChannel.CloneRepository, 'https://host/tools.git')).toEqual({
+      ok: false,
+      message: 'Expected a clone request: { url, name }',
+    })
+    expect(await invoke(IpcChannel.CloneRepository, { url: ['x'], name: 'tools' })).toEqual({
+      ok: false,
+      message: 'Expected text, got object',
+    })
   })
 
   it('checks out a local or a remote branch', async () => {
