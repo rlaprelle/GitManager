@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -21,7 +21,9 @@ export interface Fixtures {
  * user's own settings (signing, hooks, autocrlf, default branch) can't change the fixtures.
  */
 export async function createFixtures(): Promise<Fixtures> {
-  const root = await mkdtemp(join(tmpdir(), 'git-manager-fixtures-'))
+  // The long form of the path: TEMP can be an 8.3 short path (C:\Users\RUNNER~1 on GitHub's Windows
+  // runners), while git reports folders long, so a fixture path wouldn't equal what git says it is.
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'git-manager-fixtures-')))
   const emptyConfig = join(root, 'empty.gitconfig')
   await writeFile(emptyConfig, '')
   let clock = Date.UTC(2026, 10, 1, 9, 0) / 1000

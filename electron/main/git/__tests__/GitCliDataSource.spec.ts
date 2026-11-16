@@ -700,9 +700,12 @@ describe('GitCliDataSource talking to a remote', () => {
 
   it('trusts the remote, not an out-of-date remote branch here, about whether there was anything to push', async () => {
     const { source, folder, name } = await checkoutRepository()
+    const before = await tipOf(folder, 'origin/main')
     await commitInFixture(fixtures, folder, 'a.txt', 'a\n', 'A')
-    // Pushed by path, not by remote name, so origin/main here doesn't move.
     await gitInFixture(fixtures, folder, 'push', '--quiet', originOf(fixtures, name), 'main:main')
+    // Whether a push by path moves origin/main here depends on the git version (2.56 does, 2.46 doesn't),
+    // so put it back: origin has the commit, and this repository's idea of origin/main is out of date.
+    await gitInFixture(fixtures, folder, 'update-ref', 'refs/remotes/origin/main', before)
     expect((await branchesOf(source)).local.find((branch) => branch.name === 'main')).toMatchObject({ ahead: 1 })
 
     expect(await source.push('repo', 'main')).toEqual({ message: 'Nothing to push; origin/main is up to date' })
