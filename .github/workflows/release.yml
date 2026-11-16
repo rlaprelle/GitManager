@@ -1,25 +1,38 @@
-# Cuts a release when a version tag is pushed (`npm version 0.2.1`, then `git push --follow-tags`).
-# Every test suite must pass before anything is published. The installer and latest.yml go to a
-# *draft* GitHub release; publishing the draft is what makes installed apps update.
+# Cuts a release from main when someone presses "Run workflow" (Actions → Release).
+#
+# The version is package.json's: bump it on dev (`npm version 0.2.3 --no-git-tag-version`), merge to
+# main, then run this. Every test suite must pass before anything is made. A run that fails leaves
+# nothing behind: no tag, no release.
+#
+# A run ends with a *draft* release aimed at the commit it tested, with the installer and latest.yml.
+# The draft has no tag yet: GitHub creates v<version> when someone publishes the draft, so a tag only
+# ever means a published release. Publishing is also what makes installed apps update.
 name: Release
 
 on:
-  push:
-    tags: ['v*']
+  workflow_dispatch:
 
-# Uploading release assets needs write access to the repository's contents; nothing else does.
+# Making the release needs write access to the repository's contents; nothing else does.
 permissions:
   contents: write
 
+# One release at a time: two runs of the same version would both pass the "not taken yet" check.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
   release:
     runs-on: windows-latest
     timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
+      - name: Releases come from main
+        if: github.ref != 'refs/heads/main'
+        shell: pwsh
+        run: throw "Run this from main, not $env:GITHUB_REF_NAME"
+
       - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v7
@@ -28,13 +41,23 @@ jobs:
           node-version: 24
           cache: npm
 
-      - name: The tag matches package.json's version
+      - name: The version isn't taken yet
+        id: version
         shell: pwsh
         run: |
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          if ("v$version" -ne $env:GITHUB_REF_NAME) {
-            throw "Tag $env:GITHUB_REF_NAME doesn't match package.json version $version"
+          $tag = "v$version"
+          if (git ls-remote --tags origin "refs/tags/$tag") {
+            throw "$tag is already tagged. Bump package.json's version on dev, merge to main, and run again."
           }
+          # Drafts included: an earlier run's draft that nobody published yet takes the version too.
+          $releaseTags = @(gh api "repos/$env:GITHUB_REPOSITORY/releases" --paginate --jq '.[].tag_name')
+          if ($LASTEXITCODE -ne 0) { throw "Couldn't list the releases" }
+          if ($releaseTags -contains $tag) {
+            throw "A release for $tag already exists (maybe an unpublished draft). Publish or delete it, or bump the version."
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
 
       - run: npm ci
 
@@ -48,7 +71,16 @@ jobs:
 
       - run: npm run test:e2e:app
 
-      - name: Build and upload the installer to a draft release
-        run: npm run build:app && npx electron-builder --win nsis --publish always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build the installer
+        # --publish never: this workflow makes the release itself, below, once everything has passed.
+        run: npm run build:app && npx electron-builder --win nsis --publish never
+
+      - name: Make the draft release (its tag is created when it's published)
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $tag = '${{ steps.version.outputs.tag }}'
+          gh release create $tag --draft --target $env:GITHUB_SHA --title "Git Manager $version" --generate-notes `
+            "release/GitManager-Setup-$version.exe" `
+            "release/GitManager-Setup-$version.exe.blockmap" `
+            release/latest.yml
