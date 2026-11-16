@@ -39,10 +39,9 @@ extraResources:
   - from: node_modules/@fontsource-variable/jetbrains-mono/LICENSE
     to: licenses/JetBrains-Mono-OFL.txt
 
-# Where releases go, and where the installed app looks for updates (baked into
-# app-update.yml). A draft: the workflow uploads, someone publishes it on GitHub.
+# Where the installed app looks for updates (baked into app-update.yml). electron-builder never
+# publishes: the release workflow builds with --publish never and makes the draft release itself.
 publish:
   provider: github
   owner: rlaprelle
   repo: GitManager
-  releaseType: draft

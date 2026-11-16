@@ -1,7 +1,7 @@
 {
   "name": "git-manager",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Desktop git client: repositories, branches, history and diffs in one window",
   "author": "rlaprelle",
   "type": "module",
