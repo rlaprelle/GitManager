@@ -2,7 +2,6 @@
 // CommonJS (Electron has no ESM loader for sandboxed preloads).
 import { contextBridge, ipcRenderer } from 'electron'
 import type { GitManagerBridge, IpcResult } from '../../src/types/bridge'
-import type { CloneProgress } from '../../src/types/git'
 import { IpcChannel, IpcEvent } from '../shared/channels'
 
 /** Invokes a main-process handler, resolving with its value or rejecting with its plain message. */
@@ -10,6 +9,15 @@ async function call<T>(channel: string, ...args: unknown[]): Promise<T> {
   const result = (await ipcRenderer.invoke(channel, ...args)) as IpcResult<T>
   if (result.ok) return result.value
   throw new Error(result.message)
+}
+
+/** Listens for one kind of main-process event; returns the way to stop listening. */
+function subscribe<T>(channel: string, listener: (value: T) => void): () => void {
+  const relay = (_event: unknown, value: T) => listener(value)
+  ipcRenderer.on(channel, relay)
+  return () => {
+    ipcRenderer.removeListener(channel, relay)
+  }
 }
 
 const bridge: GitManagerBridge = {
@@ -27,17 +35,16 @@ const bridge: GitManagerBridge = {
     chooseCloneFolder: () => call(IpcChannel.ChooseCloneFolder),
     cloneRepository: (request) => call(IpcChannel.CloneRepository, request),
     cancelClone: () => call(IpcChannel.CancelClone),
-    onCloneProgress: (listener) => {
-      const relay = (_event: unknown, progress: CloneProgress) => listener(progress)
-      ipcRenderer.on(IpcEvent.CloneProgress, relay)
-      return () => {
-        ipcRenderer.removeListener(IpcEvent.CloneProgress, relay)
-      }
-    },
+    onCloneProgress: (listener) => subscribe(IpcEvent.CloneProgress, listener),
     checkout: (repoId, target, options) => call(IpcChannel.Checkout, repoId, target, options),
     fetch: (repoId) => call(IpcChannel.Fetch, repoId),
     pull: (repoId, branch) => call(IpcChannel.Pull, repoId, branch),
     push: (repoId, branch) => call(IpcChannel.Push, repoId, branch),
+  },
+  updates: {
+    readyVersion: () => call(IpcChannel.GetReadyUpdate),
+    onReady: (listener) => subscribe(IpcEvent.UpdateReady, listener),
+    install: () => call(IpcChannel.InstallUpdate),
   },
 }
 

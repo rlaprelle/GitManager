@@ -14,6 +14,8 @@ export const IpcChannel = {
   ChooseCloneFolder: 'clone:choose-folder',
   CloneRepository: 'clone:run',
   CancelClone: 'clone:cancel',
+  GetReadyUpdate: 'update:ready-version',
+  InstallUpdate: 'update:install',
   Checkout: 'git:checkout',
   Fetch: 'git:fetch',
   Pull: 'git:pull',
@@ -24,4 +26,6 @@ export const IpcChannel = {
 export const IpcEvent = {
   /** A running clone's progress: a CloneProgress, sent to the window that asked for the clone. */
   CloneProgress: 'clone:progress',
+  /** An update has downloaded and waits for a restart: its version. */
+  UpdateReady: 'update:ready',
 } as const

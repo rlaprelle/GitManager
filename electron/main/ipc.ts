@@ -3,6 +3,7 @@ import type { GitDataSource } from '../../src/services/GitDataSource'
 import type { GitStatus, IpcResult } from '../../src/types/bridge'
 import type { CheckoutOptions, CheckoutTarget, CloneRequest } from '../../src/types/git'
 import { IpcChannel, IpcEvent } from '../shared/channels'
+import type { UpdateChecks } from './updates'
 
 /** The part of ipcMain the handlers need, so they can be tested without Electron. */
 export interface IpcRegistrar {
@@ -13,6 +14,8 @@ export interface IpcServices {
   source: GitDataSource
   appVersion: string
   checkGit(): Promise<GitStatus>
+  /** Null when this run doesn't update itself (unpackaged: dev and tests). */
+  updates?: UpdateChecks | null
 }
 
 const MAX_COUNT = 10_000
@@ -22,7 +25,7 @@ const MAX_COUNT = 10_000
  * type before the data source sees it. Answers are IpcResults: Electron would otherwise wrap a
  * thrown error's message in "Error invoking remote method '...': Error: ...".
  */
-export function registerIpcHandlers(ipc: IpcRegistrar, { source, appVersion, checkGit }: IpcServices): void {
+export function registerIpcHandlers(ipc: IpcRegistrar, { source, appVersion, checkGit, updates = null }: IpcServices): void {
   const handle = <T>(channel: string, answer: (...args: unknown[]) => Promise<T> | T) =>
     ipc.handle(channel, (_event, ...args) => answered(() => answer(...args)))
 
@@ -44,6 +47,11 @@ export function registerIpcHandlers(ipc: IpcRegistrar, { source, appVersion, che
     ),
   )
   handle(IpcChannel.CancelClone, () => source.cancelClone())
+  handle(IpcChannel.GetReadyUpdate, () => updates?.readyVersion() ?? null)
+  handle(IpcChannel.InstallUpdate, () => {
+    if (!updates) throw new Error('Only the installed app updates itself')
+    updates.install()
+  })
   handle(IpcChannel.Checkout, (repoId, target, options) =>
     source.checkout(text(repoId), checkoutTarget(target), checkoutOptions(options)),
   )

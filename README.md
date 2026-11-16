@@ -72,6 +72,20 @@ npm run icon           # regenerate build/icon.ico after editing build/icon.svg 
 - **Test server port:** the e2e tests start their own server on port 4317, so they don't interfere with a dev server you already have running.
 - **Works offline.** Fonts (Inter and JetBrains Mono) ship with the app, and a Content-Security-Policy lets the page load only its own files. The installer includes the fonts' licences in `resources\licenses`.
 - **The installer is unsigned.** Windows SmartScreen warns about a downloaded copy ("Windows protected your PC" → **More info** → **Run anyway**). It installs for the current user only and needs no admin rights.
+- **Updates itself.** The installed app checks this repository's [Releases](https://github.com/rlaprelle/GitManager/releases) when it starts and every 4 hours, downloads a newer version in the background, and offers **Restart now** in the status bar. An update you don't restart for installs when you quit. Development runs never check.
+
+### Cutting a release
+
+Releases are built by GitHub Actions (`.github/workflows/release.yml`) when a version tag is pushed. Typecheck and all four test suites must pass first. Then the installer and `latest.yml` (what installed apps check) go to a **draft** release. In PowerShell, on `main`:
+
+```powershell
+npm version 0.2.1          # bumps package.json, commits, and tags v0.2.1
+git push --follow-tags     # the tag starts the workflow
+```
+
+Then open the draft on the Releases page, add notes, and **Publish release**. Installed apps see it only once it's published. The workflow refuses a tag that doesn't match `package.json`'s version.
+
+Because the installer is unsigned, an update is trusted by the SHA-512 checksum in `latest.yml`, downloaded over HTTPS from GitHub; there is no signature to check. Anyone who can publish a release here can therefore ship code to every installed copy.
 
 For how the code is organised, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 

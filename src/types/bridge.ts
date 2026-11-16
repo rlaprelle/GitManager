@@ -45,4 +45,16 @@ export interface GitManagerBridge {
   getAppVersion(): Promise<string>
   getGitStatus(): Promise<GitStatus>
   git: GitBridge
+  updates: UpdateSource
+}
+
+/**
+ * The installed app's updates (only the packaged app checks; elsewhere nothing is ever ready). The
+ * renderer asks once for one that downloaded before it was listening, then hears of later ones.
+ */
+export interface UpdateSource {
+  readyVersion(): Promise<string | null>
+  onReady(listener: (version: string) => void): () => void
+  /** Quits, installs the downloaded version and starts it. */
+  install(): Promise<void>
 }
