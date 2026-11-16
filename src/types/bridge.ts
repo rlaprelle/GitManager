@@ -20,6 +20,8 @@ export type GitBridge = Pick<
   | 'getCommitFiles'
   | 'getFileDiff'
   | 'compareFiles'
+  | 'chooseCompareFile'
+  | 'listBranchFiles'
   | 'addRepository'
   | 'removeRepository'
   | 'chooseCloneFolder'

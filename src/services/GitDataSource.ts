@@ -3,6 +3,7 @@ import type {
   Branches,
   CloneProgress,
   CloneRequest,
+  CompareSide,
   CheckoutOptions,
   CheckoutResult,
   CheckoutTarget,
@@ -10,6 +11,7 @@ import type {
   HistoryPage,
   Hunk,
   OperationResult,
+  PickedFile,
   Repository,
 } from '@/types/git'
 
@@ -30,8 +32,16 @@ export interface GitDataSource {
   getHistory(repoId: string, limit: number): Promise<HistoryPage>
   getCommitFiles(repoId: string, hash: string): Promise<FileChange[]>
   getFileDiff(repoId: string, hash: string, path: string): Promise<Hunk[]>
-  /** Diff of two files in the repository's working tree; paths are relative to it. */
-  compareFiles(repoId: string, leftPath: string, rightPath: string): Promise<Hunk[]>
+  /**
+   * Diff of two files, each in a listed repository (working tree or a branch; paths relative to the
+   * repository) or picked on disk. Rejects an unknown repository, branch or picked file, and a
+   * working-tree path outside its repository.
+   */
+  compareFiles(left: CompareSide, right: CompareSide): Promise<Hunk[]>
+  /** Asks for any file on disk to compare (the desktop app's file picker); null when cancelled. */
+  chooseCompareFile(): Promise<PickedFile | null>
+  /** Every file on a branch, for picking one to compare. Rejects a branch the repository doesn't have. */
+  listBranchFiles(repoId: string, branch: string): Promise<string[]>
   /**
    * Adds a repository the user chooses (the desktop app shows a folder picker). Adding one that's
    * already listed returns it again; `repository` is null when nothing was added.

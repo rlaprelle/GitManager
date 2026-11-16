@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { invertHunks } from '@/lib/diff'
-import type { CloneProgress, Commit, Hunk, Repository } from '@/types/git'
+import type { CloneProgress, Commit, CompareSide, Hunk, Repository } from '@/types/git'
 import type { GitDataSource } from '../GitDataSource'
 
 /**
@@ -11,6 +11,8 @@ export interface ContractSubject {
   source: GitDataSource
   /** Two files in the first repository's working tree that differ. */
   comparePaths: { left: string; right: string }
+  /** Two branches of the first repository on which `path` differs. */
+  compareBranches: { left: string; right: string; path: string }
 }
 
 /**
@@ -302,15 +304,50 @@ export function describeGitDataSourceContract(
       await expect(source.getFileDiff(repo.id, newest.hash, 'no/such/file.txt')).rejects.toThrow()
     })
 
+    // Git labels a hunk with a function name taken from the left file, so the label may change on a swap.
+    const withoutContext = (hunks: Hunk[]) => hunks.map(({ context: _context, ...hunk }) => hunk)
+    const inRepository = (repoId: string, branch: string | null, path: string): CompareSide => ({
+      kind: 'repository',
+      repoId,
+      branch,
+      path,
+    })
+
     it('compares two files, and swapping them inverts the diff', async () => {
       const { source, comparePaths } = await createSubject()
       const repo = (await source.listRepositories())[0]!
-      const forward = await source.compareFiles(repo.id, comparePaths.left, comparePaths.right)
-      const backward = await source.compareFiles(repo.id, comparePaths.right, comparePaths.left)
+      const left = inRepository(repo.id, null, comparePaths.left)
+      const right = inRepository(repo.id, null, comparePaths.right)
+      const forward = await source.compareFiles(left, right)
+      const backward = await source.compareFiles(right, left)
       expect(forward.length).toBeGreaterThan(0)
-      // Git labels a hunk with a function name taken from the left file, so the label may change on a swap.
-      const withoutContext = (hunks: Hunk[]) => hunks.map(({ context: _context, ...hunk }) => hunk)
       expect(withoutContext(backward)).toEqual(withoutContext(invertHunks(forward)))
+    })
+
+    it('compares a file as it is on two branches, and finds no difference between a file and itself', async () => {
+      const { source, compareBranches } = await createSubject()
+      const repo = (await source.listRepositories())[0]!
+      const left = inRepository(repo.id, compareBranches.left, compareBranches.path)
+      const right = inRepository(repo.id, compareBranches.right, compareBranches.path)
+      const forward = await source.compareFiles(left, right)
+      expect(forward.length).toBeGreaterThan(0)
+      expect(withoutContext(await source.compareFiles(right, left))).toEqual(withoutContext(invertHunks(forward)))
+      expect(await source.compareFiles(left, left)).toEqual([])
+    })
+
+    it('lists a branch’s files, and rejects a branch, file or picked file it doesn’t have', async () => {
+      const { source, compareBranches } = await createSubject()
+      const repo = (await source.listRepositories())[0]!
+      expect(await source.listBranchFiles(repo.id, compareBranches.left)).toContain(compareBranches.path)
+      await expect(source.listBranchFiles(repo.id, 'no-such-branch')).rejects.toThrow('No branch named no-such-branch')
+      await expect(source.listBranchFiles(repo.id, '--all')).rejects.toThrow('No branch named --all')
+      const onBranch = inRepository(repo.id, compareBranches.left, compareBranches.path)
+      await expect(source.compareFiles(inRepository(repo.id, '--output=x', 'a'), onBranch)).rejects.toThrow('No branch named')
+      await expect(source.compareFiles(inRepository(repo.id, compareBranches.left, 'no/such/file.txt'), onBranch)).rejects.toThrow(
+        'isn’t on',
+      )
+      await expect(source.compareFiles({ kind: 'file', fileId: 'never-picked' }, onBranch)).rejects.toThrow('choose it again')
+      await expect(source.compareFiles(inRepository('no-such-repository', null, 'a'), onBranch)).rejects.toThrow()
     })
   })
 }

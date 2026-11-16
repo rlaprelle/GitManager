@@ -7,7 +7,7 @@ import { PANE_LIMITS } from '@/lib/paneLayout'
 import GmIcon from '../GmIcon.vue'
 import PaneDivider from '../PaneDivider.vue'
 import ChangedFileList from './ChangedFileList.vue'
-import ComparePathInputs from './ComparePathInputs.vue'
+import ComparePathInputs, { type CompareView } from './ComparePathInputs.vue'
 import DiffModeToggle from './DiffModeToggle.vue'
 import SideBySideDiff from './SideBySideDiff.vue'
 import UnifiedDiff from './UnifiedDiff.vue'
@@ -24,8 +24,10 @@ const props = defineProps<{
   compareOpen: boolean
   diffMode: DiffMode
   hunks: Hunk[]
-  leftPath: string
-  rightPath: string
+  /** The two sides of a comparison, and what each may choose from. */
+  compareView: CompareView
+  /** The comparison's column headings ('main · pom.xml'). */
+  compareLabels: { left: string; right: string }
   /** Shown instead of the diff: no text changes, files that are the same, or a failed load. */
   diffMessage?: string | null
   /** True once the file list has a dragged width (App publishes it as --gm-file-list-size). */
@@ -37,8 +39,11 @@ const emit = defineEmits<{
   setDiffMode: [mode: DiffMode]
   openCompare: []
   closeCompare: []
-  'update:leftPath': [path: string]
-  'update:rightPath': [path: string]
+  comparePath: [which: 'left' | 'right', path: string]
+  compareRepository: [which: 'left' | 'right', repoId: string]
+  compareBranch: [which: 'left' | 'right', branch: string | null]
+  chooseCompareFile: [which: 'left' | 'right']
+  browseBranchFiles: [which: 'left' | 'right']
   swap: []
   resizeFileList: [width: number]
   resetFileList: []
@@ -49,7 +54,7 @@ const file = computed<FileChange | undefined>(
 )
 
 const leftLabel = computed(() => {
-  if (props.compareOpen) return splitPath(props.leftPath).name
+  if (props.compareOpen) return props.compareLabels.left
   if (!file.value || file.value.status === 'A') return '(new file)'
   // A renamed file's earlier version had its old name.
   const before = file.value.oldPath ?? file.value.path
@@ -57,7 +62,7 @@ const leftLabel = computed(() => {
 })
 
 const rightLabel = computed(() => {
-  if (props.compareOpen) return splitPath(props.rightPath).name
+  if (props.compareOpen) return props.compareLabels.right
   return file.value ? `${splitPath(file.value.path).name} @ ${shortHash(props.commit?.hash ?? '')}` : ''
 })
 
@@ -122,10 +127,12 @@ const toolbarButton =
           <span v-if="!compareOpen" class="min-w-0 truncate font-mono text-[12px] text-gm-soft">{{ file?.path }}</span>
           <ComparePathInputs
             v-else
-            :left-path="leftPath"
-            :right-path="rightPath"
-            @update:left-path="emit('update:leftPath', $event)"
-            @update:right-path="emit('update:rightPath', $event)"
+            :view="compareView"
+            @path="(which, path) => emit('comparePath', which, path)"
+            @repository="(which, repoId) => emit('compareRepository', which, repoId)"
+            @branch="(which, branch) => emit('compareBranch', which, branch)"
+            @choose-file="emit('chooseCompareFile', $event)"
+            @browse-branch="emit('browseBranchFiles', $event)"
             @swap="emit('swap')"
           />
           <div class="ml-auto flex flex-wrap items-center gap-2.5">

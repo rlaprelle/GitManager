@@ -9,6 +9,8 @@ export const IpcChannel = {
   GetCommitFiles: 'git:get-commit-files',
   GetFileDiff: 'git:get-file-diff',
   CompareFiles: 'git:compare-files',
+  ChooseCompareFile: 'compare:choose-file',
+  ListBranchFiles: 'git:list-branch-files',
   AddRepository: 'repositories:add',
   RemoveRepository: 'repositories:remove',
   ChooseCloneFolder: 'clone:choose-folder',

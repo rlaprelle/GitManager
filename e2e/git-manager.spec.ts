@@ -181,6 +181,34 @@ test('at the smallest desktop size branch labels stay inside the description col
   expect(overflowing).toEqual([])
 })
 
+test('compare a file on two branches, picking it from a branch’s file list, then one from another repository', async ({ page }) => {
+  await diffViewer(page).getByRole('button', { name: 'Compare two files…' }).click()
+  // The browser build has no file picker, so the working tree offers no Browse….
+  await expect(page.getByRole('button', { name: 'Browse for the left file' })).toHaveCount(0)
+
+  await page.getByLabel('Left file: version').selectOption('main')
+  await page.getByRole('button', { name: 'Browse for the left file' }).click()
+  const files = page.getByRole('dialog', { name: /^Files on main/ })
+  await files.getByRole('searchbox', { name: 'Filter files' }).fill('pom')
+  await files.getByRole('button', { name: 'pom.xml' }).click()
+  await expect(files).toBeHidden()
+
+  await page.getByLabel('Right file: version').selectOption('origin/release/2.4')
+  await page.getByLabel('Right file', { exact: true }).fill('pom.xml')
+  await page.getByLabel('Right file', { exact: true }).press('Enter')
+  await expect(page.getByTestId('left-label')).toHaveText('main · pom.xml')
+  await expect(page.getByTestId('right-label')).toHaveText('origin/release/2.4 · pom.xml')
+  await expect(page.getByTestId('side-by-side-diff')).toBeVisible()
+
+  await page.getByLabel('Right file: repository').selectOption({ label: 'pricing-api' })
+  await expect(page.getByLabel('Right file: version')).toHaveValue('')
+  await expect(page.getByTestId('right-label')).toHaveText('pricing-api · pom.xml')
+
+  await page.getByRole('button', { name: 'Swap left and right files' }).click()
+  await expect(page.getByTestId('left-label')).toHaveText('pricing-api · pom.xml')
+  await expect(page.getByLabel('Left file: repository')).toHaveValue('pricing')
+})
+
 test.describe('cloning a repository', () => {
   const cloneDialog = (page: Page) => page.getByRole('dialog', { name: 'Clone a repository' })
 

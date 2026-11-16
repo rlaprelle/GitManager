@@ -18,6 +18,7 @@ import PaneDivider from '@/components/PaneDivider.vue'
 import RepositoryList from '@/components/RepositoryList.vue'
 import StatusBar from '@/components/StatusBar.vue'
 import DiffPanel from '@/components/diff/DiffPanel.vue'
+import BranchFileDialog from '@/components/diff/BranchFileDialog.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -29,8 +30,10 @@ const props = withDefaults(
     operations?: readonly RepositoryOperation[]
     /** The installed desktop app's updates; the browser build has none. */
     updates?: UpdateSource
+    /** The host has a file picker, so Compare can take any file on disk (the desktop app). */
+    canChooseFiles?: boolean
   }>(),
-  { operations: () => ALL_OPERATIONS },
+  { operations: () => ALL_OPERATIONS, canChooseFiles: false },
 )
 
 const {
@@ -41,8 +44,19 @@ const {
   selectedCommitIndex,
   selectedFileIndex,
   compareOpen,
-  leftPath,
-  rightPath,
+  leftSide,
+  rightSide,
+  leftBranches,
+  rightBranches,
+  compareLabels,
+  branchFilePicker,
+  setComparePath,
+  setCompareRepository,
+  setCompareBranch,
+  chooseCompareFile,
+  openBranchFilePicker,
+  pickBranchFile,
+  closeBranchFilePicker,
   historyLoading,
   loadingMoreHistory,
   runningOperation,
@@ -73,8 +87,6 @@ const {
   setDiffMode,
   openCompare,
   closeCompare,
-  setLeftPath,
-  setRightPath,
   swapComparePaths,
   checkoutBranch,
   checkoutRemoteBranch,
@@ -109,6 +121,16 @@ const diffEmptyMessage = computed(() => (historyLoading.value ? '' : (historyMes
 
 const canCheckout = computed(() => props.operations.includes('checkout'))
 const canClone = computed(() => props.operations.includes('clone'))
+
+const compareView = computed(() => ({
+  leftSide: leftSide.value,
+  rightSide: rightSide.value,
+  leftBranches: leftBranches.value,
+  rightBranches: rightBranches.value,
+  repositories: repositories.value.filter((repo) => repo.problem === null).map(({ id, name }) => ({ id, name })),
+  openRepoId: repository.value?.id ?? '',
+  canChooseFiles: props.canChooseFiles,
+}))
 
 const pendingCommits = computed(() => pluralize(pendingCheckout.value?.commitsLeft ?? 0, 'commit', 'commits'))
 
@@ -258,14 +280,17 @@ onUnmounted(() => {
             :diff-mode="diffMode"
             :hunks="activeHunks"
             :diff-message="diffMessage"
-            :left-path="leftPath"
-            :right-path="rightPath"
+            :compare-view="compareView"
+            :compare-labels="compareLabels"
             @select-file="selectFile"
             @set-diff-mode="setDiffMode"
             @open-compare="openCompare"
             @close-compare="closeCompare"
-            @update:left-path="setLeftPath"
-            @update:right-path="setRightPath"
+            @compare-path="setComparePath"
+            @compare-repository="setCompareRepository"
+            @compare-branch="setCompareBranch"
+            @choose-compare-file="chooseCompareFile"
+            @browse-branch-files="openBranchFilePicker"
             @swap="swapComparePaths"
             @resize-file-list="setPaneSize('fileList', $event)"
             @reset-file-list="resetPaneSize('fileList')"
@@ -312,6 +337,15 @@ onUnmounted(() => {
     <div v-else class="flex flex-auto items-center justify-center text-gm-muted" role="status">
       {{ loading ? 'Loading repositories…' : status }}
     </div>
+
+    <BranchFileDialog
+      :open="branchFilePicker !== null"
+      :branch="branchFilePicker?.branch ?? ''"
+      :files="branchFilePicker?.files ?? []"
+      :loading="branchFilePicker?.loading ?? false"
+      @pick="pickBranchFile"
+      @close="closeBranchFilePicker"
+    />
 
     <CloneDialog
       :open="cloneDialogOpen"

@@ -1,7 +1,7 @@
 import { errorMessage } from '../../src/lib/errorMessage'
 import type { GitDataSource } from '../../src/services/GitDataSource'
 import type { GitStatus, IpcResult } from '../../src/types/bridge'
-import type { CheckoutOptions, CheckoutTarget, CloneRequest } from '../../src/types/git'
+import type { CheckoutOptions, CheckoutTarget, CloneRequest, CompareSide } from '../../src/types/git'
 import { IpcChannel, IpcEvent } from '../shared/channels'
 import type { UpdateChecks } from './updates'
 
@@ -36,7 +36,9 @@ export function registerIpcHandlers(ipc: IpcRegistrar, { source, appVersion, che
   handle(IpcChannel.GetHistory, (repoId, limit) => source.getHistory(text(repoId), count(limit)))
   handle(IpcChannel.GetCommitFiles, (repoId, hash) => source.getCommitFiles(text(repoId), text(hash)))
   handle(IpcChannel.GetFileDiff, (repoId, hash, path) => source.getFileDiff(text(repoId), text(hash), text(path)))
-  handle(IpcChannel.CompareFiles, (repoId, left, right) => source.compareFiles(text(repoId), text(left), text(right)))
+  handle(IpcChannel.CompareFiles, (left, right) => source.compareFiles(compareSide(left), compareSide(right)))
+  handle(IpcChannel.ChooseCompareFile, () => source.chooseCompareFile())
+  handle(IpcChannel.ListBranchFiles, (repoId, branch) => source.listBranchFiles(text(repoId), text(branch)))
   handle(IpcChannel.AddRepository, () => source.addRepository())
   handle(IpcChannel.RemoveRepository, (repoId) => source.removeRepository(text(repoId)))
   handle(IpcChannel.ChooseCloneFolder, () => source.chooseCloneFolder())
@@ -72,6 +74,18 @@ async function answered<T>(work: () => Promise<T> | T): Promise<IpcResult<T>> {
 function senderOf(event: unknown): { send(channel: string, ...args: unknown[]): void } | null {
   const sender = (event as { sender?: { send?: unknown } } | null)?.sender
   return typeof sender?.send === 'function' ? (sender as { send(channel: string, ...args: unknown[]): void }) : null
+}
+
+const NOT_A_COMPARE_SIDE = 'Expected a file to compare: { kind: "repository", repoId, branch, path } or { kind: "file", fileId }'
+
+/** One side of a comparison, rebuilt from its checked fields so nothing else reaches the source. */
+function compareSide(value: unknown): CompareSide {
+  const side = value as Record<string, unknown> | null
+  if (typeof side !== 'object' || side === null) throw new Error(NOT_A_COMPARE_SIDE)
+  if (side['kind'] === 'file') return { kind: 'file', fileId: text(side['fileId']) }
+  if (side['kind'] !== 'repository') throw new Error(NOT_A_COMPARE_SIDE)
+  const branch = side['branch'] === null ? null : text(side['branch'])
+  return { kind: 'repository', repoId: text(side['repoId']), branch, path: text(side['path']) }
 }
 
 /** Exactly a URL and a folder name, as text; the source checks what they say. */

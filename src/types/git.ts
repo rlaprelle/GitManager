@@ -128,3 +128,18 @@ export interface CloneProgress {
   phase: string
   percent: number
 }
+
+/**
+ * One side of a comparison: a file in one of the listed repositories, as it is in the working tree
+ * (`branch` null) or on a branch, or a file the user picked anywhere on disk. A picked file is known by
+ * the id the source gave it, never by a path the renderer sends.
+ */
+export type CompareSide =
+  | { kind: 'repository'; repoId: string; branch: string | null; path: string }
+  | { kind: 'file'; fileId: string }
+
+/** A file picked on disk for comparing: its id for compareFiles, and its path to show. */
+export interface PickedFile {
+  fileId: string
+  path: string
+}

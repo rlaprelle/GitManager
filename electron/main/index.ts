@@ -88,6 +88,14 @@ function tellWindowUpdateIsReady(version: string): void {
   for (const window of BrowserWindow.getAllWindows()) window.webContents.send(IpcEvent.UpdateReady, version)
 }
 
+/** The native file picker, over the app window, for comparing any file. Tests replace dialog.showOpenDialog. */
+async function chooseFile(): Promise<string | null> {
+  const options = { title: 'Choose a file to compare', properties: ['openFile' as const] }
+  const window = BrowserWindow.getAllWindows()[0]
+  const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
+  return result.canceled ? null : (result.filePaths[0] ?? null)
+}
+
 /**
  * Dev and test runs (unpackaged) keep their own data folder, so they never touch the installed
  * app's repository list. Tests point it at a temporary folder with GIT_MANAGER_USER_DATA.
@@ -114,7 +122,7 @@ if (!developerToolsAllowed()) Menu.setApplicationMenu(null)
 
 void app.whenReady().then(() => {
   const repositories = new RepositoryStore(join(app.getPath('userData'), 'repositories.json'))
-  const source = new GitCliDataSource(repositories, chooseFolder)
+  const source = new GitCliDataSource(repositories, chooseFolder, chooseFile)
   // Only the installed app updates itself: dev and test runs have no app-update.yml, and must never restart.
   const updates = app.isPackaged ? startUpdateChecks(autoUpdater(), tellWindowUpdateIsReady) : null
   registerIpcHandlers(ipcMain, { source, appVersion: app.getVersion(), checkGit, updates })
