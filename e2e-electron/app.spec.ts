@@ -237,18 +237,24 @@ test.describe('with git installed', () => {
 test('remembers a dragged pane size after the app is closed and opened again', async () => {
   await launch()
   await expect(status()).toHaveText('Ready')
+  // Test at the smallest window, whatever the screen: GitHub's runner can't fit the 1440-wide default,
+  // and there the sidebar can't widen past 304 (1024 - the main area's 720). Narrowing fits any size.
+  await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setContentSize(1024, 640))
   const divider = window.getByRole('separator', { name: 'Resize the sidebar' })
+  // The divider has seen the new size (a drag straight after a resize can be lost).
+  await expect(divider).toHaveAttribute('aria-valuemax', '304')
   const widthBefore = Math.round((await sidebar().boundingBox())!.width)
   const box = (await divider.boundingBox())!
   await window.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
   await window.mouse.down()
-  await window.mouse.move(box.x + box.width / 2 + 100, box.y + box.height / 2, { steps: 4 })
+  await window.mouse.move(box.x + box.width / 2 - 60, box.y + box.height / 2, { steps: 4 })
   await window.mouse.up()
-  expect(Math.round((await sidebar().boundingBox())!.width)).toBe(widthBefore + 100)
+  expect(Math.round((await sidebar().boundingBox())!.width)).toBe(widthBefore - 60)
 
+  // The relaunched window is whatever size the screen allows; the remembered width fits any of them.
   await relaunch()
   await expect(status()).toHaveText('Ready')
-  expect(Math.round((await sidebar().boundingBox())!.width)).toBe(widthBefore + 100)
+  expect(Math.round((await sidebar().boundingBox())!.width)).toBe(widthBefore - 60)
 })
 
 test('on first run, invites the user to add a repository and opens the one they choose', async () => {
