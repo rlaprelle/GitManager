@@ -8,12 +8,17 @@ import type {
   CloneProgress,
   CloneRequest,
   CompareSide,
+  ConflictFile,
   FileChange,
   HistoryPage,
   Hunk,
+  MergePreview,
+  MergeRequest,
+  MergeResolution,
   OperationResult,
   PickedFile,
   Repository,
+  UnfinishedOperation,
 } from '@/types/git'
 import type { GitDataSource } from './GitDataSource'
 
@@ -107,6 +112,28 @@ export class IpcGitDataSource implements GitDataSource {
   push(repoId: string, branch: string): Promise<OperationResult> {
     return this.git.push(repoId, branch)
   }
+
+  getUnfinishedOperation(repoId: string): Promise<UnfinishedOperation | null> {
+    return this.git.getUnfinishedOperation(repoId)
+  }
+
+  previewMerge(repoId: string, branch: string): Promise<MergePreview> {
+    return this.git.previewMerge(repoId, branch)
+  }
+
+  getMergeConflicts(repoId: string, request: MergeRequest): Promise<ConflictFile[]> {
+    return this.git.getMergeConflicts(repoId, plainMergeRequest(request))
+  }
+
+  /** Plain copies again: the composable keeps the merge in refs. */
+  merge(repoId: string, request: MergeRequest, resolutions: MergeResolution[]): Promise<OperationResult> {
+    const plainResolutions = resolutions.map(({ path, text }) => ({ path, text }))
+    return this.git.merge(repoId, plainMergeRequest(request), plainResolutions)
+  }
+}
+
+function plainMergeRequest({ branch, into, ours, theirs }: MergeRequest): MergeRequest {
+  return { branch, into, ours, theirs }
 }
 
 function plainSide(side: CompareSide): CompareSide {

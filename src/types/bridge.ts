@@ -1,9 +1,12 @@
 import type { GitDataSource } from '@/services/GitDataSource'
 import type { AddRepositoryResult, CloneProgress, CloneRequest } from '@/types/git'
 
-/** Whether the installed git can be used, from `git --version` at startup. */
+/**
+ * Whether the installed git can be used, from `git --version` at startup. `canMerge`: it is new
+ * enough for the app's merging, which works a merge out in memory (`git merge-tree`, 2.38).
+ */
 export type GitStatus =
-  | { state: 'ready'; version: string }
+  | { state: 'ready'; version: string; canMerge: boolean }
   | { state: 'too-old'; version: string; minimum: string }
   | { state: 'missing'; minimum: string }
 
@@ -30,6 +33,10 @@ export type GitBridge = Pick<
   | 'fetch'
   | 'pull'
   | 'push'
+  | 'getUnfinishedOperation'
+  | 'previewMerge'
+  | 'getMergeConflicts'
+  | 'merge'
 > & {
   cloneRepository(request: CloneRequest): Promise<AddRepositoryResult>
   onCloneProgress(listener: (progress: CloneProgress) => void): () => void

@@ -7,6 +7,9 @@ import { runGit } from './runGit'
  */
 export const MINIMUM_GIT_VERSION = '2.30'
 
+/** Oldest git whose `merge-tree --write-tree` the app's merging relies on (Oct 2022). Older git still runs everything else. */
+export const MINIMUM_MERGE_GIT_VERSION = '2.38'
+
 /** 'git version 2.46.1.windows.1' → '2.46.1'. */
 export function parseGitVersion(output: string): string | null {
   return /git version (\d+\.\d+(?:\.\d+)?)/.exec(output)?.[1] ?? null
@@ -17,7 +20,7 @@ export function gitStatusFrom(output: string | null): GitStatus {
   const version = output === null ? null : parseGitVersion(output)
   if (version === null) return { state: 'missing', minimum: MINIMUM_GIT_VERSION }
   if (compareVersions(version, MINIMUM_GIT_VERSION) < 0) return { state: 'too-old', version, minimum: MINIMUM_GIT_VERSION }
-  return { state: 'ready', version }
+  return { state: 'ready', version, canMerge: compareVersions(version, MINIMUM_MERGE_GIT_VERSION) >= 0 }
 }
 
 export async function checkGit(): Promise<GitStatus> {

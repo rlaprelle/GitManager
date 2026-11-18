@@ -1,4 +1,4 @@
-import type { Branches, Commit, FileChange, Hunk, Repository } from '@/types/git'
+import type { Branches, Commit, ConflictFile, FileChange, Hunk, Repository } from '@/types/git'
 
 // The sample data is stored whole, the way a design mock-up reads; MockGitDataSource
 // serves it piece by piece through the GitDataSource contract.
@@ -19,4 +19,6 @@ export interface SampleRepository extends Omit<Repository, 'problem'> {
   remoteBranches: Branches['remote']
   /** Newest first. */
   commits: SampleCommit[]
+  /** The samples store no file contents, so a merge's conflicts are written out, by branch merged in. */
+  mergeConflicts?: Record<string, ConflictFile[]>
 }

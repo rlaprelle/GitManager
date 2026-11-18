@@ -16,8 +16,13 @@ describe('parseGitVersion', () => {
 describe('gitStatusFrom', () => {
   it('is ready for the minimum version and anything newer', () => {
     expect(MINIMUM_GIT_VERSION).toBe('2.30')
-    expect(gitStatusFrom('git version 2.30.0')).toEqual({ state: 'ready', version: '2.30.0' })
-    expect(gitStatusFrom('git version 3.0.1')).toEqual({ state: 'ready', version: '3.0.1' })
+    expect(gitStatusFrom('git version 2.30.0')).toEqual({ state: 'ready', version: '2.30.0', canMerge: false })
+    expect(gitStatusFrom('git version 3.0.1')).toEqual({ state: 'ready', version: '3.0.1', canMerge: true })
+  })
+
+  it('can merge from git 2.38, which has merge-tree --write-tree', () => {
+    expect(gitStatusFrom('git version 2.37.9')).toMatchObject({ state: 'ready', canMerge: false })
+    expect(gitStatusFrom('git version 2.38.0.windows.1')).toMatchObject({ state: 'ready', canMerge: true })
   })
 
   it('is too old below the minimum, comparing numerically', () => {

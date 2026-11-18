@@ -22,6 +22,10 @@ export const IpcChannel = {
   Fetch: 'git:fetch',
   Pull: 'git:pull',
   Push: 'git:push',
+  GetUnfinishedOperation: 'git:get-unfinished-operation',
+  PreviewMerge: 'git:preview-merge',
+  GetMergeConflicts: 'git:get-merge-conflicts',
+  Merge: 'git:merge',
 } as const
 
 /** Messages the main process sends the window unasked (no handler, no answer). */

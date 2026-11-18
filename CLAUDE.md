@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Vue 3 + TypeScript + Vite + Tailwind v4 single-screen git client UI, hosted two ways: in a browser on in-memory sample data (`MockGitDataSource`), and as a Windows-only Electron app (electron-vite + electron-builder) that reads real repositories with the user's installed git CLI in the main process (`GitCliDataSource`, no JGit/Java backend). The desktop app can clone repositories, check out branches, fetch, pull (fast-forward only) and push. Deep dive: `docs/ARCHITECTURE.md`.
+Vue 3 + TypeScript + Vite + Tailwind v4 single-screen git client UI, hosted two ways: in a browser on in-memory sample data (`MockGitDataSource`), and as a Windows-only Electron app (electron-vite + electron-builder) that reads real repositories with the user's installed git CLI in the main process (`GitCliDataSource`, no JGit/Java backend). The desktop app can clone repositories, check out branches, fetch, pull (fast-forward only), push, and merge branches, resolving conflicts in the app. Deep dive: `docs/ARCHITECTURE.md`.
 
 ## Commands (PowerShell)
 
@@ -39,6 +39,8 @@ src/mountApp.ts                  mounts App or GitRequired; fonts + styles
 src/data/sample*.ts              sample repos stored whole (sampleTypes.ts), diffs, SAMPLE_COMPARE_PATHS
 src/composables/latestLoad.ts    one async area: value + loading, only the latest load applies
 src/composables/useGitManager.ts ALL state, derived state, actions
+src/composables/mergeFlow.ts     the merge dialog + resolver state and actions (created by useGitManager, returned as part of it)
+src/composables/mergeDrafts.ts   a merge being resolved, saved per repository in localStorage
 src/composables/usePaneSizes.ts  dragged pane sizes (layout, not git state): localStorage + --gm-*-size CSS vars
 src/lib/{diff,graph,format}.ts   pure functions (diff rows, graph geometry, labels)
 src/lib/checkout.ts              checkout wording + names (switchedMessage, localNameOf, remotesToCheckOut, destinationOf)
@@ -47,8 +49,11 @@ src/lib/remoteOperations.ts      fetch/pull/push wording (both sources) + remote
 src/lib/laneLayout.ts            parents → GraphRow (lane 0 = primary branch line; ≤ 8 lanes)
 src/lib/laneTable.ts             LaneTable: which commits each lane is heading to, while layoutLanes runs
 src/lib/parseDiff.ts             git diff output → Hunk[]
+src/lib/merge.ts                 merge wording shared by both sources, mergeRefusal, mergeSummary
+src/lib/mergeChunks.ts           three-way merge into chunks (Myers diff), the user's choices, result text, carryChoices
 src/lib/paneLayout.ts            PANE_LIMITS (min + neighbour's reserve), clamping, arrow-key steps, saved sizes
 src/components/**                presentational: props in, emits out
+src/components/merge/**          the resolver: MergeResolver (layout, ribbons, keys), MergeConflictBlock, MergeGutter, MergePaneLines
 src/App.vue                      wires composable ↔ components; layout
 src/style.css                    @theme tokens (--color-gm-*), base styles
 src/types/bridge.ts              GitManagerBridge: window.gitManager (preload ↔ renderer contract)
@@ -62,6 +67,7 @@ electron/main/git/network.ts     how fetch/pull/push run: askpass + GCM allowed,
 electron/main/git/fetchHead.ts   last fetch time (FETCH_HEAD's), and putting FETCH_HEAD back after a failed fetch
 electron/main/git/cloneInto.ts   clone: planClone (checks before git) + cloneInto (progress, cancel, clean-up)
 src/lib/clone.ts                 clone rules shared by both sources: URL/name checks, name from URL, progress parsing, CLONE_CANCELLED
+electron/main/git/merge.ts       merge without touching the working tree: merge-tree → blobs + private index + commit-tree → merge --ff-only
 electron/main/git/compareSides.ts compare: each CompareSide onto disk (branch version as bytes into a temp folder), then diff --no-index
 electron/preload/index.ts        contextBridge → window.gitManager
 electron/shared/channels.ts      IPC channel names (main + preload)
@@ -92,7 +98,7 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - Composable invariants (tested; change deliberately):
   - selection change resets file index + closes compare; a refresh doesn't close it (it re-reads the compared files), even when the selected commit has gone;
   - compare forces `diffMode = 'simple'` and ignores `setDiffMode`;
-  - every async area (branches, history, files, diff, compare) goes through `latestLoad`, so stale responses are dropped;
+  - every async area (branches, history, files, diff, compare, merge preview, unfinished operation) goes through `latestLoad`, so stale responses are dropped;
   - a failed load → `status = "Couldn’t load <area>: …"` and only that area empties;
   - local state (`currentBranch`, `lastFetch`) changes only after the source resolves;
   - operation failures → `status = "Failed: …"` (so git refusals are worded to follow "Failed: ");
@@ -100,6 +106,7 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
   - fetch/pull/push re-read everything afterwards, after a failure too (a refused pull has still fetched);
   - a refresh reads the selection when its history arrives, so a click made meanwhile is kept;
   - a refresh is skipped while a repository opens (its reload would replace the opening one), and loads the selected commit's files or diff again only if they failed.
+- **A merge touches nothing until Complete merge.** Don't add a step that writes the working tree, the index or a ref before `moveBranchTo` in `merge.ts`. The session lives in the composable (`mergeSession`, replaced whole, saved by `mergeDrafts`); while it's open the header is locked (`locked`). Merge calls carry the checked-out branch and commits the preview saw (`MergeRequest`), and are refused if any changed. Resolutions are stored with `--no-filters` (they are blob text, not working-tree text), and chunk lines keep their endings (`lineText` to show one). A saved merge is dropped only by the user or when nothing is left it could apply to.
 - Never load a whole repository: add a narrow `GitDataSource` call per new view area, add its rules to the contract suite, and load it through `latestLoad`. History starts at `HISTORY_LIMIT` and grows by it per `showMoreHistory`; the data source always re-reads from the newest commit (layout depends on the whole page).
 - Refresh (window focus, F5) uses `latestLoad.refresh`, which keeps the value on screen; never `run` for reloading what the user is looking at, or the pane flashes "Loading…". Keep selection by hash, not index.
 - Composable tests that need slow or out-of-order responses use `heldSource()` (`src/composables/__tests__/heldSource.ts`).
@@ -146,6 +153,7 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - **Only fetch, pull, push and clone may sign in** (`runGit(…, { network })`, built by `networkAccessFor`): everything else keeps `GCM_INTERACTIVE=never`. Never put network access on a read. Tests can't see the sign-in windows; `network.spec.ts` checks what git receives (a `!env` alias) and GitCliDataSource.spec uses a stand-in `core.sshCommand` script that records its environment. Remote fixtures: `createRepositoryWithRemote` + `cloneOriginInFixture` (a colleague) + `originOf`; origin already has `feature/local` (cloned from the repo).
 - **A failed fetch puts FETCH_HEAD back** (`preservingFetchHead` in `fetchHead.ts`): git empties it before connecting, and `lastFetch` is its time.
 - **On Windows a missing working folder fails like missing git** (`spawn git ENOENT`): check the folder exists before running git in it.
+- **Merging needs git 2.38** (`merge-tree --write-tree`), newer than the app's minimum: `GitStatus.canMerge` decides in `desktop.ts` whether `merge` is among the operations. Conflicted text must round-trip exactly, so non-UTF-8, binary and LFS-pointer files are `unresolvable`. `commit-tree` needs an identity: merge fixtures set `user.name`/`user.email` in the repository (`createMergeRepository`), since tests run with an empty global config.
 - **Compare sides** (`CompareSide`: `{ kind: 'repository', repoId, branch | null, path }` or `{ kind: 'file', fileId }`). The composable keeps a `CompareChoice` per side (`repoId: null` = the open repository) and labels them short (`labelOf`). A branch's file is read as bytes (`runGitBytes`): reading it as text would change a non-UTF-8 file (a Latin-1 fixture proves it). Picked files are desktop only (`canChooseFiles`, from `desktop.ts`).
 - **Git's diff lists a change's removals before its additions**; `invertHunks` keeps that order, so a swapped compare matches real git.
 - In `page.evaluate` callbacks in e2e-electron, the page variable is named `window`; use `globalThis` for the browser's window.

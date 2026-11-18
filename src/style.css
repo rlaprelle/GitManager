@@ -63,6 +63,21 @@
   --color-gm-add: #15301f;
   --color-gm-add-text: #e3f4e8;
   --color-gm-add-sign: #7ee2a0;
+
+  /*
+    Merge: ours is the graph's lane 0 blue (HEAD's colour everywhere), theirs lane 1's orange; blue
+    against orange stays distinct for red-green colour blindness. Always paired with a word.
+  */
+  --color-gm-ours: #5b9dff;
+  --color-gm-ours-bg: #172540;
+  --color-gm-ours-line: #2f4f86;
+  --color-gm-theirs: #f0a35e;
+  --color-gm-theirs-bg: #2e2216;
+  --color-gm-theirs-line: #6b4a2a;
+  --color-gm-on-side: #0b1220;
+  --color-gm-conflict: #ef7f9a;
+  --color-gm-conflict-bg: #361c25;
+  --color-gm-resolved: #7ee2a0;
 }
 
 @layer base {
@@ -87,7 +102,9 @@
   }
 
   button:focus-visible,
-  input:focus-visible {
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
     outline: 2px solid var(--color-gm-accent);
     outline-offset: -2px;
   }

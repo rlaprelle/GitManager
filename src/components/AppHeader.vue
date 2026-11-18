@@ -9,20 +9,24 @@ const props = withDefaults(
     currentBranch: string
     /** e.g. '↑2 vs origin'; null hides it. */
     syncLabel: string | null
-    /** The operations the host offers; Fetch, Pull and Push show only when listed. */
+    /** The operations the host offers; Fetch, Pull, Merge and Push show only when listed. */
     operations?: readonly RepositoryOperation[]
     /** The operation running now, if any: every button is disabled, and that one says so. */
     running?: RepositoryOperation | null
+    /** A merge is being resolved: the repository must stay as it is, so nothing here can run. */
+    locked?: boolean
+    /** There is a branch to merge into (not with a detached HEAD). */
+    canMerge?: boolean
   }>(),
-  { operations: () => ALL_OPERATIONS, running: null },
+  { operations: () => ALL_OPERATIONS, running: null, locked: false, canMerge: true },
 )
 
-const busy = computed(() => props.running !== null)
+const busy = computed(() => props.running !== null || props.locked)
 
 const offers = (operation: RepositoryOperation) => props.operations.includes(operation)
-const offersRemoteOperations = computed(() => offers('fetch') || offers('pull') || offers('push'))
+const offersOperations = computed(() => offers('fetch') || offers('pull') || offers('merge') || offers('push'))
 
-defineEmits<{ fetch: []; pull: []; push: [] }>()
+defineEmits<{ fetch: []; pull: []; merge: []; push: [] }>()
 
 const secondaryButton =
   'inline-flex h-9 cursor-pointer items-center gap-2 rounded-lg border border-gm-line-strong bg-gm-raised px-3.5 text-gm-text hover:bg-gm-hover disabled:cursor-default disabled:text-gm-disabled'
@@ -51,7 +55,7 @@ const secondaryButton =
       <span v-if="syncLabel" class="text-[12px] text-gm-warn">{{ syncLabel }}</span>
     </div>
 
-    <div v-if="offersRemoteOperations" class="ml-auto flex flex-wrap gap-2">
+    <div v-if="offersOperations" class="ml-auto flex flex-wrap gap-2">
       <button v-if="offers('fetch')" type="button" :class="secondaryButton" :disabled="busy" @click="$emit('fetch')">
         <GmIcon name="fetch" />
         {{ running === 'fetch' ? 'Fetching…' : 'Fetch' }}
@@ -59,6 +63,10 @@ const secondaryButton =
       <button v-if="offers('pull')" type="button" :class="secondaryButton" :disabled="busy" @click="$emit('pull')">
         <GmIcon name="pull" />
         {{ running === 'pull' ? 'Pulling…' : 'Pull' }}
+      </button>
+      <button v-if="offers('merge')" type="button" :class="secondaryButton" :disabled="busy || !canMerge" @click="$emit('merge')">
+        <GmIcon name="merge" />
+        {{ running === 'merge' ? 'Merging…' : 'Merge…' }}
       </button>
       <button
         v-if="offers('push')"

@@ -361,6 +361,168 @@ test.describe('resizing the panes', () => {
   })
 })
 
+test.describe('merging', () => {
+  const INTO = 'feature/stock-reservations'
+  const mergeDialog = (page: Page) => page.getByRole('dialog', { name: `Merge into ${INTO}` })
+  const resolver = (page: Page) => page.getByTestId('merge-resolver')
+  const arrow = (page: Page, name: string) => resolver(page).getByRole('button', { name, exact: true })
+  const resultPane = (page: Page) => resolver(page).locator('[data-pane="result"]')
+  const complete = (page: Page) => page.getByRole('button', { name: 'Complete merge' })
+
+  async function pickBranch(page: Page, branch: string) {
+    await header(page).getByRole('button', { name: 'Merge…' }).click()
+    await mergeDialog(page).getByLabel('Branch to merge').selectOption(branch)
+  }
+
+  async function openResolver(page: Page) {
+    await pickBranch(page, 'main')
+    await mergeDialog(page).getByRole('button', { name: 'Resolve conflicts…' }).click()
+    await expect(resolver(page)).toBeVisible()
+  }
+
+  async function pageOverflow(page: Page) {
+    return page.evaluate(() => ({
+      x: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      y: document.documentElement.scrollHeight - document.documentElement.clientHeight,
+    }))
+  }
+
+  test('a clean merge completes from the dialog and appears in the history', async ({ page }) => {
+    await pickBranch(page, 'bugfix/sku-null-check')
+    await expect(mergeDialog(page).getByTestId('merge-into')).toHaveText(`HEAD → ${INTO}`)
+    await expect(mergeDialog(page).getByTestId('merge-conflicts')).toHaveText('No conflicts.')
+    await mergeDialog(page).getByRole('button', { name: 'Merge', exact: true }).click()
+
+    await expect(status(page)).toHaveText(`Merged bugfix/sku-null-check into ${INTO} (1 commit)`)
+    await expect(mergeDialog(page)).toBeHidden()
+    await expect(page.getByRole('button', { name: new RegExp(`Merge branch 'bugfix/sku-null-check' into ${INTO}`) })).toBeVisible()
+  })
+
+  test('a branch with nothing new says so and can’t be merged; Esc closes the dialog', async ({ page }) => {
+    await pickBranch(page, `origin/${INTO}`)
+    await expect(mergeDialog(page).getByRole('alert')).toContainText('already has every commit')
+    await expect(mergeDialog(page).getByRole('button', { name: 'Merge', exact: true })).toBeDisabled()
+    await page.keyboard.press('Escape')
+    await expect(mergeDialog(page)).toBeHidden()
+  })
+
+  test('conflicts are resolved with the arrows, by hand, and completed', async ({ page }) => {
+    await pickBranch(page, 'main')
+    await expect(mergeDialog(page).getByTestId('merge-conflicts')).toContainText('Conflicts in 2 files')
+    await mergeDialog(page).getByRole('button', { name: 'Resolve conflicts…' }).click()
+
+    await expect(status(page)).toHaveText('3 conflicts to resolve in 2 files · Nothing on disk has changed yet')
+    await expect(sidebar(page)).toBeHidden()
+    await expect(header(page).getByRole('button', { name: 'Fetch' })).toBeDisabled()
+    await expect(complete(page)).toBeDisabled()
+    await expect(resolver(page).getByTestId('merge-left')).toHaveText('2 conflicts left')
+    await expect(resolver(page).getByTestId('merge-base').first()).toContainText('low-stock-threshold: 10')
+
+    // Both sides of the first conflict, theirs first: the result stacks them in that order.
+    await arrow(page, 'Bring in theirs for conflict 1').click()
+    await arrow(page, 'Bring in ours for conflict 1').click()
+    await expect(arrow(page, 'Take back theirs for conflict 1')).toHaveAttribute('aria-pressed', 'true')
+    const result = await resultPane(page).allInnerTexts()
+    const joined = result.join('\n')
+    expect(joined.indexOf('reorder-enabled')).toBeLessThan(joined.indexOf('low-stock-threshold: 25'))
+    await expect(resolver(page).getByTestId('merge-settled')).toContainText('Conflict 1: theirs then ours')
+
+    await arrow(page, 'Bring in ours for conflict 2').click()
+    await expect(resolver(page).getByTestId('merge-left')).toHaveText('All conflicts resolved')
+    await resolver(page).getByRole('button', { name: 'Mark resolved' }).click()
+    await expect(resolver(page).getByRole('button', { name: 'Marked resolved' })).toBeDisabled()
+    await expect(resolver(page).getByRole('navigation').getByRole('button').first()).toContainText('resolved')
+
+    // A change after marking clears the mark.
+    await arrow(page, 'Take back ours for conflict 2').click()
+    await expect(resolver(page).getByRole('button', { name: 'Mark resolved' })).toBeDisabled()
+    await arrow(page, 'Bring in theirs for conflict 2').click()
+    await expect(resolver(page).getByRole('navigation').getByRole('button').first()).toContainText('ready')
+
+    await resolver(page).getByRole('navigation').getByRole('button', { name: /^pom\.xml/ }).click()
+    await expect(resolver(page).getByTestId('merge-file')).toHaveText('pom.xml')
+    await resolver(page).getByRole('button', { name: 'Edit conflict 1 by hand' }).click()
+    const box = resolver(page).getByRole('textbox', { name: 'Lines for conflict 1' })
+    await expect(box).toBeFocused()
+    await expect(box).toHaveValue(/2\.4\.0-SNAPSHOT[\s\S]*2\.3\.1/)
+    await expect(arrow(page, 'Finish editing first').first()).toBeDisabled()
+    await box.fill('  <version>2.4.0</version>')
+    await resolver(page).getByRole('button', { name: 'Done' }).click()
+    await expect(resultPane(page).filter({ hasText: '<version>2.4.0</version>' })).toBeVisible()
+    await expect(resolver(page).getByTestId('merge-settled')).toContainText('edited by hand')
+
+    await complete(page).click()
+    await expect(status(page)).toHaveText(`Merged main into ${INTO} (2 commits)`)
+    await expect(resolver(page)).toBeHidden()
+    await expect(sidebar(page)).toBeVisible()
+    await expect(page.getByRole('button', { name: new RegExp(`Merge branch 'main' into ${INTO}`) })).toBeVisible()
+  })
+
+  test('ribbons are drawn from each changed side to the result', async ({ page }) => {
+    await openResolver(page)
+    const ribbon = resolver(page).locator('[data-ribbon-side="ours"] path').first()
+    await expect(ribbon).toHaveAttribute('d', /^M0,\d/)
+  })
+
+  test('the keyboard moves between conflicts and brings sides in', async ({ page }) => {
+    await openResolver(page)
+    await expect(resolver(page)).toContainText('Conflict 1 of 2')
+    await page.keyboard.press('F7')
+    await expect(resolver(page)).toContainText('Conflict 2 of 2')
+    await expect(resolver(page).locator('[data-conflict="2"]')).toBeFocused()
+    await page.keyboard.press('Alt+ArrowLeft')
+    await expect(arrow(page, 'Take back theirs for conflict 2')).toBeVisible()
+    await page.keyboard.press('Shift+F7')
+    await expect(resolver(page)).toContainText('Conflict 1 of 2')
+  })
+
+  test('discarding asks once something is decided, and changes nothing', async ({ page }) => {
+    await openResolver(page)
+    await arrow(page, 'Bring in ours for conflict 1').click()
+    await page.getByRole('button', { name: 'Discard merge' }).click()
+    const confirm = page.getByRole('dialog', { name: 'Discard this merge?' })
+    await confirm.getByRole('button', { name: 'Cancel' }).click()
+    await expect(arrow(page, 'Take back ours for conflict 1')).toBeVisible()
+
+    await page.getByRole('button', { name: 'Discard merge' }).click()
+    await confirm.getByRole('button', { name: 'Discard merge' }).click()
+    await expect(status(page)).toHaveText('Merge discarded; nothing changed')
+    await expect(sidebar(page)).toBeVisible()
+    await expect(page.getByText('10 commits · all branches')).toBeVisible()
+  })
+
+  test('a reload picks the merge back up, with its choices', async ({ page }) => {
+    await openResolver(page)
+    await arrow(page, 'Bring in ours for conflict 1').click()
+    await page.reload()
+    await expect(status(page)).toHaveText(`Continuing your merge of main into ${INTO} · Nothing on disk has changed yet`)
+    await expect(arrow(page, 'Take back ours for conflict 1')).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  test('at the smallest desktop size the page itself doesn’t scroll', async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 640 })
+    await openResolver(page)
+    expect(await pageOverflow(page)).toEqual({ x: 0, y: 0 })
+  })
+
+  test('at phone width it is one column, with both sides inside each conflict', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await openResolver(page)
+    expect((await pageOverflow(page)).x).toBeLessThanOrEqual(0)
+    await expect(resolver(page).locator('[data-pane="ours"]').first()).toBeHidden()
+    await expect(resolver(page).getByRole('button', { name: 'Bring in ours for conflict 1' })).toBeHidden()
+
+    await resolver(page).getByRole('button', { name: 'Use ours' }).first().click()
+    await resolver(page).getByRole('button', { name: 'Add theirs too' }).click()
+    await expect(resolver(page).getByTestId('merge-settled').first()).toContainText('Conflict 1: ours then theirs')
+    await resolver(page).getByRole('button', { name: 'Use theirs' }).first().click()
+    await resolver(page).getByLabel('Conflicted file', { exact: true }).selectOption('pom.xml')
+    await resolver(page).getByRole('button', { name: 'Use ours' }).first().click()
+    await complete(page).click()
+    await expect(status(page)).toHaveText(`Merged main into ${INTO} (2 commits)`)
+  })
+})
+
 test('loads nothing from other hosts and renders in the bundled fonts', async ({ page }) => {
   await expect
     .poll(async () => {

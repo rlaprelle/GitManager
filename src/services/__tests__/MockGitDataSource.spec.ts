@@ -14,6 +14,21 @@ describeGitDataSourceContract(
   async () => ({ source: new MockGitDataSource(), repoId: 'inventory', otherLocal: 'main', remoteOnly: 'origin/release/2.4' }),
   // The samples live in the folder the mock "picks", so their names are taken.
   async () => ({ source: new MockGitDataSource(undefined, 0), url: 'https://example.com/team/tools.git', takenName: 'pricing-api' }),
+  // inventory-service: main clashes with the checked-out feature branch, and already contains the bugfix branch.
+  async () => {
+    const source = new MockGitDataSource()
+    return {
+      source,
+      repoId: 'inventory',
+      conflicting: 'main',
+      clean: 'bugfix/sku-null-check',
+      upToDate: 'origin/feature/stock-reservations',
+      fastForward: async () => {
+        await source.checkout('inventory', { local: 'bugfix/sku-null-check' })
+        return 'main'
+      },
+    }
+  },
 )
 
 describe('MockGitDataSource clone', () => {

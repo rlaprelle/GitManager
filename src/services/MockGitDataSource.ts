@@ -4,6 +4,14 @@ import type { SampleCommit, SampleRepository } from '@/data/sampleTypes'
 import { localNameOf, switchedMessage } from '@/lib/checkout'
 import { CLONE_CANCELLED, cloneUrlProblem, folderNameProblem } from '@/lib/clone'
 import { invertHunks } from '@/lib/diff'
+import {
+  MOVED_SINCE,
+  divergedMessage,
+  mergeCommitMessage,
+  mergeRefusal,
+  mergedMessage,
+  movedForwardMessage,
+} from '@/lib/merge'
 import { fetchedMessage, publishedMessage, pulledMessage, pushedMessage } from '@/lib/remoteOperations'
 import { layoutLanes, primaryBranchTip } from '@/lib/laneLayout'
 import type {
@@ -15,13 +23,19 @@ import type {
   CloneProgress,
   CloneRequest,
   CompareSide,
+  ConflictFile,
   FileChange,
   HistoryPage,
   Hunk,
   LocalBranch,
+  MergeOutcome,
+  MergePreview,
+  MergeRequest,
+  MergeResolution,
   OperationResult,
   PickedFile,
   Repository,
+  UnfinishedOperation,
 } from '@/types/git'
 import type { GitDataSource } from './GitDataSource'
 
@@ -69,6 +83,8 @@ export class MockGitDataSource implements GitDataSource {
   private stopRunningClone: (() => void) | null = null
 
   private clones = 0
+
+  private merges = 0
 
   async listRepositories(): Promise<Repository[]> {
     return this.listed().map(summaryOf)
@@ -225,6 +241,9 @@ export class MockGitDataSource implements GitDataSource {
     if (!repo.remoteBranches.some((remote) => remote.name === `origin/${branch}`)) {
       throw new Error(`${branch} has no upstream branch to pull from`)
     }
+    if (local.ahead > 0 && local.behind > 0) {
+      return { message: divergedMessage(branch, `origin/${branch}`), mergeable: `origin/${branch}` }
+    }
     const pulled = local.behind
     local.behind = 0
     return { message: pulledMessage(pulled, `origin/${branch}`) }
@@ -245,6 +264,72 @@ export class MockGitDataSource implements GitDataSource {
     }
     repo.remoteBranches.push({ name: upstreamName, tipHash: local.tipHash })
     return { message: publishedMessage(branch, 'origin') }
+  }
+
+  /** Nothing happens to the samples outside the app. */
+  async getUnfinishedOperation(repoId: string): Promise<UnfinishedOperation | null> {
+    this.repository(repoId)
+    return null
+  }
+
+  /** Works from the sample history's parents, as git would; conflicts come from the sample's list. */
+  async previewMerge(repoId: string, branch: string): Promise<MergePreview> {
+    const repo = this.repository(repoId)
+    const into = repo.currentBranch
+    if (into === null) throw new Error('no branch is checked out: check out the branch to merge into first')
+    if (branch === into) throw new Error(`${branch} is the branch you’re on: pick another to merge into it`)
+    const theirs = [...repo.localBranches, ...repo.remoteBranches].find((candidate) => candidate.name === branch)?.tipHash
+    if (theirs === undefined) throw new Error(`Unknown branch: ${branch}`)
+    const ours = this.localBranch(repo, into).tipHash
+    const [oursHistory, theirsHistory] = [reachableFrom(repo, ours), reachableFrom(repo, theirs)]
+    const commits = [...theirsHistory].filter((hash) => !oursHistory.has(hash)).length
+    const oursOnly = [...oursHistory].filter((hash) => !theirsHistory.has(hash)).length
+    const outcome: MergeOutcome = commits === 0 ? 'up-to-date' : oursOnly === 0 ? 'fast-forward' : 'merge-commit'
+    const conflicts = outcome === 'merge-commit' ? (repo.mergeConflicts?.[branch] ?? []).map((file) => file.path) : []
+    return { branch, into, ours, theirs, commits, outcome, conflicts, unresolvable: [], blockedBy: [] }
+  }
+
+  async getMergeConflicts(repoId: string, request: MergeRequest): Promise<ConflictFile[]> {
+    const preview = await this.currentPreview(repoId, request)
+    const files = this.repository(repoId).mergeConflicts?.[request.branch] ?? []
+    return structuredClone(files.filter((file) => preview.conflicts.includes(file.path)))
+  }
+
+  /** Really moves the branch: a fast-forward, or a new merge commit at the top of the history. */
+  async merge(repoId: string, request: MergeRequest, resolutions: MergeResolution[]): Promise<OperationResult> {
+    const repo = this.repository(repoId)
+    const preview = await this.currentPreview(repoId, request)
+    const refusal = mergeRefusal(preview)
+    if (refusal) throw new Error(refusal)
+    const local = this.localBranch(repo, preview.into)
+    if (preview.outcome === 'fast-forward') {
+      local.tipHash = preview.theirs
+      moveLabel(repo, preview.into, preview.theirs)
+      return { message: movedForwardMessage(preview.into, preview.branch, preview.commits) }
+    }
+    checkResolutions(preview.conflicts, resolutions)
+    const hash = `aa${String(++this.merges).padStart(5, '0')}`
+    const remote = !repo.localBranches.some((candidate) => candidate.name === preview.branch)
+    repo.commits.unshift({
+      hash,
+      message: mergeCommitMessage(preview.branch, preview.into, remote),
+      author: 'You',
+      date: new Date().toISOString(),
+      refs: [],
+      parents: [preview.ours, preview.theirs],
+      files: resolutions.map(({ path }) => ({ path, status: 'M', hunks: [] })),
+    })
+    local.tipHash = hash
+    local.ahead += preview.commits + 1
+    moveLabel(repo, preview.into, hash)
+    return { message: mergedMessage(preview.branch, preview.into, preview.commits) }
+  }
+
+  /** The preview for a request, refused if either branch has moved since it was made. */
+  private async currentPreview(repoId: string, request: MergeRequest): Promise<MergePreview> {
+    const preview = await this.previewMerge(repoId, request.branch)
+    if (preview.into !== request.into || preview.ours !== request.ours || preview.theirs !== request.theirs) throw new Error(MOVED_SINCE)
+    return preview
   }
 
   private localBranch(repo: SampleRepository, branch: string): LocalBranch {
@@ -285,6 +370,29 @@ export function sampleHistoryPage(repo: SampleRepository, limit: number): Histor
     })),
     hasMore: repo.commits.length > limit,
   }
+}
+
+/** Every commit `hash` can reach through the sample history's parents, itself included. */
+function reachableFrom(repo: SampleRepository, hash: string): Set<string> {
+  const parentsOf = new Map(repo.commits.map((commit) => [commit.hash, commit.parents]))
+  const reached = new Set<string>()
+  const waiting = [hash]
+  while (waiting.length > 0) {
+    const next = waiting.pop()!
+    if (reached.has(next)) continue
+    reached.add(next)
+    waiting.push(...(parentsOf.get(next) ?? []))
+  }
+  return reached
+}
+
+/** Exactly one resolution per conflicted file, as real git's source insists. */
+function checkResolutions(conflicts: string[], resolutions: MergeResolution[]): void {
+  const resolved = resolutions.map((resolution) => resolution.path)
+  const missing = conflicts.filter((path) => !resolved.includes(path))
+  if (missing.length > 0) throw new Error(`${missing.join(', ')} still ${missing.length === 1 ? 'has' : 'have'} conflicts to resolve`)
+  const extra = resolved.filter((path) => !conflicts.includes(path))
+  if (extra.length > 0) throw new Error(`Not a conflicted file of this merge: ${extra.join(', ')}`)
 }
 
 /** Puts a branch label on the commit `hash` and takes it off every other. */

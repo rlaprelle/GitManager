@@ -42,6 +42,10 @@ const bridge: GitManagerBridge = {
     fetch: (repoId) => call(IpcChannel.Fetch, repoId),
     pull: (repoId, branch) => call(IpcChannel.Pull, repoId, branch),
     push: (repoId, branch) => call(IpcChannel.Push, repoId, branch),
+    getUnfinishedOperation: (repoId) => call(IpcChannel.GetUnfinishedOperation, repoId),
+    previewMerge: (repoId, branch) => call(IpcChannel.PreviewMerge, repoId, branch),
+    getMergeConflicts: (repoId, request) => call(IpcChannel.GetMergeConflicts, repoId, request),
+    merge: (repoId, request, resolutions) => call(IpcChannel.Merge, repoId, request, resolutions),
   },
   updates: {
     readyVersion: () => call(IpcChannel.GetReadyUpdate),

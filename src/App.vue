@@ -8,11 +8,14 @@ import { useUpdateNotice } from '@/composables/useUpdateNotice'
 import type { UpdateSource } from '@/types/bridge'
 import { PANE_LIMITS } from '@/lib/paneLayout'
 import { pluralize } from '@/lib/format'
+import { unfinishedMessage } from '@/lib/merge'
 import AppHeader from '@/components/AppHeader.vue'
 import BranchList from '@/components/BranchList.vue'
 import CloneDialog from '@/components/CloneDialog.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import CommitHistory from '@/components/CommitHistory.vue'
+import MergeDialog from '@/components/MergeDialog.vue'
+import MergeResolver from '@/components/merge/MergeResolver.vue'
 import NoRepositories from '@/components/NoRepositories.vue'
 import PaneDivider from '@/components/PaneDivider.vue'
 import RepositoryList from '@/components/RepositoryList.vue'
@@ -108,8 +111,32 @@ const {
   cancelClone,
   refresh,
   showMoreHistory,
+  unfinishedOperation,
+  mergeDialog,
+  mergeableBranches,
+  mergePreview,
+  mergeChecking,
+  mergeBlocked,
+  mergeSession,
+  mergeFile,
+  mergeConflictsLeft,
+  mergeDiscardPending,
+  openMergeDialog,
+  closeMergeDialog,
+  chooseMergeBranch,
+  startMerge,
+  selectMergeFile,
+  toggleMergeSide,
+  useNeitherMergeSide,
+  reopenMergeConflict,
+  editMergeConflict,
+  markMergeFileResolved,
+  completeMerge,
+  discardMerge,
+  confirmDiscardMerge,
+  cancelDiscardMerge,
   // The data source is a service, not state: unwrap it in case a parent passed it in reactive props.
-} = useGitManager(toRaw(props.source), { comparePaths: props.comparePaths })
+} = useGitManager(toRaw(props.source), { comparePaths: props.comparePaths, canMerge: props.operations.includes('merge') })
 
 const updateNotice = useUpdateNotice(props.updates)
 
@@ -186,16 +213,45 @@ onUnmounted(() => {
         :sync-label="headerSyncLabel"
         :operations="operations"
         :running="runningOperation"
+        :locked="mergeSession !== null"
+        :can-merge="currentBranch !== ''"
         @fetch="fetchRemote"
         @pull="pull"
+        @merge="openMergeDialog"
         @push="push"
+      />
+
+      <p
+        v-if="unfinishedOperation"
+        class="m-0 flex-none border-b border-gm-line bg-gm-warn-bg px-4 py-1.5 text-[12px] text-gm-warn"
+        role="note"
+        data-testid="unfinished-operation"
+      >
+        {{ unfinishedMessage(unfinishedOperation) }}
+      </p>
+
+      <!-- While a merge is being resolved it takes over from the panes below; Discard or Complete brings them back. -->
+      <MergeResolver
+        v-if="mergeSession && mergeFile"
+        :session="mergeSession"
+        :file="mergeFile"
+        :conflicts-left="mergeConflictsLeft"
+        :completing="runningOperation === 'merge'"
+        @select-file="selectMergeFile"
+        @toggle="toggleMergeSide"
+        @neither="useNeitherMergeSide"
+        @reopen="reopenMergeConflict"
+        @edit="editMergeConflict"
+        @mark="markMergeFileResolved"
+        @discard="discardMerge"
+        @complete="completeMerge"
       />
 
       <!--
         Wraps only on narrow screens, where the page scrolls. A wrapping row takes its height from its content,
         so on the desktop it must not wrap: the panes get the window's height and scroll inside themselves.
       -->
-      <div class="flex min-h-0 flex-auto max-[860px]:flex-wrap">
+      <div v-else class="flex min-h-0 flex-auto max-[860px]:flex-wrap">
         <nav
           aria-label="Repositories and branches"
           class="flex min-w-0 flex-[1_1_260px] flex-col border-r border-gm-line bg-gm-sidebar"
@@ -309,6 +365,30 @@ onUnmounted(() => {
         on any branch. After switching to <span class="font-mono text-gm-text">{{ pendingCheckout?.destination }}</span>, only
         git’s reflog will still have {{ pendingCheckout?.commitsLeft === 1 ? 'it' : 'them' }}, and only for a while.
         To keep {{ pendingCheckout?.commitsLeft === 1 ? 'it' : 'them' }}, create a branch first.
+      </ConfirmDialog>
+
+      <MergeDialog
+        :state="mergeDialog"
+        :into="currentBranch"
+        :branches="mergeableBranches"
+        :preview="mergePreview"
+        :checking="mergeChecking"
+        :blocked="mergeBlocked"
+        :merging="runningOperation === 'merge'"
+        @choose="chooseMergeBranch"
+        @merge="startMerge"
+        @close="closeMergeDialog"
+      />
+
+      <ConfirmDialog
+        :open="mergeDiscardPending"
+        title="Discard this merge?"
+        confirm-label="Discard merge"
+        @confirm="confirmDiscardMerge"
+        @cancel="cancelDiscardMerge"
+      >
+        The choices you made are dropped. Nothing on disk has changed, so
+        <span class="font-mono text-gm-text">{{ currentBranch }}</span> stays where it was.
       </ConfirmDialog>
 
       <StatusBar
