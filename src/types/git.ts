@@ -89,6 +89,72 @@ export interface HistoryPage {
 
 export interface OperationResult {
   message: string
+  /**
+   * Set when Pull couldn't fast-forward because both sides have new commits: the upstream
+   * ('origin/main') the user can merge instead. The pull still fetched.
+   */
+  mergeable?: string
+}
+
+/**
+ * What merging a branch into the checked-out one would do. Worked out without touching the working
+ * tree, the index or any branch (`git merge-tree`).
+ */
+export type MergeOutcome =
+  /** The checked-out branch already has every commit of the other. */
+  | 'up-to-date'
+  /** The checked-out branch can just move forward to the other; no merge commit. */
+  | 'fast-forward'
+  /** A merge commit with both branches as parents (after resolving any conflicts). */
+  | 'merge-commit'
+  /** A merge commit is needed, but the user's git (`merge.ff=only`) allows only fast-forwards. */
+  | 'fast-forward-only'
+
+export interface MergePreview {
+  /** The branch to merge, as the branch list names it ('feature/login', 'origin/main'). */
+  branch: string
+  /** The checked-out branch it merges into. */
+  into: string
+  /** Full hashes the preview was worked out from; a later call is refused if either branch has moved. */
+  ours: string
+  theirs: string
+  /** Commits `branch` has that `into` doesn't. */
+  commits: number
+  outcome: MergeOutcome
+  /** Files both branches changed in clashing ways, which the user resolves in the app. */
+  conflicts: string[]
+  /** Clashing files the app can't resolve (deleted on one side, binary, a link): only a terminal merge can. */
+  unresolvable: string[]
+  /** Files with uncommitted changes that the merge would change too: the merge waits until they're committed or stashed. */
+  blockedBy: string[]
+}
+
+/**
+ * Something started outside the app that git is still in the middle of. `conflicts`: unmerged files
+ * with none of the others under way (a `git stash pop` that stopped, say).
+ */
+export type UnfinishedOperation = 'merge' | 'rebase' | 'cherry-pick' | 'revert' | 'conflicts'
+
+/** Which merge a call is about: the branch, what it merges into, and the two commits its preview was worked out from. */
+export interface MergeRequest {
+  branch: string
+  into: string
+  ours: string
+  theirs: string
+}
+
+/** A conflicted file's three versions as text. `base` is null when both branches added the file. */
+export interface ConflictFile {
+  path: string
+  base: string | null
+  ours: string
+  theirs: string
+}
+
+/** The text the user settled on for one conflicted file. */
+export interface MergeResolution {
+  path: string
+  text: string
 }
 
 /**

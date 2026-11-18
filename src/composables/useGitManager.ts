@@ -12,12 +12,15 @@ import type {
   Hunk,
   OperationResult,
   Repository,
+  UnfinishedOperation,
 } from '@/types/git'
 import { destinationOf, remotesToCheckOut } from '@/lib/checkout'
 import { CLONE_CANCELLED, cloneProgressLabel } from '@/lib/clone'
 import { errorMessage } from '@/lib/errorMessage'
 import { headLabel as describeHead, pluralize, shortHash, splitPath, syncLabel } from '@/lib/format'
 import { latestLoad } from './latestLoad'
+import { type MergeDrafts, mergeDrafts } from './mergeDrafts'
+import { useMergeFlow } from './mergeFlow'
 
 export type DiffMode = 'git' | 'simple'
 
@@ -29,6 +32,10 @@ export const NO_TEXT_CHANGES = 'No text changes to show: a binary file, an empty
 
 export interface GitManagerOptions {
   comparePaths: { left: string; right: string }
+  /** Where merges being resolved are kept across restarts; localStorage unless a test says otherwise. */
+  mergeDrafts?: MergeDrafts
+  /** False when the host doesn't offer merging (git too old): a diverged Pull then offers nothing. */
+  canMerge?: boolean
 }
 
 /** A checkout waiting for the user to agree to leave a detached HEAD's commits behind. */
@@ -68,6 +75,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   const filesLoad = latestLoad<FileChange[]>([])
   const diffLoad = latestLoad<Hunk[]>([])
   const compareLoad = latestLoad<Hunk[]>([])
+  const unfinishedLoad = latestLoad<UnfinishedOperation | null>(null)
 
   /** How many commits the open repository's history asks for; grows with showMoreHistory. */
   const historyLimit = ref(HISTORY_LIMIT)
@@ -198,6 +206,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     selectedRepoId.value = repo.id
     selectedBranch.value = repo.currentBranch
     pendingCheckout.value = null
+    merging.resetMerge()
     historyLimit.value = HISTORY_LIMIT
     resetCommitView()
     filesLoad.clear()
@@ -205,11 +214,12 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     const [, historyLoaded] = await Promise.all([
       branchesLoad.run(() => source.getBranches(repo.id), reportFailure('branches')),
       historyLoad.run(() => source.getHistory(repo.id, historyLimit.value), reportFailure('history')),
+      unfinishedLoad.run(() => source.getUnfinishedOperation(repo.id), reportFailure('the repository’s state')),
     ])
     if (!historyLoaded) return
     // A branch picked while the history was loading had no commits to jump to yet: jump now.
     if (selectedBranch.value !== repo.currentBranch) selectedCommitIndex.value = tipIndexOf(selectedBranch.value)
-    await openCommit()
+    await Promise.all([openCommit(), merging.resumeSavedMerge(repo)])
   }
 
   function tipHashOf(name: string | null): string | undefined {
@@ -496,9 +506,18 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     await runRemoteOperation('fetch', 'Fetching…', (repo) => source.fetch(repo.id))
   }
 
-  /** Brings the checked-out branch level with its upstream (fast-forward only; the source refuses otherwise). */
+  /**
+   * Brings the checked-out branch level with its upstream (fast-forward only). When both have new
+   * commits the source says which upstream could be merged instead, and the Merge dialog offers it.
+   */
   async function pull(): Promise<void> {
-    await runRemoteOperation('pull', 'Pulling…', (repo) => source.pull(repo.id, checkedOutBranch(repo)))
+    let mergeable: string | undefined
+    await runRemoteOperation('pull', 'Pulling…', async (repo) => {
+      const result = await source.pull(repo.id, checkedOutBranch(repo))
+      mergeable = result.mergeable
+      return result
+    })
+    if (mergeable && options.canMerge !== false) await merging.offerMerge(mergeable)
   }
 
   async function push(): Promise<void> {
@@ -708,9 +727,12 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     }
     await Promise.all([
       branchesLoad.refresh(() => source.getBranches(open.id), reportFailure('branches')),
+      unfinishedLoad.refresh(() => source.getUnfinishedOperation(open.id), reportFailure('the repository’s state')),
       reloadHistoryKeepingSelection(open.id),
       rereadComparedFiles(),
     ])
+    // A merge that was waiting may be able to continue now (its branch checked out again, say).
+    await merging.resumeSavedMerge(open, { quietly: true })
   }
 
   /** Compared files may be working-tree files or branches, which may have changed while the window was away. */
@@ -775,10 +797,28 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     selectedRepoId.value = null
     selectedBranch.value = null
     resetCommitView()
-    for (const area of [branchesLoad, historyLoad, filesLoad, diffLoad, compareLoad]) area.clear()
+    for (const area of [branchesLoad, historyLoad, filesLoad, diffLoad, compareLoad, unfinishedLoad]) area.clear()
+    merging.resetMerge()
   }
 
+  // ---- merging (see mergeFlow.ts) ----
+
+  const merging = useMergeFlow({
+    source,
+    status,
+    repository,
+    branches,
+    currentBranch,
+    operationRunning,
+    runOperation,
+    refreshFinished: () => refreshInFlight,
+    reload,
+    drafts: options.mergeDrafts ?? mergeDrafts(),
+  })
+
   return {
+    ...merging,
+    unfinishedOperation: unfinishedLoad.value,
     // state
     repositories,
     loading,

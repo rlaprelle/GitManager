@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import type { GitDataSource } from '../../../src/services/GitDataSource'
 import { MockGitDataSource } from '../../../src/services/MockGitDataSource'
+import type { ConflictFile, MergePreview } from '../../../src/types/git'
 import { IpcChannel, IpcEvent } from '../../shared/channels'
 import { type IpcRegistrar, registerIpcHandlers } from '../ipc'
 
@@ -14,7 +15,7 @@ function registeredHandlers(source: GitDataSource = new MockGitDataSource()) {
   registerIpcHandlers(ipc, {
     source,
     appVersion: '1.2.3',
-    checkGit: async () => ({ state: 'ready', version: '2.46.1' }),
+    checkGit: async () => ({ state: 'ready', version: '2.46.1', canMerge: true }),
   })
   return (channel: string, ...args: unknown[]) => handlers.get(channel)!({}, ...args)
 }
@@ -33,7 +34,7 @@ describe('registerIpcHandlers', () => {
   it('wraps each answer as ok with its value', async () => {
     const invoke = registeredHandlers()
     expect(await invoke(IpcChannel.GetAppVersion)).toEqual({ ok: true, value: '1.2.3' })
-    expect(await invoke(IpcChannel.GetGitStatus)).toEqual({ ok: true, value: { state: 'ready', version: '2.46.1' } })
+    expect(await invoke(IpcChannel.GetGitStatus)).toEqual({ ok: true, value: { state: 'ready', version: '2.46.1', canMerge: true } })
     const history = (await invoke(IpcChannel.GetHistory, 'inventory', 2)) as { ok: true; value: { commits: unknown[] } }
     expect(history.ok).toBe(true)
     expect(history.value.commits).toHaveLength(2)
@@ -187,6 +188,42 @@ describe('registerIpcHandlers', () => {
       ok: true,
       value: { message: 'Pushed 2 commits to origin/feature/stock-reservations' },
     })
+  })
+
+  it('previews a merge, gives its conflicts, and completes it', async () => {
+    const invoke = registeredHandlers()
+    const preview = (await invoke(IpcChannel.PreviewMerge, 'inventory', 'main')) as { ok: true; value: MergePreview }
+    expect(preview.value).toMatchObject({ into: 'feature/stock-reservations', outcome: 'merge-commit' })
+    const { branch, into, ours, theirs, conflicts } = preview.value
+    const request = { branch, into, ours, theirs }
+    const files = (await invoke(IpcChannel.GetMergeConflicts, 'inventory', request)) as { ok: true; value: ConflictFile[] }
+    expect(files.value.map((file) => file.path)).toEqual(conflicts)
+    const resolutions = conflicts.map((path) => ({ path, text: 'resolved\n' }))
+    expect(await invoke(IpcChannel.Merge, 'inventory', request, resolutions)).toEqual({
+      ok: true,
+      value: { message: 'Merged main into feature/stock-reservations (2 commits)' },
+    })
+  })
+
+  it('passes the source only well-formed merges, rebuilt from their checked fields', async () => {
+    const received: unknown[][] = []
+    const source = new MockGitDataSource()
+    source.getMergeConflicts = async (...args: unknown[]) => (received.push(args), [])
+    source.merge = async (...args: unknown[]) => (received.push(args), { message: 'done' })
+    const invoke = registeredHandlers(source)
+    const request = { branch: 'main', into: 'feature', ours: 'a', theirs: 'b' }
+    const notAMerge = { ok: false, message: 'Expected a merge: { branch, into, ours, theirs }' }
+    expect(await invoke(IpcChannel.PreviewMerge, 'inventory', 7)).toEqual({ ok: false, message: 'Expected text, got number' })
+    expect(await invoke(IpcChannel.GetMergeConflicts, 'inventory', 'main')).toEqual(notAMerge)
+    expect(await invoke(IpcChannel.Merge, 'inventory', null, [])).toEqual(notAMerge)
+    expect(await invoke(IpcChannel.Merge, 'inventory', { ...request, ours: 1 }, [])).toEqual({ ok: false, message: 'Expected text, got number' })
+    expect(await invoke(IpcChannel.Merge, 'inventory', request, 'all')).toEqual({ ok: false, message: 'Expected a list of resolved files: [{ path, text }]' })
+    expect(await invoke(IpcChannel.Merge, 'inventory', request, ['a.txt'])).toEqual({ ok: false, message: 'Expected a resolved file: { path, text }' })
+    expect(await invoke(IpcChannel.Merge, 'inventory', request, [{ path: 'a.txt' }])).toEqual({ ok: false, message: 'Expected text, got undefined' })
+    expect(received).toEqual([])
+
+    await invoke(IpcChannel.Merge, 'inventory', { ...request, extra: true }, [{ path: 'a.txt', text: 'x', extra: true }])
+    expect(received).toEqual([['inventory', request, [{ path: 'a.txt', text: 'x' }]]])
   })
 
   it('passes fetch, pull and push only text', async () => {

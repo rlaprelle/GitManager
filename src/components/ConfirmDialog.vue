@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, ref, useId, watch } from 'vue'
 import GmIcon from './GmIcon.vue'
 
 const props = defineProps<{
@@ -11,6 +11,9 @@ const props = defineProps<{
 const emit = defineEmits<{ confirm: []; cancel: [] }>()
 
 const dialog = ref<HTMLDialogElement | null>(null)
+
+/** The app has several of these on the page at once, and each must be named by its own title. */
+const titleId = useId()
 
 // A native modal dialog: the browser keeps focus inside it, puts it above everything, and
 // closes it on Esc (its cancel event), which this passes on so the parent's `open` follows.
@@ -29,7 +32,7 @@ onMounted(() => sync(props.open))
 <template>
   <dialog
     ref="dialog"
-    aria-labelledby="confirm-title"
+    :aria-labelledby="titleId"
     class="m-auto w-[min(440px,calc(100vw-32px))] rounded-xl border border-gm-line-strong bg-gm-raised p-0 text-[13px] text-gm-text shadow-2xl backdrop:bg-gm-backdrop"
     @cancel="emit('cancel')"
   >
@@ -38,7 +41,7 @@ onMounted(() => sync(props.open))
         <GmIcon name="warning" :size="18" />
       </span>
       <div class="flex min-w-0 flex-col gap-2">
-        <h2 id="confirm-title" class="m-0 text-[15px] font-semibold">{{ title }}</h2>
+        <h2 :id="titleId" class="m-0 text-[15px] font-semibold">{{ title }}</h2>
         <div class="text-gm-soft leading-[1.5]"><slot /></div>
       </div>
     </div>

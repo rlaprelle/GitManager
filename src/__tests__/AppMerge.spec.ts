@@ -1,0 +1,162 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { type VueWrapper, flushPromises, mount } from '@vue/test-utils'
+import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositories'
+import { ALL_OPERATIONS, type RepositoryOperation } from '@/services/GitDataSource'
+import { MockGitDataSource } from '@/services/MockGitDataSource'
+import App from '../App.vue'
+
+// Checks the wiring from the header through the dialog and resolver to the source and back.
+// jsdom has no showModal; the real dialog behaviour is covered in Playwright.
+beforeEach(() => {
+  localStorage.clear() // A merge left open by one test would otherwise resume in the next.
+  HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+    this.open = true
+  })
+  HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
+    this.open = false
+  })
+})
+
+let wrapper: VueWrapper
+
+afterEach(() => {
+  wrapper.unmount()
+  vi.restoreAllMocks()
+})
+
+async function mountApp(source = new MockGitDataSource(), operations: readonly RepositoryOperation[] = ALL_OPERATIONS) {
+  wrapper = mount(App, { props: { source, comparePaths: SAMPLE_COMPARE_PATHS, operations }, attachTo: document.body })
+  await flushPromises()
+  return wrapper
+}
+
+const status = () => wrapper.get('footer [role="status"]').text()
+const button = (name: string) => {
+  const found = wrapper.findAll('button').find((candidate) => (candidate.attributes('aria-label') ?? candidate.text()) === name)
+  if (!found) throw new Error(`No button "${name}"`)
+  return found
+}
+const hasButton = (name: string) => wrapper.findAll('button').some((candidate) => candidate.text() === name)
+const click = async (name: string) => {
+  await button(name).trigger('click')
+  await flushPromises()
+}
+
+async function chooseBranch(branch: string) {
+  await click('Merge…')
+  await wrapper.get('dialog select').setValue(branch)
+  await flushPromises()
+}
+
+async function openResolver() {
+  await chooseBranch('main')
+  await wrapper.get('dialog form').trigger('submit')
+  await flushPromises()
+}
+
+const resolver = () => wrapper.find('[data-testid="merge-resolver"]')
+
+describe('App merging', () => {
+  it('hides Merge when the host doesn’t offer it', async () => {
+    await mountApp(new MockGitDataSource(), ALL_OPERATIONS.filter((operation) => operation !== 'merge'))
+    expect(hasButton('Merge…')).toBe(false)
+  })
+
+  it('completes a clean merge from the dialog, and the history shows it', async () => {
+    await mountApp()
+    await chooseBranch('bugfix/sku-null-check')
+    expect(wrapper.get('[data-testid="merge-conflicts"]').text()).toBe('No conflicts.')
+    await wrapper.get('dialog form').trigger('submit')
+    await flushPromises()
+    expect(status()).toBe('Merged bugfix/sku-null-check into feature/stock-reservations (1 commit)')
+    expect(wrapper.text()).toContain("Merge branch 'bugfix/sku-null-check' into feature/stock-reservations")
+    expect(resolver().exists()).toBe(false)
+  })
+
+  it('resolves conflicts in the resolver, in place of the usual panes, with the header locked', async () => {
+    await mountApp()
+    await openResolver()
+    expect(resolver().exists()).toBe(true)
+    expect(wrapper.find('nav[aria-label="Repositories and branches"]').exists()).toBe(false)
+    expect(status()).toBe('3 conflicts to resolve in 2 files · Nothing on disk has changed yet')
+    expect(button('Fetch').attributes('disabled')).toBeDefined()
+    expect(button('Complete merge').attributes('disabled')).toBeDefined()
+
+    await click('Bring in ours for conflict 1')
+    await click('Bring in theirs for conflict 2')
+    await wrapper.get('[data-testid="merge-resolver"] nav').findAll('button')[1]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="merge-file"]').text()).toBe('pom.xml')
+    await click('Edit conflict 1 by hand')
+    await wrapper.get('textarea').setValue('  <version>2.4.0</version>')
+    await click('Done')
+    await click('Mark resolved')
+    expect(button('Marked resolved').attributes('disabled')).toBeDefined()
+
+    await click('Complete merge')
+    expect(status()).toBe('Merged main into feature/stock-reservations (2 commits)')
+    expect(resolver().exists()).toBe(false)
+    expect(wrapper.find('nav[aria-label="Repositories and branches"]').exists()).toBe(true)
+    expect(button('Fetch').attributes('disabled')).toBeUndefined()
+  })
+
+  it('leaves at once when nothing was decided', async () => {
+    await mountApp()
+    await openResolver()
+    await click('Discard merge')
+    expect(resolver().exists()).toBe(false)
+    expect(status()).toBe('Merge discarded; nothing changed')
+  })
+
+  it('asks before discarding decisions, and can stay', async () => {
+    await mountApp()
+    await openResolver()
+    await click('Bring in ours for conflict 1')
+    await click('Discard merge')
+    const dialog = wrapper.findAll('dialog').find((candidate) => candidate.text().includes('Discard this merge?'))!
+    expect((dialog.element as HTMLDialogElement).open).toBe(true)
+    await dialog.findAll('button').find((candidate) => candidate.text() === 'Cancel')!.trigger('click')
+    await flushPromises()
+    expect(resolver().exists()).toBe(true)
+    await click('Discard merge')
+    await dialog.findAll('button').find((candidate) => candidate.text() === 'Discard merge')!.trigger('click')
+    await flushPromises()
+    expect(resolver().exists()).toBe(false)
+  })
+
+  it('picks up a merge left open, with its choices, when the app starts again', async () => {
+    await mountApp()
+    await openResolver()
+    await click('Bring in ours for conflict 1')
+    wrapper.unmount()
+
+    await mountApp()
+    expect(resolver().exists()).toBe(true)
+    expect(button('Take back ours for conflict 1').attributes('aria-pressed')).toBe('true')
+    expect(status()).toBe('Continuing your merge of main into feature/stock-reservations · Nothing on disk has changed yet')
+  })
+
+  it('shows a notice while something is left unfinished outside the app', async () => {
+    const source = new MockGitDataSource()
+    source.getUnfinishedOperation = async () => 'merge'
+    await mountApp(source)
+    expect(wrapper.get('[data-testid="unfinished-operation"]').text()).toBe(
+      'A merge is in progress here, started outside Git Manager. Finish or abort it in a terminal.',
+    )
+  })
+
+  it('shows no such notice normally', async () => {
+    await mountApp()
+    expect(wrapper.find('[data-testid="unfinished-operation"]').exists()).toBe(false)
+  })
+
+  it('offers the merge when Pull finds both sides have moved on', async () => {
+    const repositories = structuredClone(sampleRepositories)
+    repositories[0]!.localBranches[0]!.behind = 1
+    await mountApp(new MockGitDataSource(repositories))
+    await click('Pull')
+    expect(wrapper.get('#merge-title').text()).toBe(
+      'Merge origin/feature/stock-reservations into feature/stock-reservations?',
+    )
+  })
+})

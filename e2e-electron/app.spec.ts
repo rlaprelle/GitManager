@@ -6,9 +6,11 @@ import { type ElectronApplication, type Page, _electron as electron, expect, tes
 import type { StoredRepository } from '../electron/main/git/GitCliDataSource'
 import {
   type Fixtures,
+  MERGE_TEXT,
   commitInFixture,
   createFixtures,
   createLongRepository,
+  createMergeRepository,
   createRepositoryWithRemote,
   cloneOriginInFixture,
   createScratchRepository,
@@ -100,6 +102,145 @@ test.afterEach(async () => {
 const status = () => window.locator('footer [role="status"]')
 const sidebar = () => window.getByRole('navigation', { name: 'Repositories and branches' })
 const diffViewer = () => window.getByRole('region', { name: 'Diff viewer' })
+
+test.describe('merging a real repository', () => {
+  let repo: string
+  let repositories = 0
+  const onDisk = (path: string) => readFile(join(repo, path), 'utf8')
+  const git = (...args: string[]) => fixtureGit(repo, ...args).then((out) => out.trim())
+  const mergeDialog = () => window.getByRole('dialog', { name: 'Merge into main' })
+  const resolver = () => window.getByTestId('merge-resolver')
+
+  test.beforeEach(async () => {
+    repo = await createMergeRepository(fixtures, `e2e-merge-${++repositories}`)
+    await launch([{ id: 'repo', path: repo }])
+    // Not just "Ready", which shows before anything has loaded: F5 is ignored until the repository is open.
+    await expect(window.getByRole('button', { name: /Sessions last 30 minutes/ })).toBeVisible()
+  })
+
+  async function pickBranch(branch: string) {
+    await window.getByRole('banner').getByRole('button', { name: 'Merge…' }).click()
+    await mergeDialog().getByLabel('Branch to merge').selectOption(branch)
+  }
+
+  test('resolving a conflict leaves every file alone until Complete merge', async () => {
+    const head = await git('rev-parse', 'HEAD')
+    await writeFile(join(repo, 'notes.txt'), 'my own untracked notes\n')
+    await pickBranch('feature/login')
+    await expect(mergeDialog().getByTestId('merge-conflicts')).toContainText('Conflicts in 1 file: session.ts')
+    await mergeDialog().getByRole('button', { name: 'Resolve conflicts…' }).click()
+    await expect(status()).toHaveText('1 conflict to resolve in 1 file · Nothing on disk has changed yet')
+    await expect(resolver().getByTestId('merge-base')).toContainText('const TTL = 15')
+
+    await resolver().getByRole('button', { name: 'Bring in theirs for conflict 1', exact: true }).click()
+    await expect(resolver().getByTestId('merge-left')).toHaveText('All conflicts resolved')
+
+    // Decided, but not completed: the repository is exactly as it was.
+    expect(await onDisk('session.ts')).toBe(MERGE_TEXT.main)
+    expect(await git('rev-parse', 'HEAD')).toBe(head)
+    expect(await git('status', '--porcelain=v1')).toBe('?? notes.txt')
+
+    await window.getByRole('button', { name: 'Complete merge' }).click()
+    await expect(status()).toHaveText('Merged feature/login into main (1 commit)')
+    await expect(window.getByRole('button', { name: /Merge branch 'feature\/login'/ })).toBeVisible()
+    expect(await onDisk('session.ts')).toBe(MERGE_TEXT.feature)
+    expect(await onDisk('login.ts')).toBe('export const login = () => true\n')
+    expect(await onDisk('notes.txt')).toBe('my own untracked notes\n')
+    expect(await git('log', '-1', '--format=%P')).toBe(`${head} ${await git('rev-parse', 'feature/login')}`)
+    expect(await git('status', '--porcelain=v1')).toBe('?? notes.txt')
+  })
+
+  test('a hand-edited resolution is what gets committed', async () => {
+    await pickBranch('feature/login')
+    await mergeDialog().getByRole('button', { name: 'Resolve conflicts…' }).click()
+    await resolver().getByRole('button', { name: 'Edit conflict 1 by hand' }).click()
+    await resolver().getByRole('textbox', { name: 'Lines for conflict 1' }).fill('const TTL = 60')
+    await resolver().getByRole('button', { name: 'Done' }).click()
+    await window.getByRole('button', { name: 'Complete merge' }).click()
+    await expect(status()).toHaveText('Merged feature/login into main (1 commit)')
+    expect(await onDisk('session.ts')).toContain('const TTL = 60\n')
+    expect(await git('show', 'HEAD:session.ts')).toContain('const TTL = 60')
+  })
+
+  test('discarding leaves the repository exactly as it was', async () => {
+    const head = await git('rev-parse', 'HEAD')
+    await pickBranch('feature/login')
+    await mergeDialog().getByRole('button', { name: 'Resolve conflicts…' }).click()
+    await window.getByRole('button', { name: 'Discard merge' }).click()
+    await expect(status()).toHaveText('Merge discarded; nothing changed')
+    expect(await git('rev-parse', 'HEAD')).toBe(head)
+    expect(await git('status', '--porcelain=v1')).toBe('')
+    expect(await git('rev-parse', '--verify', '--quiet', 'MERGE_HEAD').catch(() => 'none')).toBe('none')
+  })
+
+  test('a branch simply ahead fast-forwards, with no merge commit', async () => {
+    await pickBranch('feature/ahead')
+    await expect(mergeDialog().getByTestId('merge-effect')).toContainText('main moves forward to feature/ahead; no merge commit.')
+    await mergeDialog().getByRole('button', { name: 'Merge', exact: true }).click()
+    await expect(status()).toHaveText('Moved main forward to feature/ahead (1 commit)')
+    expect(await git('rev-parse', 'main')).toBe(await git('rev-parse', 'feature/ahead'))
+    expect(await onDisk('ahead.txt')).toBe('ahead\n')
+  })
+
+  test('uncommitted changes in a file the merge touches stop it before it starts', async () => {
+    await writeFile(join(repo, 'session.ts'), 'my unfinished work\n')
+    await pickBranch('feature/login')
+    await expect(mergeDialog().getByRole('alert')).toContainText('session.ts')
+    await expect(mergeDialog().getByRole('button', { name: 'Resolve conflicts…' })).toBeDisabled()
+    expect(await onDisk('session.ts')).toBe('my unfinished work\n')
+  })
+
+  test('a conflict the app can’t resolve points to the terminal', async () => {
+    await pickBranch('feature/kept')
+    await expect(mergeDialog().getByRole('alert')).toContainText('gone.txt can’t be resolved here')
+  })
+
+  test('a merge left unfinished in a terminal is reported, not touched, and the notice goes when it ends', async () => {
+    const notice = window.getByTestId('unfinished-operation')
+    await expect(notice).toHaveCount(0)
+    await gitInFixture(fixtures, repo, 'merge', '--quiet', 'feature/login').catch(() => {})
+    await window.keyboard.press('F5')
+    await expect(notice).toHaveText('A merge is in progress here, started outside Git Manager. Finish or abort it in a terminal.')
+
+    await pickBranch('feature/apart')
+    await expect(mergeDialog().getByRole('alert')).toContainText('already in progress')
+    await mergeDialog().getByRole('button', { name: 'Cancel' }).click()
+
+    await gitInFixture(fixtures, repo, 'merge', '--abort')
+    await window.keyboard.press('F5')
+    await expect(notice).toHaveCount(0)
+  })
+
+  test('a merge being resolved survives closing the app, choices included, and can then complete', async () => {
+    await pickBranch('feature/login')
+    await mergeDialog().getByRole('button', { name: 'Resolve conflicts…' }).click()
+    await resolver().getByRole('button', { name: 'Bring in ours for conflict 1', exact: true }).click()
+    await expect(resolver().getByTestId('merge-left')).toHaveText('All conflicts resolved')
+
+    await relaunch()
+    await expect(status()).toHaveText('Continuing your merge of feature/login into main · Nothing on disk has changed yet')
+    await expect(resolver().getByRole('button', { name: 'Take back ours for conflict 1', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    expect(await onDisk('session.ts')).toBe(MERGE_TEXT.main)
+
+    await window.getByRole('button', { name: 'Complete merge' }).click()
+    await expect(status()).toHaveText('Merged feature/login into main (1 commit)')
+    expect(await onDisk('login.ts')).toBe('export const login = () => true\n')
+  })
+
+  test('a commit made in a terminal mid-merge reworks the merge at Complete, keeping the choice', async () => {
+    await pickBranch('feature/login')
+    await mergeDialog().getByRole('button', { name: 'Resolve conflicts…' }).click()
+    await resolver().getByRole('button', { name: 'Bring in theirs for conflict 1', exact: true }).click()
+    await commitInFixture(fixtures, repo, 'later.txt', 'later\n', 'Made in a terminal meanwhile')
+
+    await window.getByRole('button', { name: 'Complete merge' }).click()
+    await expect(status()).toContainText('the merge was worked out again: 0 files need another look')
+    await window.getByRole('button', { name: 'Complete merge' }).click()
+    await expect(status()).toHaveText('Merged feature/login into main (1 commit)')
+    expect(await onDisk('session.ts')).toBe(MERGE_TEXT.feature)
+    expect(await onDisk('later.txt')).toBe('later\n')
+  })
+})
 
 test.describe('with git installed', () => {
   test.beforeEach(async () => {
@@ -539,18 +680,25 @@ test.describe('fetching, pulling and pushing', () => {
     expect(await tipOf(repo, 'main')).toBe(await tipOf(colleague, 'main'))
   })
 
-  test('Pull refuses when both sides have new commits, and shows both counts', async () => {
+  test('when both sides have new commits, Pull changes nothing and offers the merge, which works', async () => {
+    await gitInFixture(fixtures, repo, 'config', 'user.name', 'Grace Hopper')
+    await gitInFixture(fixtures, repo, 'config', 'user.email', 'grace@example.com')
     await commitInFixture(fixtures, repo, 'mine.txt', 'mine\n', 'Mine')
     const mine = await tipOf(repo, 'main')
     await launch([{ id: 'repo', path: repo }])
     await colleaguePushes('theirs.txt')
 
     await headerButton('Pull').click()
-    await expect(status()).toHaveText(
-      'Failed: can’t fast-forward: main and origin/main both have new commits. Merge or rebase them in a terminal.',
-    )
+    await expect(status()).toHaveText('main and origin/main both have new commits, so Pull can’t just move main forward')
     await expect(window.getByRole('banner')).toContainText('↑1 ↓1 vs origin')
     expect(await tipOf(repo, 'main')).toBe(mine)
+
+    const dialog = window.getByRole('dialog', { name: 'Merge origin/main into main?' })
+    await expect(dialog.getByTestId('merge-conflicts')).toHaveText('No conflicts.')
+    await dialog.getByRole('button', { name: 'Merge', exact: true }).click()
+    await expect(status()).toHaveText('Merged origin/main into main (1 commit)')
+    await expect(window.getByRole('button', { name: /Merge remote-tracking branch 'origin\/main'/ })).toBeVisible()
+    expect(await fixtureGit(repo, 'log', '-1', '--format=%P').then((out) => out.trim())).toBe(`${mine} ${await tipOf(colleague, 'main')}`)
   })
 
   test('Push sends the branch’s commits, and the branch is level with origin again', async () => {

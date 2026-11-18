@@ -7,18 +7,23 @@ import type {
   CheckoutOptions,
   CheckoutResult,
   CheckoutTarget,
+  ConflictFile,
   FileChange,
   HistoryPage,
   Hunk,
+  MergePreview,
+  MergeRequest,
+  MergeResolution,
   OperationResult,
   PickedFile,
   Repository,
+  UnfinishedOperation,
 } from '@/types/git'
 
 /** The operations that change a repository; a host shows the buttons only for those it offers. */
-export type RepositoryOperation = 'checkout' | 'fetch' | 'pull' | 'push' | 'clone'
+export type RepositoryOperation = 'checkout' | 'fetch' | 'pull' | 'push' | 'clone' | 'merge'
 
-export const ALL_OPERATIONS: readonly RepositoryOperation[] = ['checkout', 'fetch', 'pull', 'push', 'clone']
+export const ALL_OPERATIONS: readonly RepositoryOperation[] = ['checkout', 'fetch', 'pull', 'push', 'clone', 'merge']
 
 /**
  * Everything the UI needs from git, one call per thing the screen shows, so a real
@@ -73,6 +78,27 @@ export interface GitDataSource {
    */
   checkout(repoId: string, target: CheckoutTarget, options?: CheckoutOptions): Promise<CheckoutResult>
   fetch(repoId: string): Promise<OperationResult>
+  /**
+   * Fast-forwards the checked-out `branch` to its upstream. When both have new commits it changes
+   * nothing but the fetched remote branches, and answers with `mergeable` naming the upstream.
+   */
   pull(repoId: string, branch: string): Promise<OperationResult>
   push(repoId: string, branch: string): Promise<OperationResult>
+  /** A merge, rebase or the like someone left unfinished in this repository; null when there's none. */
+  getUnfinishedOperation(repoId: string): Promise<UnfinishedOperation | null>
+  /**
+   * What merging `branch` (a local or remote branch the repository lists, not the checked-out one)
+   * into the checked-out branch would do. Changes nothing. Rejects a detached HEAD and a merge already
+   * in progress.
+   */
+  previewMerge(repoId: string, branch: string): Promise<MergePreview>
+  /** The three versions of each file in `previewMerge`'s `conflicts`. Rejects if either branch has moved since. */
+  getMergeConflicts(repoId: string, request: MergeRequest): Promise<ConflictFile[]>
+  /**
+   * Does the merge the preview described, with one resolution per conflicted file (none for a clean
+   * merge): moves the checked-out branch forward, or makes the merge commit and moves it there. The
+   * working tree changes only in this last step. Rejects, changing nothing, if either branch has
+   * moved, a resolution is missing or extra, or the merge would overwrite uncommitted changes.
+   */
+  merge(repoId: string, request: MergeRequest, resolutions: MergeResolution[]): Promise<OperationResult>
 }

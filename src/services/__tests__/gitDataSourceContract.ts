@@ -39,6 +39,20 @@ export interface CloneSubject {
   takenName: string
 }
 
+/** A repository for the merge rules: a fresh one per call, with a branch checked out. */
+export interface MergeSubject {
+  source: GitDataSource
+  repoId: string
+  /** A branch that clashes with the checked-out one in at least one file the user can resolve. */
+  conflicting: string
+  /** A branch that merges with no conflicts, needing a merge commit. */
+  clean: string
+  /** A branch whose commits the checked-out one already has. */
+  upToDate: string
+  /** Arranges (if needed) and names a branch the checked-out one can fast-forward to. */
+  fastForward(): Promise<string>
+}
+
 /** Enough to cover every sample commit while keeping real-git runs quick. */
 const COMMITS_CHECKED_PER_REPOSITORY = 25
 const WHOLE_HISTORY = 10_000
@@ -48,7 +62,120 @@ export function describeGitDataSourceContract(
   createSubject: () => Promise<ContractSubject>,
   createCheckoutSubject: () => Promise<CheckoutSubject>,
   createCloneSubject: () => Promise<CloneSubject>,
+  createMergeSubject: () => Promise<MergeSubject>,
 ): void {
+  describe(`${name} follows the GitDataSource contract for merging`, () => {
+    const checkedOut = async ({ source, repoId }: MergeSubject) =>
+      (await source.listRepositories()).find((repo) => repo.id === repoId)!.currentBranch!
+    const tipOf = async ({ source, repoId }: MergeSubject, branch: string) =>
+      (await source.getBranches(repoId)).local.find((candidate) => candidate.name === branch)!.tipHash
+
+    it('has no unfinished operation in an ordinary repository, and rejects one it doesn’t know', async () => {
+      const { source, repoId } = await createMergeSubject()
+      expect(await source.getUnfinishedOperation(repoId)).toBeNull()
+      await expect(source.getUnfinishedOperation('no-such-repo')).rejects.toThrow('Unknown repository')
+    })
+
+    it('previews a conflicting merge, changing nothing', async () => {
+      const subject = await createMergeSubject()
+      const { source, repoId, conflicting } = subject
+      const into = await checkedOut(subject)
+      const [branchesBefore, historyBefore] = [await source.getBranches(repoId), await source.getHistory(repoId, WHOLE_HISTORY)]
+      const preview = await source.previewMerge(repoId, conflicting)
+      expect(preview).toMatchObject({ branch: conflicting, into, outcome: 'merge-commit', unresolvable: [], blockedBy: [] })
+      expect(preview.conflicts.length).toBeGreaterThan(0)
+      expect(preview.commits).toBeGreaterThan(0)
+      expect(preview.ours).toBe(await tipOf(subject, into))
+      expect(await source.getBranches(repoId)).toEqual(branchesBefore)
+      expect(await source.getHistory(repoId, WHOLE_HISTORY)).toEqual(historyBefore)
+    })
+
+    it('gives the three versions of each conflicted file', async () => {
+      const { source, repoId, conflicting } = await createMergeSubject()
+      const preview = await source.previewMerge(repoId, conflicting)
+      const files = await source.getMergeConflicts(repoId, preview)
+      expect(files.map((file) => file.path)).toEqual(preview.conflicts)
+      for (const file of files) expect(file.ours).not.toBe(file.theirs)
+    })
+
+    it('completes a resolved merge: the branch moves to a new commit at the top of the history', async () => {
+      const subject = await createMergeSubject()
+      const { source, repoId, conflicting } = subject
+      const into = await checkedOut(subject)
+      const preview = await source.previewMerge(repoId, conflicting)
+      const resolutions = preview.conflicts.map((path) => ({ path, text: 'resolved\n' }))
+      const { message } = await source.merge(repoId, preview, resolutions)
+      expect(message).toContain(`Merged ${conflicting} into ${into}`)
+      const tip = await tipOf(subject, into)
+      expect(tip).not.toBe(preview.ours)
+      const [newest] = (await source.getHistory(repoId, 1)).commits
+      expect(newest).toMatchObject({ hash: tip })
+      expect(newest!.message).toContain(conflicting)
+      expect((await source.previewMerge(repoId, conflicting)).outcome).toBe('up-to-date')
+    })
+
+    it('makes a clean merge with no resolutions', async () => {
+      const subject = await createMergeSubject()
+      const { source, repoId, clean } = subject
+      const preview = await source.previewMerge(repoId, clean)
+      expect(preview).toMatchObject({ outcome: 'merge-commit', conflicts: [] })
+      await source.merge(repoId, preview, [])
+      expect(await tipOf(subject, preview.into)).not.toBe(preview.ours)
+    })
+
+    it('fast-forwards to a branch that is simply ahead', async () => {
+      const subject = await createMergeSubject()
+      const { source, repoId } = subject
+      const branch = await subject.fastForward()
+      const preview = await source.previewMerge(repoId, branch)
+      expect(preview).toMatchObject({ outcome: 'fast-forward', conflicts: [] })
+      expect((await source.merge(repoId, preview, [])).message).toContain('forward')
+      expect(await tipOf(subject, preview.into)).toBe(preview.theirs)
+    })
+
+    it('has nothing to do for a branch it already contains, and refuses to merge it', async () => {
+      const { source, repoId, upToDate } = await createMergeSubject()
+      const preview = await source.previewMerge(repoId, upToDate)
+      expect(preview).toMatchObject({ outcome: 'up-to-date', commits: 0 })
+      await expect(source.merge(repoId, preview, [])).rejects.toThrow(/already has every commit/)
+    })
+
+    it('refuses, changing nothing, a merge without a resolution for every conflict', async () => {
+      const subject = await createMergeSubject()
+      const { source, repoId, conflicting } = subject
+      const preview = await source.previewMerge(repoId, conflicting)
+      await expect(source.merge(repoId, preview, [])).rejects.toThrow(/conflicts to resolve/)
+      await expect(
+        source.merge(repoId, preview, [...preview.conflicts.map((path) => ({ path, text: 'x\n' })), { path: 'not-conflicted', text: 'x\n' }]),
+      ).rejects.toThrow(/Not a conflicted file/)
+      expect(await tipOf(subject, preview.into)).toBe(preview.ours)
+    })
+
+    it('refuses a merge whose branches have moved since the preview', async () => {
+      const { source, repoId, conflicting, clean } = await createMergeSubject()
+      const preview = await source.previewMerge(repoId, conflicting)
+      await source.merge(repoId, await source.previewMerge(repoId, clean), [])
+      await expect(source.getMergeConflicts(repoId, preview)).rejects.toThrow(/moved since/)
+      await expect(source.merge(repoId, preview, preview.conflicts.map((path) => ({ path, text: 'x\n' })))).rejects.toThrow(/moved since/)
+    })
+
+    it('refuses a merge previewed for a different checked-out branch', async () => {
+      const { source, repoId, conflicting } = await createMergeSubject()
+      const preview = await source.previewMerge(repoId, conflicting)
+      const request = { ...preview, into: 'some-other-branch' }
+      await expect(source.getMergeConflicts(repoId, request)).rejects.toThrow(/moved since/)
+      await expect(source.merge(repoId, request, preview.conflicts.map((path) => ({ path, text: 'x\n' })))).rejects.toThrow(/moved since/)
+    })
+
+    it('refuses the checked-out branch, a branch it doesn’t have, and a repository it doesn’t know', async () => {
+      const subject = await createMergeSubject()
+      const { source, repoId } = subject
+      await expect(source.previewMerge(repoId, await checkedOut(subject))).rejects.toThrow(/the branch you’re on/)
+      await expect(source.previewMerge(repoId, '--no-such-branch')).rejects.toThrow('Unknown branch')
+      await expect(source.previewMerge('no-such-repo', 'main')).rejects.toThrow('Unknown repository')
+    })
+  })
+
   describe(`${name} follows the GitDataSource contract for clone`, () => {
     const listedNames = async (source: GitDataSource) => (await source.listRepositories()).map((repo) => repo.name)
 

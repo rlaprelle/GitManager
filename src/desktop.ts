@@ -16,7 +16,8 @@ void bridge.getGitStatus().then((status) => {
   mountApp({
     source: new IpcGitDataSource(bridge.git),
     comparePaths: { left: '', right: '' },
-    operations: ALL_OPERATIONS,
+    // Older git runs everything else; the Merge button just doesn't appear.
+    operations: status.canMerge ? ALL_OPERATIONS : ALL_OPERATIONS.filter((operation) => operation !== 'merge'),
     updates: bridge.updates,
     canChooseFiles: true,
   })

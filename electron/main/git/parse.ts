@@ -8,8 +8,8 @@ const NUL = '\0'
 const UNIT = '\x1f'
 const TAB = '\t'
 
-const LOCAL_BRANCH_PREFIX = 'refs/heads/'
-const REMOTE_BRANCH_PREFIX = 'refs/remotes/'
+export const LOCAL_BRANCH_PREFIX = 'refs/heads/'
+export const REMOTE_BRANCH_PREFIX = 'refs/remotes/'
 
 /** The full ref of a local branch, for refspecs and ranges: a bare name could also match a tag. */
 export function localBranchRef(branch: string): string {
@@ -142,6 +142,11 @@ export function checkoutRefusal(stderr: string, branch: string): string | null {
 /** Git's refusal to fast-forward because files would be overwritten, worded like checkoutRefusal. */
 export function pullRefusal(stderr: string, upstream: string): string | null {
   return overwriteRefusal(stderr, 'merge', `pulling ${upstream}`)
+}
+
+/** The same refusal when moving a branch to a merge the app made. */
+export function mergeOverwriteRefusal(stderr: string, branch: string): string | null {
+  return overwriteRefusal(stderr, 'merge', `merging ${branch}`)
 }
 
 /** `command` is the word git ends its heading with ("would be overwritten by merge:"); `doing` is ours. */
