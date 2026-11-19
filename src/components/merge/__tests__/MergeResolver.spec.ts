@@ -214,6 +214,19 @@ describe('MergeResolver', () => {
       expect(position()).toBe('1/2')
     })
 
+    it('keeps its place when a choice is made, and starts again when the file comes back with other conflicts', async () => {
+      const file = fileB()
+      mountResolver([file], { conflictsLeft: 2 })
+      await button('Next conflict').trigger('click')
+      await wrapper.setProps({ file: toggleSide(file, 2, 'ours'), conflictsLeft: 1 })
+      expect(position()).toBe('2/2')
+
+      // The merge worked out again: the same file, now with one conflict.
+      const reworked = toMergeFile({ path: 'b.ts', base: '1\nkeep\n3\n', ours: 'one\nkeep\n3\n', theirs: 'uno\nkeep\n3\n' })
+      await wrapper.setProps({ file: reworked, conflictsLeft: 1 })
+      expect(position()).toBe('1/1')
+    })
+
     it('moves focus to the conflict', async () => {
       mountResolver([fileB()], { conflictsLeft: 2 })
       await button('Next conflict').trigger('click')

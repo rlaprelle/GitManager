@@ -53,6 +53,15 @@ watch(
   },
 )
 
+// Choices never change how many conflicts a file has: a new count means the merge was worked out
+// again and this is another version of the file, where the old position may not even exist.
+watch(
+  () => conflictRows.value.length,
+  () => {
+    currentConflict.value = 0
+  },
+)
+
 const conflictNumber = (row: AlignedChunk) => conflictRows.value.indexOf(row) + 1
 /** Changed chunks show filler below their shorter panes. */
 const cellTint = (row: AlignedChunk) => (row.chunk.kind === 'same' ? 'bg-gm-code' : 'bg-gm-empty')
