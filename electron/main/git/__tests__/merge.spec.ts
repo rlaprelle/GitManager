@@ -279,6 +279,27 @@ describe('GitCliDataSource merging', () => {
     expect(await git(folder, 'status', '--porcelain=v1')).toBe('')
   })
 
+  it('keeps settings the app was started with for the last step too, and its own still win', async () => {
+    const { folder, source } = await mergeRepository()
+    const started = {
+      GIT_CONFIG_COUNT: '2',
+      GIT_CONFIG_KEY_0: 'user.name',
+      GIT_CONFIG_VALUE_0: 'Set In The Environment',
+      GIT_CONFIG_KEY_1: 'branch.main.mergeoptions',
+      GIT_CONFIG_VALUE_1: '--squash',
+    }
+    for (const [name, value] of Object.entries(started)) vi.stubEnv(name, value)
+    try {
+      const preview = await source.previewMerge('repo', 'feature/apart')
+      await source.merge('repo', preview, [])
+      expect(await git(folder, 'log', '-1', '--format=%P')).toBe(`${preview.ours} ${preview.theirs}`)
+      // The reflog records who moved the branch, which shows the settings that step ran with.
+      expect(await git(folder, 'log', '-g', '-1', '--format=%gn')).toBe('Set In The Environment')
+    } finally {
+      for (const name of Object.keys(started)) vi.stubEnv(name, undefined)
+    }
+  })
+
   it('signs the merge commit when commit.gpgsign asks for it', async () => {
     const { folder, source } = await mergeRepository()
     await gitInFixture(fixtures, folder, 'config', 'commit.gpgsign', 'true')
