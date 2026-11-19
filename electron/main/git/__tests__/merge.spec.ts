@@ -355,6 +355,18 @@ describe('GitCliDataSource merging files that aren’t simple edits', () => {
     return { folder, source: sourceOver(folder) }
   }
 
+  /**
+   * Commits `path` as executable. The bit is set in the index, the only place Windows has for it,
+   * and core.filemode is switched off (as it already is there) so that git elsewhere doesn't put
+   * back the mode it sees on disk when the file is added again.
+   */
+  const putExecutable = async (repo: string, path: string, content: Content) => {
+    await put(repo, path, content)
+    await gitInFixture(fixtures, repo, 'config', 'core.filemode', 'false')
+    await gitInFixture(fixtures, repo, 'add', path)
+    await gitInFixture(fixtures, repo, 'update-index', '--chmod=+x', path)
+  }
+
   const clash = (path: string, base: Content, ours: Content, theirs: Content) =>
     diverged(
       (folder) => put(folder, path, base),
@@ -458,11 +470,7 @@ describe('GitCliDataSource merging files that aren’t simple edits', () => {
     const { folder, source } = await diverged(
       (repo) => put(repo, 'run.sh', 'base\n'),
       (repo) => put(repo, 'run.sh', 'ours\n'),
-      async (repo) => {
-        await put(repo, 'run.sh', 'theirs\n')
-        await gitInFixture(fixtures, repo, 'add', 'run.sh')
-        await gitInFixture(fixtures, repo, 'update-index', '--chmod=+x', 'run.sh')
-      },
+      (repo) => putExecutable(repo, 'run.sh', 'theirs\n'),
     )
     const preview = await source.previewMerge('repo', 'theirs')
     await source.merge('repo', preview, [{ path: 'run.sh', text: 'settled\n' }])
@@ -494,11 +502,7 @@ describe('GitCliDataSource merging files that aren’t simple edits', () => {
 
   it('keeps a file’s executable bit', async () => {
     const { folder, source } = await diverged(
-      async (repo) => {
-        await put(repo, 'run.sh', 'base\n')
-        await gitInFixture(fixtures, repo, 'add', 'run.sh')
-        await gitInFixture(fixtures, repo, 'update-index', '--chmod=+x', 'run.sh')
-      },
+      (repo) => putExecutable(repo, 'run.sh', 'base\n'),
       (repo) => put(repo, 'run.sh', 'ours\n'),
       (repo) => put(repo, 'run.sh', 'theirs\n'),
     )
