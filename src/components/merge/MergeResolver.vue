@@ -9,6 +9,7 @@ import {
   alignedChunks,
   conflictsLeftIn,
 } from '@/lib/mergeChunks'
+import { type Extent, ribbonPath } from '@/lib/mergeRibbon'
 import GmIcon from '../GmIcon.vue'
 import MergeConflictBlock from './MergeConflictBlock.vue'
 import MergeGutter from './MergeGutter.vue'
@@ -153,30 +154,23 @@ function finishEdit(row: AlignedChunk, text: string): void {
 const grid = ref<HTMLElement | null>(null)
 
 /** Where the elements matching `selector` start and end, measured from the top of `cell`. */
-function extent(cell: Element, selector: string): [number, number] | null {
+function extent(cell: Element, selector: string): Extent | null {
   const found = cell.querySelectorAll(selector)
   if (found.length === 0) return null
   const top = cell.getBoundingClientRect().top
   return [found[0]!.getBoundingClientRect().top - top, found[found.length - 1]!.getBoundingClientRect().bottom - top]
 }
 
-/** Drawn from measurements, because wrapped lines make rows taller than their line count says. */
+/** Measured here, because wrapped lines make rows taller than their line count says; `ribbonPath` has the shape. */
 function drawRibbons(): void {
   for (const gutter of grid.value?.querySelectorAll<HTMLElement>('[data-ribbon-side]') ?? []) {
     const side = gutter.dataset['ribbonSide'] as MergeSide
     const [sideCell, resultCell] =
       side === 'ours' ? [gutter.previousElementSibling, gutter.nextElementSibling] : [gutter.nextElementSibling, gutter.previousElementSibling]
     if (!sideCell || !resultCell) continue
-    const from = extent(sideCell, `[data-source="${side}"]`) ?? [0, 2]
-    const to = extent(resultCell, `[data-source="${side}"]`) ?? extent(resultCell, '[data-conflict]:not([data-testid="merge-settled"]), [data-source="edited"]') ?? [0, 0]
-    const width = gutter.offsetWidth
-    const middle = width / 2
-    const [sideX, resultX] = side === 'ours' ? [0, width] : [width, 0]
-    gutter.querySelector('path')?.setAttribute(
-      'd',
-      `M${sideX},${from[0]} C${middle},${from[0]} ${middle},${to[0]} ${resultX},${to[0]} ` +
-        `L${resultX},${to[1]} C${middle},${to[1]} ${middle},${from[1]} ${sideX},${from[1]} Z`,
-    )
+    const from = extent(sideCell, `[data-source="${side}"]`)
+    const to = extent(resultCell, `[data-source="${side}"]`) ?? extent(resultCell, '[data-conflict]:not([data-testid="merge-settled"]), [data-source="edited"]')
+    gutter.querySelector('path')?.setAttribute('d', ribbonPath(side, from, to, gutter.offsetWidth))
   }
 }
 

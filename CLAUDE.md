@@ -51,6 +51,7 @@ src/lib/laneTable.ts             LaneTable: which commits each lane is heading t
 src/lib/parseDiff.ts             git diff output → Hunk[]
 src/lib/merge.ts                 merge wording shared by both sources, mergeRefusal, mergeSummary
 src/lib/mergeChunks.ts           three-way merge into chunks (Myers diff), the user's choices, result text, carryChoices
+src/lib/mergeRibbon.ts           ribbonPath: a ribbon's SVG outline from measured extents (MergeResolver measures)
 src/lib/paneLayout.ts            PANE_LIMITS (min + neighbour's reserve), clamping, arrow-key steps, saved sizes
 src/components/**                presentational: props in, emits out
 src/components/merge/**          the resolver: MergeResolver (layout, ribbons, keys), MergeConflictBlock, MergeGutter, MergePaneLines
