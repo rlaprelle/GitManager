@@ -70,9 +70,23 @@ export function lineText(line: string): string {
   return line.replace(/\r?\n$/, '')
 }
 
+/** The ending these lines use, or null when none of them has one. */
+function endingIn(lines: string[]): string | null {
+  const terminated = lines.find((line) => line.endsWith('\n'))
+  if (terminated === undefined) return null
+  return terminated.endsWith('\r\n') ? '\r\n' : '\n'
+}
+
 /** The ending these lines use; a file with none yet gets '\n'. */
 function lineEndingOf(lines: string[]): string {
-  return lines.find((line) => line.endsWith('\n'))?.endsWith('\r\n') ? '\r\n' : '\n'
+  return endingIn(lines) ?? '\n'
+}
+
+/** Every line a chunk holds, from all three versions. */
+function everyLineOf(chunk: MergeChunk): string[] {
+  if (chunk.kind === 'same') return chunk.lines
+  if (chunk.kind === 'one-side') return [...chunk.base, ...chunk.lines]
+  return [...chunk.ours, ...chunk.theirs, ...chunk.base]
 }
 
 export function toMergeFile(file: ConflictFile): MergeFile {
@@ -391,14 +405,18 @@ export function reopenConflict(file: MergeFile, index: number): MergeFile {
 
 /** Settles a conflict on what the user typed (no lines at all is a valid answer). */
 export function editConflict(file: MergeFile, index: number, text: string): MergeFile {
-  return withChunk(file, index, onConflict((chunk) => ({ ...chunk, picks: [], neither: false, edited: typedLines(chunk, text) })))
+  return withChunk(file, index, onConflict((chunk) => ({ ...chunk, picks: [], neither: false, edited: typedLines(file, chunk, text) })))
 }
 
-/** Typed text as lines of this file: a text box only has '\n', so the conflict's own ending goes back on. */
-function typedLines(chunk: ConflictChunk, text: string): string[] {
+/**
+ * Typed text as lines of this file: a text box only has '\n', so the conflict's own ending goes
+ * back on. A conflict with no ending of its own (the file's last line, unterminated on every
+ * side) takes the rest of the file's, so a CRLF file isn't given a lone LF.
+ */
+function typedLines(file: MergeFile, chunk: ConflictChunk, text: string): string[] {
   const typed = text.replace(/\r/g, '').replace(/\n+$/, '')
   if (typed === '') return []
-  const ending = lineEndingOf([...chunk.ours, ...chunk.theirs, ...chunk.base])
+  const ending = endingIn(everyLineOf(chunk)) ?? lineEndingOf(file.chunks.flatMap(everyLineOf))
   const lines = typed.split('\n').map((line) => line + ending)
   const noFinalNewline = [chunk.ours, chunk.theirs].every((side) => side.length > 0 && !side[side.length - 1]!.endsWith('\n'))
   if (noFinalNewline) lines[lines.length - 1] = lineText(lines[lines.length - 1]!)

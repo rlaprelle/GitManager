@@ -123,6 +123,16 @@ describe('line endings and final newlines', () => {
     expect(resultText(editConflict(file, 0, 'one\ntwo'))).toBe('one\ntwo')
   })
 
+  it('gives typed lines the file’s ending when the conflict’s own lines have none', () => {
+    const file = toMergeFile({ path: 'f', base: 'a\r\nb\r\nlast', ours: 'a\r\nb\r\nours', theirs: 'a\r\nb\r\ntheirs' })
+    expect(resultText(editConflict(file, only(file), 'one\ntwo'))).toBe('a\r\nb\r\none\r\ntwo')
+  })
+
+  it('gives typed lines the conflict’s own ending in a file that mixes endings', () => {
+    const file = toMergeFile({ path: 'f', base: 'a\r\nb\n', ours: 'a\r\nO\n', theirs: 'a\r\nT\n' })
+    expect(resultText(editConflict(file, only(file), 'one\ntwo'))).toBe('a\r\none\ntwo\n')
+  })
+
   it('needs another look when only a final newline changed', () => {
     const earlier = toMergeFile({ path: 'f', base: 'a\n', ours: 'o\n', theirs: 't\n' })
     expect(carryChoices([earlier], [toMergeFile({ path: 'f', base: 'a\n', ours: 'o\n', theirs: 't' })]).changed).toBe(1)
