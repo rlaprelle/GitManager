@@ -160,7 +160,11 @@ async function exists(path: string): Promise<boolean> {
   return (await stat(path).catch(() => null)) !== null
 }
 
-/** The full ref of a branch the repository lists, so a name never reaches git unchecked. */
+/**
+ * The full ref of a branch the repository lists, so a name never reaches git unchecked. A name that
+ * is both a local branch and a remote one ('origin/main' made by hand) means the local branch, as it
+ * does to git; the dialog offers it once, and Pull doesn't offer an upstream that is shadowed so.
+ */
 function refOf(branches: Branches, branch: string, into: string): string {
   if (branches.local.some((candidate) => candidate.name === branch)) {
     if (branch === into) throw new GitError(`${branch} is the branch you’re on: pick another to merge into it`)
@@ -229,13 +233,28 @@ function stagesOf(stages: Stage[], path: string): Stage[] {
   return stages.filter((stage) => stage.path === path)
 }
 
-/** Both sides still have the file, and every version is a regular file the app can show and write back exactly. */
+/**
+ * Both sides still have the file, every version is a regular file the app can show and write back
+ * exactly, and the only thing clashing is its text.
+ */
 async function isResolvableAsText(folder: string, stages: Stage[]): Promise<boolean> {
   const has = (n: number) => stages.some((stage) => stage.stage === n)
   if (!has(2) || !has(3)) return false
   if (!stages.every((stage) => REGULAR_FILE_MODES.has(stage.mode))) return false
+  if (modesClash(stages)) return false
   const contents = await Promise.all(stages.map((stage) => blob(folder, stage.oid)))
   return contents.every(isEditableText)
+}
+
+/**
+ * The executable bit, settled differently by each branch with no earlier version to say which of
+ * them changed it: both added the file, one of them executable. Git counts that as a conflict (on
+ * its own, when the text is the same), and a resolver that shows text has no way to ask about it.
+ */
+function modesClash(stages: Stage[]): boolean {
+  const modeOf = (n: number) => stages.find((stage) => stage.stage === n)?.mode
+  const [base, ours, theirs] = [modeOf(1), modeOf(2), modeOf(3)]
+  return ours !== theirs && base !== ours && base !== theirs
 }
 
 /**
@@ -340,7 +359,7 @@ function checkResolutions(conflicts: string[], resolutions: MergeResolution[]): 
   if (extra.length > 0) throw new GitError(`Not a conflicted file of this merge: ${extra.join(', ')}`)
 }
 
-/** The three-way answer for a file's mode: theirs if only they changed it (a new executable bit), else ours. */
+/** The three-way answer for a file's mode: theirs if only they changed it (a new executable bit), else ours. Modes that clash never get here. */
 function mergedMode(stages: Stage[]): string {
   const modeOf = (n: number) => stages.find((stage) => stage.stage === n)?.mode
   return modeOf(2) === modeOf(1) ? modeOf(3)! : modeOf(2)!

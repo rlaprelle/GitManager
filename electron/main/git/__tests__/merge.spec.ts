@@ -477,6 +477,18 @@ describe('GitCliDataSource merging files that aren’t simple edits', () => {
     expect(await git(folder, 'ls-tree', 'HEAD', 'run.sh')).toMatch(/^100755 /)
   })
 
+  it.each([
+    ['the same text', 'echo hello\n', 'echo hello\n'],
+    ['different text', 'echo ours\n', 'echo theirs\n'],
+  ])('leaves a file both branches added, executable on one side only, to a terminal: %s', async (_text, ours, theirs) => {
+    const { source } = await diverged(
+      (repo) => put(repo, 'start.txt', 'start\n'),
+      (repo) => put(repo, 'run.sh', ours),
+      (repo) => putExecutable(repo, 'run.sh', theirs),
+    )
+    expect(await source.previewMerge('repo', 'theirs')).toMatchObject({ conflicts: [], unresolvable: ['run.sh'] })
+  })
+
   it('won’t overwrite an ignored file the merge would add, in a merge commit or a fast-forward', async () => {
     const { folder, source } = await diverged(
       (repo) => put(repo, '.gitignore', '.env\n'),

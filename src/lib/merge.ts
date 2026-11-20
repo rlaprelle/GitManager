@@ -60,7 +60,7 @@ export function blockedMessage(files: string[]): string {
 }
 
 export function unresolvableMessage(files: string[]): string {
-  return `${files.join(', ')} can’t be resolved here (deleted on one side, binary, or not a plain file). Merge in a terminal instead`
+  return `${files.join(', ')} can’t be resolved here (deleted on one side, binary, not a plain file, or executable on one side only). Merge in a terminal instead`
 }
 
 /** A merge being resolved couldn't be kept for a restart (storage full or unavailable): a warning, once per merge. */
