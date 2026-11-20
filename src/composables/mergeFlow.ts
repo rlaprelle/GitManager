@@ -20,6 +20,7 @@ import type { GitDataSource, RepositoryOperation } from '@/services/GitDataSourc
 import type { Branches, MergePreview, MergeRequest, Repository } from '@/types/git'
 import { latestLoad } from './latestLoad'
 import type { MergeDrafts } from './mergeDrafts'
+import type { ToastKind } from './toasts'
 
 /** The Merge dialog while it's open. */
 export interface MergeDialogState {
@@ -53,6 +54,8 @@ export interface MergeFlowHost {
   /** Resolves when a refresh already running has finished, so what it read can't land after the merge. */
   refreshFinished(): Promise<void> | null
   reload(): Promise<void>
+  /** Says something the user must not miss, as a toast. */
+  notify(message: string, kind?: ToastKind): void
   /** Where a merge being resolved is kept, so closing the app doesn't lose it. */
   drafts: MergeDrafts
 }

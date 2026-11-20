@@ -20,6 +20,7 @@ import NoRepositories from '@/components/NoRepositories.vue'
 import PaneDivider from '@/components/PaneDivider.vue'
 import RepositoryList from '@/components/RepositoryList.vue'
 import StatusBar from '@/components/StatusBar.vue'
+import ToastStack from '@/components/ToastStack.vue'
 import DiffPanel from '@/components/diff/DiffPanel.vue'
 import BranchFileDialog from '@/components/diff/BranchFileDialog.vue'
 
@@ -135,6 +136,8 @@ const {
   discardMerge,
   confirmDiscardMerge,
   cancelDiscardMerge,
+  toasts,
+  dismissToast,
   // The data source is a service, not state: unwrap it in case a parent passed it in reactive props.
 } = useGitManager(toRaw(props.source), { comparePaths: props.comparePaths, canMerge: props.operations.includes('merge') })
 
@@ -438,5 +441,7 @@ onUnmounted(() => {
       @close="closeCloneDialog"
       @cancel-clone="cancelClone"
     />
+
+    <ToastStack :toasts="toasts" @dismiss="dismissToast" />
   </div>
 </template>

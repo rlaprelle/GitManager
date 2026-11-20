@@ -34,12 +34,13 @@ Git Manager is for developers who juggle several repositories and want a quick v
 
 - **Current branch vs. selected branch.** The *current* branch is the one checked out (`HEAD`). The *selected* branch is the one you're looking at in the history. Browsing a branch never checks it out. Only the Checkout button does.
 - **Git diff vs. simple diff.** A git diff is about one commit: what that commit did to a file. A simple diff only compares two pieces of text. Comparing two unrelated files only makes sense as a simple diff, so in compare mode the git diff view is turned off.
-- **The status bar is the activity log.** Every action reports its outcome along the bottom of the window, including failures.
+- **The status bar is the activity log.** Every action reports its outcome along the bottom of the window, including failures. What you mustn't miss also comes as a notification.
 
 ## Design principles
 
 - **One screen, no modes to get lost in.** Repositories, branches, history and the diff are always visible together. Compare and the merge screen are the only other views, and each shows the way out: **Back to *commit***, or **Discard merge** and **Complete merge**.
 - **Nothing changes until you ask.** Clicking around never changes your repository. Checkout, Fetch, Pull, Merge and Push are always separate, clearly labelled buttons, and one runs at a time. A merge touches no file until you complete it.
+- **What matters comes to you.** A line in the status bar is easy to miss. Anything you need to know that you didn't just ask for appears as a notification over the corner of the window, and stays there until you dismiss it.
 - **Dense but quiet.** A dark palette, monospace type for anything git produces (hashes, paths, code), and colour reserved for meaning: green for additions, red for deletions, and the accent colour for what's selected.
 - **Works narrow.** On a small window or a phone, the panes stack instead of shrinking past usefulness.
 

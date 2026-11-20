@@ -18,6 +18,7 @@ export type IconName =
   | 'arrow-right'
   | 'arrow-left'
   | 'check'
+  | 'info'
 
 withDefaults(defineProps<{ name: IconName; size?: number; strokeWidth?: number }>(), {
   size: 16,
@@ -116,6 +117,11 @@ withDefaults(defineProps<{ name: IconName; size?: number; strokeWidth?: number }
     </template>
     <template v-else-if="name === 'check'">
       <path d="M5 12.5l4.5 4.5L19 7.5" />
+    </template>
+    <template v-else-if="name === 'info'">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5.5" />
+      <path d="M12 7.5h.01" />
     </template>
     <template v-else-if="name === 'swap'">
       <path d="M4 8h14" />

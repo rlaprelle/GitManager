@@ -21,6 +21,7 @@ import { headLabel as describeHead, pluralize, shortHash, splitPath, syncLabel }
 import { latestLoad } from './latestLoad'
 import { type MergeDrafts, mergeDrafts } from './mergeDrafts'
 import { useMergeFlow } from './mergeFlow'
+import { useToasts } from './toasts'
 
 export type DiffMode = 'git' | 'simple'
 
@@ -62,6 +63,8 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   const repositories = ref<Repository[]>([])
   const loading = ref(true)
   const status = ref('Ready')
+  /** What the user must not miss; the status bar alone is too easy to overlook. */
+  const toasting = useToasts()
 
   const selectedRepoId = ref<string | null>(null)
   const selectedBranch = ref<string | null>(null)
@@ -813,11 +816,13 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     runOperation,
     refreshFinished: () => refreshInFlight,
     reload,
+    notify: toasting.showToast,
     drafts: options.mergeDrafts ?? mergeDrafts(),
   })
 
   return {
     ...merging,
+    ...toasting,
     unfinishedOperation: unfinishedLoad.value,
     // state
     repositories,

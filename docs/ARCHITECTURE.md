@@ -248,6 +248,8 @@ A fast-forward skips to step 4. Whether one happens follows `merge.ff`. `getUnfi
 | `diffMode` | `'simple'` whenever compare is open, otherwise the mode the user chose. |
 | `activeHunks` | The compare result while comparing, otherwise the selected file's diff. |
 
+**Toasts** (`src/composables/toasts.ts`, created by `useGitManager` and returned as part of it) are for what the user must not miss: the status bar is easy to overlook. `showToast(message, kind)` adds one (`notice` or `warning`), `ToastStack` shows them over the bottom right corner, and each stays until dismissed. A message already on screen isn't repeated, and at most `MAX_TOASTS` show at once. `mergeFlow` reaches them through its host's `notify`.
+
 Behavioural rules the composable enforces. Tests cover each of them, so change them deliberately:
 
 1. **Selecting a repository, branch or commit resets the commit view.** File selection returns to 0 and compare closes. Selecting a branch jumps to its tip commit; a branch picked while the history is still loading jumps there once it arrives.
@@ -349,7 +351,7 @@ The browser suite also checks that the page loads nothing from other hosts, rend
 
 The browser suite runs against Vite; the desktop suite runs against `out/`, so `npm run test:e2e:app` builds first. Each desktop test gets its own data folder (`GIT_MANAGER_USER_DATA`) listing the fixtures; the fixtures are built, and the app under test runs git, with an empty global git config so the developer's own settings (hooks, aliases) can't change them. Playwright's key presses reach the page through DevTools, not the window, so Electron's menu shortcuts (Ctrl+R, Ctrl+Shift+I) can't be pressed in a test; the suite checks the menu and DevTools directly, and the installer check tries the keys. Playwright starts its own Vite server on port 4317 with `--strictPort` and `reuseExistingServer: false`. That way it fails loudly instead of testing some other app that happens to be on the port.
 
-Stable selectors for the tests are roles and labels first, then `data-testid`. A repository's button name starts with its name and its Remove button's with "Remove", so match repository buttons with an anchored pattern (`/^name/`). The `data-testid`s are `header-repo`, `header-branch`, `unified-diff`, `side-by-side-diff`, `left-label`, `right-label`, `commit-description`. Diff rows and branch badges also expose `data-kind`, and side-by-side cells expose `data-side` and `data-cell`.
+Stable selectors for the tests are roles and labels first, then `data-testid`. A repository's button name starts with its name and its Remove button's with "Remove", so match repository buttons with an anchored pattern (`/^name/`). The `data-testid`s are `header-repo`, `header-branch`, `unified-diff`, `side-by-side-diff`, `left-label`, `right-label`, `commit-description`, `toasts`. Diff rows, branch badges and toasts also expose `data-kind`, and side-by-side cells expose `data-side` and `data-cell`.
 
 ## Known limitations
 
