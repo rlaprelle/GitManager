@@ -4,6 +4,7 @@ import { localNameOf, switchedMessage } from '../../../src/lib/checkout'
 import { errorMessage } from '../../../src/lib/errorMessage'
 import { layoutLanes, primaryBranchTip } from '../../../src/lib/laneLayout'
 import { parseUnifiedDiff } from '../../../src/lib/parseDiff'
+import { divergedMessage } from '../../../src/lib/merge'
 import { fetchedMessage, publishedMessage, pulledMessage, pushedMessage, remoteChanges } from '../../../src/lib/remoteOperations'
 import type { GitDataSource } from '../../../src/services/GitDataSource'
 import type {
@@ -15,14 +16,20 @@ import type {
   CloneProgress,
   CloneRequest,
   CompareSide,
+  ConflictFile,
   FileChange,
   HistoryPage,
   Hunk,
+  MergePreview,
+  MergeRequest,
+  MergeResolution,
   OperationResult,
   PickedFile,
   Repository,
+  UnfinishedOperation,
 } from '../../../src/types/git'
 import { cloneInto, planClone } from './cloneInto'
+import { merge, mergeConflicts, previewMerge, unfinishedOperation } from './merge'
 import { type CompareLookup, PickedFiles, compareSides, requireBranch } from './compareSides'
 import { lastFetchTime, preservingFetchHead } from './fetchHead'
 import { networkAccessFor } from './network'
@@ -32,6 +39,7 @@ import {
   LOG_FORMAT,
   PUSH_FLAG,
   type PushedRef,
+  REMOTE_BRANCH_PREFIX,
   UPSTREAM_FORMAT,
   type Upstream,
   checkoutRefusal,
@@ -309,7 +317,9 @@ export class GitCliDataSource implements GitDataSource {
     const { behind, ahead } = await divergenceFrom(folder, upstream.ref)
     if (behind === 0) return { message: pulledMessage(0, upstream.name) }
     if (ahead > 0) {
-      throw new GitError(`can’t fast-forward: ${branch} and ${upstream.name} both have new commits. Merge or rebase them in a terminal.`)
+      await this.refuseShadowedUpstream(folder, branch, upstream)
+      // Not a failure: the app offers to merge the upstream instead.
+      return { message: divergedMessage(branch, upstream.name), mergeable: upstream.name }
     }
     await fastForward(folder, upstream)
     return { message: pulledMessage(behind, upstream.name) }
@@ -330,6 +340,42 @@ export class GitCliDataSource implements GitDataSource {
     const refspec = `${localBranchRef(branch)}:${upstream.remoteRef}`
     const pushed = await pushRef(folder, { remote: upstream.remote, refspec, branch, upstreamName: upstream.name })
     return { message: pushedMessage(pushed.flag === PUSH_FLAG.upToDate ? 0 : pushing, upstream.name) }
+  }
+
+  async getUnfinishedOperation(repoId: string): Promise<UnfinishedOperation | null> {
+    return unfinishedOperation(await this.folderOf(repoId))
+  }
+
+  /** See `merge.ts`: worked out in memory, nothing changes. */
+  async previewMerge(repoId: string, branch: string): Promise<MergePreview> {
+    const folder = await this.folderOf(repoId)
+    return previewMerge(folder, await this.branchesAt(folder), branch)
+  }
+
+  async getMergeConflicts(repoId: string, request: MergeRequest): Promise<ConflictFile[]> {
+    const folder = await this.folderOf(repoId)
+    return mergeConflicts(folder, await this.branchesAt(folder), request)
+  }
+
+  /** See `merge.ts`: only the last step, moving the branch, touches the working tree. */
+  async merge(repoId: string, request: MergeRequest, resolutions: MergeResolution[]): Promise<OperationResult> {
+    const folder = await this.folderOf(repoId)
+    return merge(folder, await this.branchesAt(folder), request, resolutions)
+  }
+
+  /**
+   * A merge names its branch as the branch list does, and there a local branch someone named
+   * 'origin/main' has the same name as the remote one: offering to merge the upstream by that name
+   * would merge the local branch instead. (Git itself then calls the upstream 'remotes/origin/main',
+   * a name the list doesn't have.) Rare enough to leave to a terminal, too wrong to let happen.
+   */
+  private async refuseShadowedUpstream(folder: string, branch: string, upstream: Upstream): Promise<void> {
+    if (!upstream.ref.startsWith(REMOTE_BRANCH_PREFIX)) return
+    const listedAs = upstream.ref.slice(REMOTE_BRANCH_PREFIX.length)
+    if (!hasBranchNamed((await this.branchesAt(folder)).local, listedAs)) return
+    throw new GitError(
+      `can’t fast-forward: ${branch} and ${listedAs} both have new commits, and a local branch is also named ${listedAs}, so it can’t be merged here. Rename or delete that local branch and pull again, or merge or rebase them in a terminal.`,
+    )
   }
 
   /** One repository's list entry. A repository git can't read is still listed, with the problem. */

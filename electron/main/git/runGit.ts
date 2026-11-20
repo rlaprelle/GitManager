@@ -26,6 +26,8 @@ export interface RunGitOptions {
   onStderr?: (chunk: string) => void
   /** Aborting stops git and everything it started (a transfer's helpers, ssh). The call then rejects. */
   signal?: AbortSignal
+  /** Extra environment for this command only (a merge builds its tree in a private index: GIT_INDEX_FILE). */
+  env?: Record<string, string>
 }
 
 /** How a command that talks to a remote runs: where git and ssh ask for sign-in, and when a stalled transfer fails. */
@@ -67,7 +69,7 @@ export function runGit(cwd: string, args: string[], options: RunGitOptions = {})
     const child = execFile(
       'git',
       [...FIXED_SETTINGS, ...(options.network?.settings ?? []), ...args],
-      { cwd, encoding: 'utf8', maxBuffer: MAX_OUTPUT_BYTES, windowsHide: true, env: environmentFor(options.network) },
+      { cwd, encoding: 'utf8', maxBuffer: MAX_OUTPUT_BYTES, windowsHide: true, env: { ...environmentFor(options.network), ...options.env } },
       (error, stdout, stderr) => {
         if (!error) return resolve(stdout)
         if (typeof error.code === 'number' && options.okExitCodes?.includes(error.code)) return resolve(stdout)

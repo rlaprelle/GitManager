@@ -30,6 +30,10 @@ export type GitBridge = Pick<
   | 'fetch'
   | 'pull'
   | 'push'
+  | 'getUnfinishedOperation'
+  | 'previewMerge'
+  | 'getMergeConflicts'
+  | 'merge'
 > & {
   cloneRepository(request: CloneRequest): Promise<AddRepositoryResult>
   onCloneProgress(listener: (progress: CloneProgress) => void): () => void

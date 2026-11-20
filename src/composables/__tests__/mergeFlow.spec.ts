@@ -1,0 +1,966 @@
+import { beforeEach, describe, expect, it } from 'vitest'
+import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositories'
+import type { SampleRepository } from '@/data/sampleTypes'
+import { MERGE_NOT_SAVED } from '@/lib/merge'
+import { conflictsIn, resultText } from '@/lib/mergeChunks'
+import type { GitDataSource } from '@/services/GitDataSource'
+import { MockGitDataSource } from '@/services/MockGitDataSource'
+import { type DraftStorage, mergeDraftKey, mergeDrafts } from '../mergeDrafts'
+import { useGitManager } from '../useGitManager'
+import { heldSource, settle } from './heldSource'
+
+/** Saved merges live here, like localStorage across a restart; a fresh one per test. */
+let storage: Map<string, string>
+const memoryStorage = () => ({
+  getItem: (key: string) => storage.get(key) ?? null,
+  setItem: (key: string, value: string) => void storage.set(key, value),
+  removeItem: (key: string) => void storage.delete(key),
+})
+
+beforeEach(() => {
+  storage = new Map()
+})
+
+async function loaded(source: GitDataSource = new MockGitDataSource()) {
+  const gm = useGitManager(source, { comparePaths: { ...SAMPLE_COMPARE_PATHS }, mergeDrafts: mergeDrafts(memoryStorage()) })
+  await gm.load()
+  return gm
+}
+
+type Manager = Awaited<ReturnType<typeof loaded>>
+
+/** What has been raised for the user to dismiss, without the ids. */
+const raised = (gm: Manager) => gm.toasts.value.map(({ kind, message, context }) => ({ kind, message, context }))
+const HERE = { context: 'inventory-service' }
+
+/** The commit the stray local branch below is on; the remote origin/main is on another (main's). */
+const STRAY_TIP = '2d6e914'
+
+/** Sample data in which someone has made a local branch called 'origin/main', the remote branch's name too. */
+function sourceWithSharedName(): MockGitDataSource {
+  const repositories = structuredClone(sampleRepositories)
+  repositories.find((repo) => repo.id === 'inventory')!.localBranches.push({ name: 'origin/main', ahead: 0, behind: 0, tipHash: STRAY_TIP })
+  return new MockGitDataSource(repositories)
+}
+
+/** Index of the file's first conflict among its chunks, as the arrows address it. */
+function firstConflict(gm: Manager): number {
+  return gm.mergeFile.value!.chunks.findIndex((chunk) => chunk.kind === 'conflict')
+}
+
+/** Opens the dialog, picks `branch` and waits for its preview. */
+async function picked(gm: Manager, branch: string) {
+  gm.openMergeDialog()
+  await gm.chooseMergeBranch(branch)
+}
+
+/** In the resolver for merging main (which clashes in two sample files). */
+async function resolving(source?: GitDataSource) {
+  const gm = await loaded(source)
+  await picked(gm, 'main')
+  await gm.startMerge()
+  return gm
+}
+
+/** Settles every conflict in every file with ours. */
+function resolveAll(gm: Manager) {
+  for (const { path } of gm.mergeSession.value!.files) {
+    gm.selectMergeFile(path)
+    gm.mergeFile.value!.chunks.forEach((chunk, index) => {
+      if (chunk.kind === 'conflict') gm.toggleMergeSide(index, 'ours')
+    })
+  }
+}
+
+describe('the Merge dialog', () => {
+  it('offers every branch but the checked-out one, local before remote', async () => {
+    const gm = await loaded()
+    expect(gm.mergeableBranches.value).toEqual([
+      'main',
+      'bugfix/sku-null-check',
+      'origin/main',
+      'origin/bugfix/sku-null-check',
+      'origin/feature/stock-reservations',
+      'origin/release/2.4',
+    ])
+  })
+
+  it('offers a name once when a local branch shares it with a remote one, as git reads the name: the local branch', async () => {
+    const gm = await loaded(sourceWithSharedName())
+    expect(gm.mergeableBranches.value).toEqual([
+      'main',
+      'bugfix/sku-null-check',
+      'origin/main',
+      'origin/bugfix/sku-null-check',
+      'origin/feature/stock-reservations',
+      'origin/release/2.4',
+    ])
+  })
+
+  it('says which branch a shared name means once it is picked, and previews that one', async () => {
+    const gm = await loaded(sourceWithSharedName())
+    gm.openMergeDialog()
+    expect(gm.mergeSharedNameNote.value).toBeNull()
+
+    await gm.chooseMergeBranch('origin/main')
+    expect(gm.mergeSharedNameNote.value).toBe(
+      'origin/main is the name of a local branch and of a remote one. This merges the local branch. To merge the remote one, rename or delete the local branch first.',
+    )
+    expect(gm.mergePreview.value).toMatchObject({ branch: 'origin/main', theirs: STRAY_TIP, commits: 1 })
+
+    gm.closeMergeDialog()
+    expect(gm.mergeSharedNameNote.value).toBeNull()
+  })
+
+  it('says nothing of the kind for a name only one branch has, a remote branch with a local twin included', async () => {
+    const gm = await loaded(sourceWithSharedName())
+    await picked(gm, 'main')
+    expect(gm.mergeSharedNameNote.value).toBeNull()
+    // Its local twin is called bugfix/sku-null-check: another name, so nothing is unclear.
+    await gm.chooseMergeBranch('origin/bugfix/sku-null-check')
+    expect(gm.mergeSharedNameNote.value).toBeNull()
+  })
+
+  it('previews the picked branch, and closing forgets it', async () => {
+    const gm = await loaded()
+    await picked(gm, 'main')
+    expect(gm.mergeDialog.value).toMatchObject({ fromPull: false, branch: 'main', problem: null })
+    expect(gm.mergePreview.value).toMatchObject({ outcome: 'merge-commit', commits: 2 })
+    gm.closeMergeDialog()
+    expect(gm.mergeDialog.value).toBeNull()
+    expect(gm.mergePreview.value).toBeNull()
+  })
+
+  it('shows only the latest pick’s preview when answers arrive out of order', async () => {
+    const held = heldSource()
+    const gm = await loaded(held.source)
+    held.hold('previewMerge')
+    gm.openMergeDialog()
+    void gm.chooseMergeBranch('main')
+    void gm.chooseMergeBranch('bugfix/sku-null-check')
+    expect(gm.mergeChecking.value).toBe(true)
+    const [first, second] = held.callsTo('previewMerge')
+    await second!.release()
+    await first!.release()
+    expect(gm.mergePreview.value?.branch).toBe('bugfix/sku-null-check')
+    expect(gm.mergeChecking.value).toBe(false)
+  })
+
+  it('shows why a branch can’t be previewed, in the dialog', async () => {
+    const source = new MockGitDataSource()
+    source.previewMerge = async () => {
+      throw new Error('a merge is already in progress')
+    }
+    const gm = await loaded(source)
+    await picked(gm, 'main')
+    expect(gm.mergeDialog.value?.problem).toBe('a merge is already in progress')
+    expect(gm.mergePreview.value).toBeNull()
+  })
+
+  it('says why a merge can’t go ahead, and won’t start it', async () => {
+    const source = new MockGitDataSource()
+    let merges = 0
+    source.merge = async () => (merges++, { message: 'merged' })
+    const gm = await loaded(source)
+    await picked(gm, 'origin/feature/stock-reservations')
+    expect(gm.mergeBlocked.value).toBe('feature/stock-reservations already has every commit on origin/feature/stock-reservations')
+    await gm.startMerge()
+    expect(merges).toBe(0)
+    expect(gm.mergeDialog.value).not.toBeNull()
+  })
+
+  it('doesn’t open while another operation runs, or with no branch checked out', async () => {
+    const held = heldSource()
+    const gm = await loaded(held.source)
+    held.hold('fetch')
+    void gm.fetchRemote()
+    await settle()
+    gm.openMergeDialog()
+    expect(gm.mergeDialog.value).toBeNull()
+    await held.callsTo('fetch')[0]!.release()
+
+    const detachedSource = new MockGitDataSource()
+    const list = detachedSource.listRepositories.bind(detachedSource)
+    detachedSource.listRepositories = async () => (await list()).map((repo) => ({ ...repo, currentBranch: null }))
+    const detached = await loaded(detachedSource)
+    detached.openMergeDialog()
+    expect(detached.mergeDialog.value).toBeNull()
+  })
+})
+
+describe('a clean merge', () => {
+  it('completes from the dialog, reports it, and re-reads the history', async () => {
+    const gm = await loaded()
+    await picked(gm, 'bugfix/sku-null-check')
+    await gm.startMerge()
+    expect(gm.mergeDialog.value).toBeNull()
+    expect(gm.mergeSession.value).toBeNull()
+    expect(gm.status.value).toBe('Merged bugfix/sku-null-check into feature/stock-reservations (1 commit)')
+    expect(gm.commits.value[0]!.message).toBe("Merge branch 'bugfix/sku-null-check' into feature/stock-reservations")
+    expect(gm.runningOperation.value).toBeNull()
+  })
+
+  it('keeps the dialog open with the reason when it fails', async () => {
+    const source = new MockGitDataSource()
+    source.merge = async () => {
+      throw new Error('your changes would be overwritten')
+    }
+    const gm = await loaded(source)
+    await picked(gm, 'bugfix/sku-null-check')
+    await gm.startMerge()
+    expect(gm.mergeDialog.value?.problem).toBe('your changes would be overwritten')
+    expect(gm.status.value).toBe('Failed: your changes would be overwritten')
+    // The dialog is where the user is looking, and it says why.
+    expect(gm.toasts.value).toEqual([])
+  })
+
+  it('names the running operation, so the button can say so, and waits for a refresh first', async () => {
+    const held = heldSource()
+    const gm = await loaded(held.source)
+    await picked(gm, 'bugfix/sku-null-check')
+    held.hold('listRepositories', 'merge')
+    void gm.refresh()
+    const merging = gm.startMerge()
+    await settle()
+    expect(gm.runningOperation.value).toBe('merge')
+    expect(held.callsTo('merge')).toHaveLength(0)
+    await held.callsTo('listRepositories')[0]!.release()
+    await settle()
+    expect(held.callsTo('merge')).toHaveLength(1)
+    held.letThrough('listRepositories')
+    await held.callsTo('merge')[0]!.release()
+    await merging
+    expect(gm.runningOperation.value).toBeNull()
+  })
+})
+
+describe('a merge with conflicts', () => {
+  it('opens the resolver on the first file without changing anything', async () => {
+    const source = new MockGitDataSource()
+    const before = await source.getBranches('inventory')
+    const gm = await resolving(source)
+    const session = gm.mergeSession.value!
+    expect(session.into).toBe('feature/stock-reservations')
+    expect(session.files.map((file) => file.path)).toEqual(['src/main/resources/application.yml', 'pom.xml'])
+    expect(gm.mergeFile.value?.path).toBe('src/main/resources/application.yml')
+    expect(gm.mergeDialog.value).toBeNull()
+    expect(gm.mergeConflictsLeft.value).toBe(3)
+    expect(gm.status.value).toBe('3 conflicts to resolve in 2 files · Nothing on disk has changed yet')
+    expect(await source.getBranches('inventory')).toEqual(before)
+  })
+
+  it('stays in the dialog, with the reason, if the conflicts can’t be read', async () => {
+    const source = new MockGitDataSource()
+    source.getMergeConflicts = async () => {
+      throw new Error('a branch has moved')
+    }
+    const gm = await resolving(source)
+    expect(gm.mergeSession.value).toBeNull()
+    expect(gm.mergeDialog.value?.problem).toBe('a branch has moved')
+  })
+
+  it('keeps the status bar’s count current as conflicts are settled', async () => {
+    const gm = await resolving()
+    gm.toggleMergeSide(firstConflict(gm), 'theirs')
+    expect(gm.status.value).toBe('2 conflicts left · Nothing on disk has changed yet')
+    resolveAll(gm)
+    expect(gm.status.value).toBe('All conflicts resolved · Nothing on disk has changed yet')
+  })
+
+  it('applies choices to the file on screen only', async () => {
+    const gm = await resolving()
+    gm.toggleMergeSide(firstConflict(gm), 'theirs')
+    expect(gm.mergeConflictsLeft.value).toBe(2)
+    gm.selectMergeFile('pom.xml')
+    expect(gm.mergeFile.value?.path).toBe('pom.xml')
+    expect(conflictsIn(gm.mergeFile.value!)[0]!.picks).toEqual([])
+  })
+
+  it('ignores a file that isn’t in the merge', async () => {
+    const gm = await resolving()
+    gm.selectMergeFile('no-such-file')
+    expect(gm.mergeFile.value?.path).toBe('src/main/resources/application.yml')
+  })
+
+  it('resolves by neither side, by hand, and can reopen', async () => {
+    const gm = await resolving()
+    const index = firstConflict(gm)
+    gm.useNeitherMergeSide(index)
+    expect(gm.mergeConflictsLeft.value).toBe(2)
+    gm.reopenMergeConflict(index)
+    expect(gm.mergeConflictsLeft.value).toBe(3)
+    gm.editMergeConflict(index, 'typed: yes')
+    expect(gm.mergeConflictsLeft.value).toBe(2)
+    expect(resultText(gm.mergeFile.value!)).toContain('typed: yes')
+  })
+
+  it('marks a file only once its conflicts are resolved, and any change clears the mark', async () => {
+    const gm = await resolving()
+    gm.selectMergeFile('pom.xml')
+    gm.markMergeFileResolved()
+    expect(gm.mergeFile.value?.marked).toBe(false)
+    const index = firstConflict(gm)
+    gm.toggleMergeSide(index, 'ours')
+    gm.markMergeFileResolved()
+    expect(gm.mergeFile.value?.marked).toBe(true)
+    expect(gm.status.value).toBe('Marked pom.xml as resolved. Nothing is staged or written: this only tracks your progress')
+    gm.toggleMergeSide(index, 'theirs')
+    expect(gm.mergeFile.value?.marked).toBe(false)
+  })
+
+  it('won’t complete with conflicts left', async () => {
+    const source = new MockGitDataSource()
+    let merges = 0
+    source.merge = async () => (merges++, { message: 'merged' })
+    const gm = await resolving(source)
+    await gm.completeMerge()
+    expect(merges).toBe(0)
+    expect(gm.mergeSession.value).not.toBeNull()
+  })
+
+  it('completes without any file being marked, sending each file’s result as plain data', async () => {
+    const source = new MockGitDataSource()
+    const sent: unknown[][] = []
+    const merge = source.merge.bind(source)
+    source.merge = async (...args) => (sent.push(args), merge(...args))
+    const gm = await resolving(source)
+    resolveAll(gm)
+    await gm.completeMerge()
+    expect(gm.mergeSession.value).toBeNull()
+    expect(gm.status.value).toBe('Merged main into feature/stock-reservations (2 commits)')
+    expect(gm.commits.value[0]!.message).toBe("Merge branch 'main' into feature/stock-reservations")
+    const [, request, resolutions] = sent[0] as [string, unknown, { path: string; text: string }[]]
+    expect(Object.keys(request as object).sort()).toEqual(['branch', 'into', 'ours', 'theirs'])
+    expect(resolutions.map((resolution) => resolution.path)).toEqual(['src/main/resources/application.yml', 'pom.xml'])
+    expect(resolutions[1]!.text).toContain('<version>2.4.0-SNAPSHOT</version>')
+    expect(() => structuredClone(sent[0])).not.toThrow()
+  })
+
+  it('keeps every choice when completing fails', async () => {
+    const source = new MockGitDataSource()
+    source.merge = async () => {
+      throw new Error('a branch has moved since')
+    }
+    const gm = await resolving(source)
+    resolveAll(gm)
+    await gm.completeMerge()
+    expect(gm.status.value).toBe('Failed: a branch has moved since')
+    expect(raised(gm)).toEqual([{ kind: 'failure', message: 'Failed: a branch has moved since', ...HERE }])
+    expect(gm.mergeSession.value).not.toBeNull()
+    expect(gm.mergeConflictsLeft.value).toBe(0)
+  })
+
+  it('discards straight away when nothing was decided', async () => {
+    const gm = await resolving()
+    gm.discardMerge()
+    expect(gm.mergeDiscardPending.value).toBe(false)
+    expect(gm.mergeSession.value).toBeNull()
+    expect(gm.status.value).toBe('Merge discarded; nothing changed')
+  })
+
+  it('asks before discarding a decision, and can be talked out of it', async () => {
+    const gm = await resolving()
+    gm.toggleMergeSide(firstConflict(gm), 'ours')
+    gm.discardMerge()
+    expect(gm.mergeDiscardPending.value).toBe(true)
+    expect(gm.mergeSession.value).not.toBeNull()
+    gm.cancelDiscardMerge()
+    expect(gm.mergeDiscardPending.value).toBe(false)
+    expect(gm.mergeConflictsLeft.value).toBe(2)
+    gm.discardMerge()
+    gm.confirmDiscardMerge()
+    expect(gm.mergeSession.value).toBeNull()
+    expect(gm.mergeDiscardPending.value).toBe(false)
+  })
+
+  it('won’t open the dialog on top of a merge being resolved', async () => {
+    const gm = await resolving()
+    gm.openMergeDialog()
+    expect(gm.mergeDialog.value).toBeNull()
+  })
+
+  it('forgets the merge when another repository is opened', async () => {
+    const gm = await resolving()
+    await gm.selectRepository('pricing')
+    expect(gm.mergeSession.value).toBeNull()
+  })
+})
+
+describe('a merge left unfinished', () => {
+  const KEY = mergeDraftKey('inventory')
+
+  /** A source whose repositories survive "restarting the app", as a real repository would. */
+  const sameRepositories = () => {
+    const repositories = structuredClone(sampleRepositories)
+    return { repositories, source: () => new MockGitDataSource(repositories) }
+  }
+
+  it('comes back after a restart, with the user’s choices and file', async () => {
+    const { source } = sameRepositories()
+    const before = await resolving(source())
+    before.toggleMergeSide(firstConflict(before), 'theirs')
+    before.selectMergeFile('pom.xml')
+
+    const after = await loaded(source())
+    expect(after.mergeSession.value?.request.branch).toBe('main')
+    expect(after.mergeFile.value?.path).toBe('pom.xml')
+    expect(after.mergeConflictsLeft.value).toBe(2)
+    expect(after.status.value).toBe('Continuing your merge of main into feature/stock-reservations · Nothing on disk has changed yet')
+  })
+
+  it('stays with its repository when another is opened, and returns with it', async () => {
+    const gm = await resolving()
+    gm.toggleMergeSide(firstConflict(gm), 'ours')
+    await gm.selectRepository('pricing')
+    expect(gm.mergeSession.value).toBeNull()
+    await gm.selectRepository('inventory')
+    expect(gm.mergeConflictsLeft.value).toBe(2)
+  })
+
+  it.each<[string, (gm: Manager) => unknown]>([
+    ['discarding', (gm) => gm.discardMerge()],
+    [
+      'completing',
+      (gm) => {
+        resolveAll(gm)
+        return gm.completeMerge()
+      },
+    ],
+  ])('is forgotten after %s', async (_name, finish) => {
+    const gm = await resolving()
+    expect(storage.has(KEY)).toBe(true)
+    await finish(gm)
+    expect(storage.has(KEY)).toBe(false)
+  })
+
+  it('is ignored if what was saved is unreadable', async () => {
+    storage.set(KEY, '{not json')
+    expect((await loaded()).mergeSession.value).toBeNull()
+    storage.set(KEY, JSON.stringify({ request: { branch: 'main' } }))
+    expect((await loaded()).mergeSession.value).toBeNull()
+  })
+
+  it('is worked out again if a branch moved, keeping choices in files that came out the same', async () => {
+    const { repositories, source } = sameRepositories()
+    const before = await resolving(source())
+    before.selectMergeFile('pom.xml')
+    before.toggleMergeSide(firstConflict(before), 'ours')
+    before.selectMergeFile('src/main/resources/application.yml')
+    before.toggleMergeSide(firstConflict(before), 'ours')
+
+    // main gets a new commit that changes application.yml's conflict but not pom.xml's.
+    const inventory = repositories.find((repo) => repo.id === 'inventory')!
+    const main = inventory.localBranches.find((branch) => branch.name === 'main')!
+    inventory.commits.unshift({ hash: 'bb00001', message: 'More', author: 'A', date: new Date().toISOString(), refs: [], parents: [main.tipHash], files: [] })
+    main.tipHash = 'bb00001'
+    const yml = inventory.mergeConflicts!['main']![0]!
+    yml.theirs = yml.theirs.replace('include: health,info', 'include: health,prometheus')
+
+    const after = await loaded(source())
+    expect(after.mergeSession.value?.request.theirs).toBe('bb00001')
+    expect(after.status.value).toContain('1 file needs another look')
+    expect(raised(after)).toEqual([{ kind: 'notice', message: after.status.value, ...HERE }])
+    expect(after.mergeConflictsLeft.value).toBe(2)
+    after.selectMergeFile('pom.xml')
+    expect(conflictsIn(after.mergeFile.value!)[0]!.picks).toEqual(['ours'])
+  })
+
+  it('waits, with its choices saved, while another branch is checked out, and returns with that branch', async () => {
+    const { repositories, source } = sameRepositories()
+    const before = await resolving(source())
+    before.toggleMergeSide(firstConflict(before), 'ours')
+    repositories.find((repo) => repo.id === 'inventory')!.currentBranch = 'bugfix/sku-null-check'
+
+    const after = await loaded(source())
+    expect(after.mergeSession.value).toBeNull()
+    const waiting = 'Your merge of main into feature/stock-reservations is waiting: check out feature/stock-reservations to continue it'
+    expect(after.status.value).toBe(waiting)
+    expect(raised(after)).toEqual([{ kind: 'notice', message: waiting, ...HERE }])
+    expect(storage.has(KEY)).toBe(true)
+
+    await after.checkoutBranch('feature/stock-reservations')
+    expect(after.mergeSession.value?.request.branch).toBe('main')
+    expect(after.mergeConflictsLeft.value).toBe(2)
+    // It is no longer waiting, so that is no longer said.
+    expect(after.toasts.value).toEqual([])
+  })
+
+  it('is announced when its repository is opened, not again every time the window is looked at', async () => {
+    const { repositories, source } = sameRepositories()
+    await resolving(source())
+    repositories.find((repo) => repo.id === 'inventory')!.currentBranch = 'bugfix/sku-null-check'
+
+    const gm = await loaded(source())
+    expect(raised(gm)).toHaveLength(1)
+    gm.dismissToast(gm.toasts.value[0]!.id)
+    await gm.refresh()
+    expect(gm.toasts.value).toEqual([])
+
+    await gm.selectRepository('pricing')
+    await gm.selectRepository('inventory')
+    expect(raised(gm)).toMatchObject([{ kind: 'notice', ...HERE }])
+  })
+
+  it('keeps its choices when it can’t be read back yet', async () => {
+    const { source } = sameRepositories()
+    const before = await resolving(source())
+    before.toggleMergeSide(firstConflict(before), 'ours')
+    const failing = source()
+    failing.previewMerge = async () => {
+      throw new Error('no branch is checked out')
+    }
+    const after = await loaded(failing)
+    expect(after.mergeSession.value).toBeNull()
+    expect(after.status.value).toBe('Couldn’t continue your merge of main yet: no branch is checked out. Your choices are saved')
+    expect(raised(after)).toEqual([
+      { kind: 'notice', message: 'Couldn’t continue your merge of main yet: no branch is checked out. Your choices are saved', ...HERE },
+    ])
+    expect(storage.has(KEY)).toBe(true)
+  })
+
+  it('stays open, choices intact, when a branch moved and something now blocks the merge', async () => {
+    const { source } = sameRepositories()
+    const before = await resolving(source())
+    before.toggleMergeSide(firstConflict(before), 'ours')
+    const blocked = source()
+    const preview = blocked.previewMerge.bind(blocked)
+    blocked.previewMerge = async (...args) => ({ ...(await preview(...args)), theirs: 'moved00', blockedBy: ['pom.xml'] })
+    const after = await loaded(blocked)
+    expect(after.mergeConflictsLeft.value).toBe(2)
+    expect(after.status.value).toContain('This merge can’t continue yet')
+    expect(after.status.value).toContain('Your choices are kept')
+    expect(raised(after)).toEqual([{ kind: 'warning', message: after.status.value, ...HERE }])
+    expect(storage.has(KEY)).toBe(true)
+  })
+
+  it('is dropped, saying so, once the branch no longer exists', async () => {
+    const { repositories, source } = sameRepositories()
+    await resolving(source())
+    const inventory = repositories.find((repo) => repo.id === 'inventory')!
+    inventory.localBranches = inventory.localBranches.filter((branch) => branch.name !== 'main')
+    inventory.remoteBranches = inventory.remoteBranches.filter((branch) => branch.name !== 'main')
+    const after = await loaded(source())
+    expect(after.mergeSession.value).toBeNull()
+    expect(after.status.value).toBe('Your merge of main was dropped: that branch no longer exists')
+    expect(raised(after)).toEqual([{ kind: 'warning', message: 'Your merge of main was dropped: that branch no longer exists', ...HERE }])
+    expect(storage.has(KEY)).toBe(false)
+  })
+
+  it('is left alone by a refresh that finishes after another repository was opened', async () => {
+    const { repositories, source } = sameRepositories()
+    const inventory = repositories.find((repo) => repo.id === 'inventory')!
+    // A merge of a branch pricing-api doesn't have, left waiting by a checkout made outside the app.
+    inventory.mergeConflicts = { ...inventory.mergeConflicts, 'bugfix/sku-null-check': inventory.mergeConflicts!['main']! }
+    const before = await loaded(source())
+    await picked(before, 'bugfix/sku-null-check')
+    await before.startMerge()
+    inventory.currentBranch = 'main'
+
+    const held = heldSource(source())
+    const gm = await loaded(held.source)
+    expect(storage.has(KEY)).toBe(true)
+    held.hold('getHistory')
+    const refreshing = gm.refresh()
+    await settle()
+    const opening = gm.selectRepository('pricing')
+    await settle()
+    // pricing-api's history arrives first, then the one the refresh asked inventory-service for.
+    for (const call of [...held.callsTo('getHistory')].reverse()) await call.release()
+    held.letThrough('getHistory')
+    await Promise.all([refreshing, opening])
+
+    expect(gm.repository.value?.id).toBe('pricing')
+    expect(storage.has(KEY)).toBe(true)
+    expect(gm.status.value).toBe('Opened pricing-api')
+  })
+
+  it('keeps choices made in the resolver when a second look at the saved merge finishes late', async () => {
+    const { repositories, source } = sameRepositories()
+    await resolving(source())
+    // main moves on, so the saved merge has to be worked out again when the app starts.
+    const inventory = repositories.find((repo) => repo.id === 'inventory')!
+    const main = inventory.localBranches.find((branch) => branch.name === 'main')!
+    inventory.commits.unshift({ hash: 'bb00004', message: 'More', author: 'A', date: new Date().toISOString(), refs: [], parents: [main.tipHash], files: [] })
+    main.tipHash = 'bb00004'
+
+    const held = heldSource(source())
+    held.hold('getMergeConflicts')
+    const gm = useGitManager(held.source, { comparePaths: { ...SAMPLE_COMPARE_PATHS }, mergeDrafts: mergeDrafts(memoryStorage()) })
+    const loading = gm.load()
+    await settle()
+    // The window is looked at again while that is under way, which starts a second look at the saved merge.
+    const refreshing = gm.refresh()
+    await settle()
+    const [first, second] = held.callsTo('getMergeConflicts')
+    expect(second).toBeDefined()
+
+    await first!.release()
+    gm.toggleMergeSide(firstConflict(gm), 'theirs')
+    expect(gm.mergeConflictsLeft.value).toBe(2)
+    await second!.release()
+    await Promise.all([loading, refreshing])
+
+    expect(gm.mergeConflictsLeft.value).toBe(2)
+    expect(conflictsIn(gm.mergeFile.value!)[0]!.picks).toEqual(['theirs'])
+  })
+
+  it('is forgotten with its repository when that is taken off the list: nothing could use it again', async () => {
+    const { repositories, source } = sameRepositories()
+    await resolving(source())
+    repositories.find((repo) => repo.id === 'inventory')!.currentBranch = 'bugfix/sku-null-check'
+    const gm = await loaded(source())
+    expect(storage.has(KEY)).toBe(true)
+    expect(raised(gm)).toHaveLength(1)
+
+    await gm.removeRepository('inventory')
+    expect(storage.has(KEY)).toBe(false)
+    expect(gm.toasts.value).toEqual([])
+  })
+
+  it('doesn’t appear in another repository opened while it was being worked out again', async () => {
+    const { repositories, source } = sameRepositories()
+    await resolving(source())
+    const inventory = repositories.find((repo) => repo.id === 'inventory')!
+    inventory.localBranches.find((branch) => branch.name === 'main')!.tipHash = 'c81f5a3'
+    inventory.commits.unshift({ hash: 'bb00003', message: 'More', author: 'A', date: new Date().toISOString(), refs: [], parents: ['c81f5a3'], files: [] })
+    inventory.localBranches.find((branch) => branch.name === 'main')!.tipHash = 'bb00003'
+
+    const held = heldSource(source())
+    held.hold('getMergeConflicts')
+    const gm = useGitManager(held.source, { comparePaths: { ...SAMPLE_COMPARE_PATHS }, mergeDrafts: mergeDrafts(memoryStorage()) })
+    const loading = gm.load()
+    await settle()
+    await gm.selectRepository('pricing')
+    await held.callsTo('getMergeConflicts')[0]!.release()
+    await loading
+    expect(gm.repository.value?.id).toBe('pricing')
+    expect(gm.mergeSession.value).toBeNull()
+    expect(storage.has(KEY)).toBe(true)
+  })
+
+  it('takes no more choices while Complete is running', async () => {
+    const held = heldSource()
+    const gm = await resolving(held.source)
+    resolveAll(gm)
+    held.hold('merge')
+    const completing = gm.completeMerge()
+    await settle()
+    const index = firstConflict(gm)
+    gm.reopenMergeConflict(index)
+    expect(gm.mergeConflictsLeft.value).toBe(0)
+    await held.callsTo('merge')[0]!.release()
+    await completing
+  })
+
+  it('reworks the merge when Complete finds a branch moved, instead of leaving the user stuck', async () => {
+    const repositories = structuredClone(sampleRepositories)
+    const source = new MockGitDataSource(repositories)
+    const gm = await resolving(source)
+    resolveAll(gm)
+    const inventory = repositories.find((repo) => repo.id === 'inventory')!
+    const main = inventory.localBranches.find((branch) => branch.name === 'main')!
+    inventory.commits.unshift({ hash: 'bb00002', message: 'More', author: 'A', date: new Date().toISOString(), refs: [], parents: [main.tipHash], files: [] })
+    main.tipHash = 'bb00002'
+    await gm.completeMerge()
+    expect(gm.mergeSession.value?.request.theirs).toBe('bb00002')
+    expect(gm.mergeConflictsLeft.value).toBe(0)
+    expect(gm.status.value).toContain('0 files need another look')
+  })
+})
+
+describe('starting a merge while another is saved and waiting', () => {
+  const KEY = mergeDraftKey('inventory')
+  const WAITING = { branch: 'main', into: 'feature/stock-reservations' }
+
+  /**
+   * A merge of main into the feature branch, half resolved. Then main is checked out outside the
+   * app, so that merge waits; merging the feature branch into main clashes too.
+   */
+  async function withMergeWaiting() {
+    const repositories = structuredClone(sampleRepositories)
+    const inventory = repositories.find((repo) => repo.id === 'inventory')!
+    const source = () => new MockGitDataSource(repositories)
+    const before = await resolving(source())
+    before.toggleMergeSide(firstConflict(before), 'ours')
+    inventory.currentBranch = 'main'
+    inventory.mergeConflicts = { ...inventory.mergeConflicts, 'feature/stock-reservations': inventory.mergeConflicts!['main']! }
+    return { gm: await loaded(source()), saved: storage.get(KEY)! }
+  }
+
+  it('says in the dialog which merge is waiting', async () => {
+    const { gm } = await withMergeWaiting()
+    gm.openMergeDialog()
+    expect(gm.mergeDialog.value?.waiting).toEqual(WAITING)
+  })
+
+  it('says nothing of the kind when no merge is saved', async () => {
+    const gm = await loaded()
+    gm.openMergeDialog()
+    expect(gm.mergeDialog.value).toMatchObject({ waiting: null })
+  })
+
+  it('asks before a merge with conflicts replaces it, and keeps it when the answer is no', async () => {
+    const { gm, saved } = await withMergeWaiting()
+    await picked(gm, 'feature/stock-reservations')
+    await gm.startMerge()
+    expect(gm.mergeReplacePending.value).toBe(true)
+    expect(gm.mergeSession.value).toBeNull()
+
+    gm.cancelReplaceMerge()
+    expect(gm.mergeReplacePending.value).toBe(false)
+    expect(gm.mergeDialog.value).toMatchObject({ branch: 'feature/stock-reservations', waiting: WAITING })
+    expect(gm.mergeSession.value).toBeNull()
+    expect(storage.get(KEY)).toBe(saved)
+  })
+
+  it('replaces it once the user agrees', async () => {
+    const { gm } = await withMergeWaiting()
+    await picked(gm, 'feature/stock-reservations')
+    await gm.startMerge()
+    await gm.confirmReplaceMerge()
+    expect(gm.mergeReplacePending.value).toBe(false)
+    expect(gm.mergeDialog.value).toBeNull()
+    expect(gm.mergeSession.value?.request).toMatchObject({ branch: 'feature/stock-reservations', into: 'main' })
+    expect(JSON.parse(storage.get(KEY)!).request.branch).toBe('feature/stock-reservations')
+  })
+
+  it('doesn’t ask for a merge that has no conflicts, which leaves it waiting', async () => {
+    const { gm, saved } = await withMergeWaiting()
+    await picked(gm, 'origin/feature/stock-reservations')
+    expect(gm.mergePreview.value).toMatchObject({ outcome: 'merge-commit', conflicts: [] })
+    await gm.startMerge()
+    expect(gm.mergeReplacePending.value).toBe(false)
+    expect(gm.mergeDialog.value).toBeNull()
+    expect(gm.status.value).toBe('Merged origin/feature/stock-reservations into main (1 commit)')
+    expect(storage.get(KEY)).toBe(saved)
+  })
+
+  it('ignores an answer nobody was asked for', async () => {
+    const { gm, saved } = await withMergeWaiting()
+    await picked(gm, 'feature/stock-reservations')
+    await gm.confirmReplaceMerge()
+    expect(gm.mergeSession.value).toBeNull()
+    expect(storage.get(KEY)).toBe(saved)
+  })
+
+  it('stays off screen while the dialog is open, even if git answers about it meanwhile, and returns when the dialog closes', async () => {
+    const repositories = structuredClone(sampleRepositories)
+    const source = () => new MockGitDataSource(repositories)
+    await resolving(source())
+
+    const held = heldSource(source())
+    held.hold('previewMerge')
+    const gm = useGitManager(held.source, { comparePaths: { ...SAMPLE_COMPARE_PATHS }, mergeDrafts: mergeDrafts(memoryStorage()) })
+    const loading = gm.load()
+    await settle()
+    gm.openMergeDialog()
+    await held.callsTo('previewMerge')[0]!.release()
+    await loading
+    expect(gm.mergeSession.value).toBeNull()
+    expect(gm.mergeDialog.value?.waiting).toEqual(WAITING)
+    expect(storage.has(KEY)).toBe(true)
+
+    held.letThrough('previewMerge')
+    gm.closeMergeDialog()
+    await settle()
+    expect(gm.mergeSession.value?.request.branch).toBe('main')
+  })
+})
+
+describe('a merge that can’t be saved', () => {
+  const KEY = mergeDraftKey('inventory')
+
+  /** The tests' storage, but taking only the first `room` saves: the rest are refused, as when its quota is full. */
+  function fillingStorage(room: number): DraftStorage {
+    let saves = 0
+    return {
+      ...memoryStorage(),
+      setItem: (key, value) => {
+        if (++saves > room) throw new DOMException('The quota has been exceeded.', 'QuotaExceededError')
+        storage.set(key, value)
+      },
+    }
+  }
+
+  /** In the resolver for merging main, saving to `drafts`. */
+  async function resolvingOn(draftStorage: DraftStorage | null, source: GitDataSource = new MockGitDataSource()) {
+    const gm = useGitManager(source, { comparePaths: { ...SAMPLE_COMPARE_PATHS }, mergeDrafts: mergeDrafts(draftStorage) })
+    await gm.load()
+    await picked(gm, 'main')
+    await gm.startMerge()
+    return gm
+  }
+
+  const warnings = (gm: Manager) => gm.toasts.value.filter((toast) => toast.kind === 'warning').map((toast) => toast.message)
+
+  it('warns in a toast, once, and carries on', async () => {
+    const gm = await resolvingOn(fillingStorage(1))
+    expect(warnings(gm)).toEqual([])
+    expect(storage.has(KEY)).toBe(true)
+
+    gm.toggleMergeSide(firstConflict(gm), 'ours')
+    expect(warnings(gm)).toEqual([MERGE_NOT_SAVED])
+    expect(gm.mergeConflictsLeft.value).toBe(2)
+
+    gm.dismissToast(gm.toasts.value[0]!.id)
+    gm.toggleMergeSide(firstConflict(gm), 'theirs')
+    gm.selectMergeFile('pom.xml')
+    expect(warnings(gm)).toEqual([])
+  })
+
+  it('leaves no older copy behind, so a restart doesn’t bring back choices that are out of date', async () => {
+    const repositories = structuredClone(sampleRepositories)
+    const before = await resolvingOn(fillingStorage(1), new MockGitDataSource(repositories))
+    before.toggleMergeSide(firstConflict(before), 'ours')
+    expect(storage.has(KEY)).toBe(false)
+
+    const after = await loaded(new MockGitDataSource(repositories))
+    expect(after.mergeSession.value).toBeNull()
+    expect(after.status.value).not.toContain('Continuing your merge')
+  })
+
+  it('warns from the start when nothing can be saved at all', async () => {
+    expect(warnings(await resolvingOn(fillingStorage(0)))).toEqual([MERGE_NOT_SAVED])
+    expect(warnings(await resolvingOn(null))).toEqual([MERGE_NOT_SAVED])
+  })
+
+  it.each<[string, (gm: Manager) => unknown]>([
+    ['discarded', (gm) => gm.discardMerge()],
+    [
+      'completed',
+      (gm) => {
+        resolveAll(gm)
+        return gm.completeMerge()
+      },
+    ],
+  ])('takes the warning back once the merge is %s, since it no longer holds', async (_name, finish) => {
+    const gm = await resolvingOn(fillingStorage(0))
+    expect(warnings(gm)).toEqual([MERGE_NOT_SAVED])
+    await finish(gm)
+    expect(gm.mergeSession.value).toBeNull()
+    expect(gm.toasts.value).toEqual([])
+  })
+
+  it('warns again for the next merge', async () => {
+    const gm = await resolvingOn(fillingStorage(0))
+    gm.discardMerge()
+    expect(gm.mergeSession.value).toBeNull()
+
+    await picked(gm, 'main')
+    await gm.startMerge()
+    expect(warnings(gm)).toEqual([MERGE_NOT_SAVED])
+  })
+
+  it('says nothing while the merge is being saved', async () => {
+    const gm = await resolving()
+    resolveAll(gm)
+    expect(gm.toasts.value).toEqual([])
+  })
+})
+
+describe('an operation left unfinished outside the app', () => {
+  it('is reported for the open repository, and follows a refresh', async () => {
+    const source = new MockGitDataSource()
+    let unfinished: 'rebase' | null = 'rebase'
+    source.getUnfinishedOperation = async () => unfinished
+    const gm = await loaded(source)
+    expect(gm.unfinishedOperation.value).toBe('rebase')
+    unfinished = null
+    await gm.refresh()
+    expect(gm.unfinishedOperation.value).toBeNull()
+  })
+
+  it('is nothing to report in an ordinary repository', async () => {
+    expect((await loaded()).unfinishedOperation.value).toBeNull()
+  })
+})
+
+describe('a Pull that can’t fast-forward', () => {
+  function divergedRepositories(): SampleRepository[] {
+    const repositories = structuredClone(sampleRepositories)
+    const inventory = repositories.find((repo) => repo.id === 'inventory')!
+    inventory.localBranches.find((branch) => branch.name === 'feature/stock-reservations')!.behind = 1
+    return repositories
+  }
+
+  it('says so and offers to merge the upstream, already previewed', async () => {
+    const gm = await loaded(new MockGitDataSource(divergedRepositories()))
+    await gm.pull()
+    expect(gm.status.value).toBe(
+      'feature/stock-reservations and origin/feature/stock-reservations both have new commits, so Pull can’t just move feature/stock-reservations forward',
+    )
+    expect(gm.mergeDialog.value).toMatchObject({ fromPull: true, branch: 'origin/feature/stock-reservations' })
+    expect(gm.mergePreview.value?.branch).toBe('origin/feature/stock-reservations')
+    expect(gm.toasts.value).toEqual([])
+  })
+
+  it('says so in a toast, and opens no dialog, when another repository was opened while it ran', async () => {
+    const held = heldSource(new MockGitDataSource(divergedRepositories()))
+    const gm = await loaded(held.source)
+    held.hold('pull')
+    const pulling = gm.pull()
+    await settle()
+    await gm.selectRepository('pricing')
+    await held.callsTo('pull')[0]!.release()
+    await pulling
+
+    expect(gm.repository.value?.id).toBe('pricing')
+    expect(gm.mergeDialog.value).toBeNull()
+    expect(raised(gm)).toEqual([
+      {
+        kind: 'notice',
+        message:
+          'feature/stock-reservations and origin/feature/stock-reservations both have new commits, so Pull can’t just move feature/stock-reservations forward. Open inventory-service and press Pull again to merge them.',
+        ...HERE,
+      },
+    ])
+  })
+
+  it('doesn’t open the dialog over a merge that came back while it ran', async () => {
+    const repositories = divergedRepositories()
+    const source = () => new MockGitDataSource(repositories)
+    await resolving(source())
+
+    // The app starts again while the saved merge can't be read back yet; the pull's own re-read then brings it back.
+    const flaky = source()
+    const preview = flaky.previewMerge.bind(flaky)
+    let failing = true
+    flaky.previewMerge = async (...args) => {
+      if (failing) throw new Error('not yet')
+      return preview(...args)
+    }
+    const gm = await loaded(flaky)
+    expect(gm.mergeSession.value).toBeNull()
+    failing = false
+    await gm.pull()
+
+    expect(gm.mergeSession.value?.request.branch).toBe('main')
+    expect(gm.mergeDialog.value).toBeNull()
+  })
+
+  it('stops speaking of the Pull once another branch is picked in the dialog it opened', async () => {
+    const gm = await loaded(new MockGitDataSource(divergedRepositories()))
+    await gm.pull()
+    expect(gm.mergeDialog.value).toMatchObject({ fromPull: true, branch: 'origin/feature/stock-reservations' })
+    await gm.chooseMergeBranch('main')
+    expect(gm.mergeDialog.value).toMatchObject({ fromPull: false, branch: 'main' })
+  })
+
+  it('offers nothing when the host doesn’t offer merging', async () => {
+    const gm = useGitManager(new MockGitDataSource(divergedRepositories()), {
+      comparePaths: { ...SAMPLE_COMPARE_PATHS },
+      mergeDrafts: mergeDrafts(memoryStorage()),
+      canMerge: false,
+    })
+    await gm.load()
+    await gm.pull()
+    expect(gm.status.value).toContain('both have new commits')
+    expect(gm.mergeDialog.value).toBeNull()
+  })
+
+  it('offers nothing after an ordinary pull', async () => {
+    const gm = await loaded()
+    await gm.pull()
+    expect(gm.mergeDialog.value).toBeNull()
+  })
+})

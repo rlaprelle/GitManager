@@ -36,9 +36,31 @@ function recordingBridge() {
     fetch: (...args) => (calls.push(['fetch', ...args]), mock.fetch(...args)),
     pull: (...args) => (calls.push(['pull', ...args]), mock.pull(...args)),
     push: (...args) => (calls.push(['push', ...args]), mock.push(...args)),
+    getUnfinishedOperation: (...args) => (calls.push(['getUnfinishedOperation', ...args]), mock.getUnfinishedOperation(...args)),
+    previewMerge: (...args) => (calls.push(['previewMerge', ...args]), mock.previewMerge(...args)),
+    getMergeConflicts: (...args) => (calls.push(['getMergeConflicts', ...args]), mock.getMergeConflicts(...args)),
+    merge: (...args) => (calls.push(['merge', ...args]), mock.merge(...args)),
   }
   return { bridge, calls, progressListeners }
 }
+
+describe('IpcGitDataSource merging', () => {
+  it('sends plain copies of what the composable keeps in reactive state, which IPC couldn’t clone', async () => {
+    const { bridge, calls } = recordingBridge()
+    const source = new IpcGitDataSource(bridge)
+    const preview = reactive(await source.previewMerge('inventory', 'main'))
+    await source.getMergeConflicts('inventory', preview)
+    await source.merge('inventory', preview, reactive(preview.conflicts.map((path) => ({ path, text: 'x\n' }))))
+
+    const request = { branch: 'main', into: preview.into, ours: preview.ours, theirs: preview.theirs }
+    const [conflicts, merge] = [calls[1]!, calls[2]!]
+    expect(conflicts).toEqual(['getMergeConflicts', 'inventory', request])
+    expect(merge.slice(0, 3)).toEqual(['merge', 'inventory', request])
+    // structuredClone is what IPC does to arguments: it throws on a Vue proxy.
+    expect(() => structuredClone(conflicts)).not.toThrow()
+    expect(() => structuredClone(merge)).not.toThrow()
+  })
+})
 
 describe('IpcGitDataSource', () => {
   it('forwards every call, with its arguments, to the bridge', async () => {

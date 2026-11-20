@@ -1,7 +1,7 @@
 import { errorMessage } from '../../src/lib/errorMessage'
 import type { GitDataSource } from '../../src/services/GitDataSource'
 import type { GitStatus, IpcResult } from '../../src/types/bridge'
-import type { CheckoutOptions, CheckoutTarget, CloneRequest, CompareSide } from '../../src/types/git'
+import type { CheckoutOptions, CheckoutTarget, CloneRequest, CompareSide, MergeRequest, MergeResolution } from '../../src/types/git'
 import { IpcChannel, IpcEvent } from '../shared/channels'
 import type { UpdateChecks } from './updates'
 
@@ -60,6 +60,12 @@ export function registerIpcHandlers(ipc: IpcRegistrar, { source, appVersion, che
   handle(IpcChannel.Fetch, (repoId) => source.fetch(text(repoId)))
   handle(IpcChannel.Pull, (repoId, branch) => source.pull(text(repoId), text(branch)))
   handle(IpcChannel.Push, (repoId, branch) => source.push(text(repoId), text(branch)))
+  handle(IpcChannel.GetUnfinishedOperation, (repoId) => source.getUnfinishedOperation(text(repoId)))
+  handle(IpcChannel.PreviewMerge, (repoId, branch) => source.previewMerge(text(repoId), text(branch)))
+  handle(IpcChannel.GetMergeConflicts, (repoId, request) => source.getMergeConflicts(text(repoId), mergeRequest(request)))
+  handle(IpcChannel.Merge, (repoId, request, resolutions) =>
+    source.merge(text(repoId), mergeRequest(request), mergeResolutions(resolutions)),
+  )
 }
 
 async function answered<T>(work: () => Promise<T> | T): Promise<IpcResult<T>> {
@@ -119,6 +125,22 @@ function checkoutOptions(value: unknown): CheckoutOptions {
   const valid = Object.keys(rest).length === 0 && (leaveCommits === undefined || typeof leaveCommits === 'boolean')
   if (!valid) throw new Error('Expected checkout options: { leaveCommits?: boolean }')
   return leaveCommits === undefined ? {} : { leaveCommits }
+}
+
+/** Exactly a branch and two commits, as text; the source checks what they say. */
+function mergeRequest(value: unknown): MergeRequest {
+  const request = plainObject(value)
+  if (request === null) throw new Error('Expected a merge: { branch, into, ours, theirs }')
+  return { branch: text(request['branch']), into: text(request['into']), ours: text(request['ours']), theirs: text(request['theirs']) }
+}
+
+function mergeResolutions(value: unknown): MergeResolution[] {
+  if (!Array.isArray(value)) throw new Error('Expected a list of resolved files: [{ path, text }]')
+  return value.map((item) => {
+    const resolution = plainObject(item)
+    if (resolution === null) throw new Error('Expected a resolved file: { path, text }')
+    return { path: text(resolution['path']), text: text(resolution['text']) }
+  })
 }
 
 function plainObject(value: unknown): Record<string, unknown> | null {

@@ -14,6 +14,11 @@ export type IconName =
   | 'remove'
   | 'warning'
   | 'clone'
+  | 'merge'
+  | 'arrow-right'
+  | 'arrow-left'
+  | 'check'
+  | 'info'
 
 withDefaults(defineProps<{ name: IconName; size?: number; strokeWidth?: number }>(), {
   size: 16,
@@ -94,6 +99,29 @@ withDefaults(defineProps<{ name: IconName; size?: number; strokeWidth?: number }
     </template>
     <template v-else-if="name === 'back'">
       <path d="M15 6l-6 6 6 6" />
+    </template>
+    <template v-else-if="name === 'merge'">
+      <circle cx="6" cy="5" r="2" />
+      <circle cx="6" cy="19" r="2" />
+      <circle cx="18" cy="12" r="2" />
+      <path d="M6 7v10" />
+      <path d="M6 8c0 3 5 4 10 4" />
+    </template>
+    <template v-else-if="name === 'arrow-right'">
+      <path d="M5 12h14" />
+      <path d="M13 6l6 6-6 6" />
+    </template>
+    <template v-else-if="name === 'arrow-left'">
+      <path d="M19 12H5" />
+      <path d="M11 6l-6 6 6 6" />
+    </template>
+    <template v-else-if="name === 'check'">
+      <path d="M5 12.5l4.5 4.5L19 7.5" />
+    </template>
+    <template v-else-if="name === 'info'">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5.5" />
+      <path d="M12 7.5h.01" />
     </template>
     <template v-else-if="name === 'swap'">
       <path d="M4 8h14" />

@@ -242,6 +242,47 @@ export async function gitInFixture(fixtures: Fixtures, repo: string, ...args: st
   return userGit(fixtures, repo, ...args)
 }
 
+/** The text of `session.ts` on each branch of `createMergeRepository`. */
+export const MERGE_TEXT = {
+  base: ['import { clock } from "./clock"', 'const TTL = 15', 'export const ttl = () => TTL', ''].join('\n'),
+  main: ['import { clock } from "./clock"', 'const TTL = 30', 'export const ttl = () => TTL', ''].join('\n'),
+  feature: ['import { clock } from "./clock"', 'const TTL = 480', 'const IDLE = 30', 'export const ttl = () => TTL', ''].join('\n'),
+}
+
+/**
+ * A repository for merging, main checked out, with a branch for each kind of merge:
+ * - feature/login: changes session.ts's TTL line, as main does too (a conflict), and adds login.ts;
+ * - feature/ahead: one commit on top of main (a fast-forward);
+ * - feature/apart: from before main's last commit, adds apart.txt only (a clean merge commit);
+ * - feature/kept: changes gone.txt, which main deletes (a conflict the app can't resolve);
+ * - feature/old: main's first commit (nothing to merge).
+ * It has its own user.name and user.email, as a user's repository would: the app's merge commits need them.
+ */
+export async function createMergeRepository(fixtures: Fixtures, name: string): Promise<string> {
+  const repo = await createScratchRepository(fixtures, name)
+  await userGit(fixtures, repo, 'config', 'user.name', 'Grace Hopper')
+  await userGit(fixtures, repo, 'config', 'user.email', 'grace@example.com')
+  await userGit(fixtures, repo, 'branch', 'feature/old')
+  await writeFile(join(repo, 'gone.txt'), 'soon gone\n')
+  await commitInFixture(fixtures, repo, 'session.ts', MERGE_TEXT.base, 'Add the session')
+
+  await userGit(fixtures, repo, 'switch', '--quiet', '-c', 'feature/login')
+  await writeFile(join(repo, 'login.ts'), 'export const login = () => true\n')
+  await commitInFixture(fixtures, repo, 'session.ts', MERGE_TEXT.feature, 'Remember logins for 8 hours')
+  await userGit(fixtures, repo, 'switch', '--quiet', '-c', 'feature/kept', 'main')
+  await commitInFixture(fixtures, repo, 'gone.txt', 'kept and changed\n', 'Keep the file')
+  await userGit(fixtures, repo, 'switch', '--quiet', '-c', 'feature/apart', 'main')
+  await commitInFixture(fixtures, repo, 'apart.txt', 'apart\n', 'Work apart')
+
+  await userGit(fixtures, repo, 'switch', '--quiet', 'main')
+  await userGit(fixtures, repo, 'rm', '--quiet', 'gone.txt')
+  await commitInFixture(fixtures, repo, 'session.ts', MERGE_TEXT.main, 'Sessions last 30 minutes')
+  await userGit(fixtures, repo, 'switch', '--quiet', '-c', 'feature/ahead')
+  await commitInFixture(fixtures, repo, 'ahead.txt', 'ahead\n', 'Get ahead')
+  await userGit(fixtures, repo, 'switch', '--quiet', 'main')
+  return repo
+}
+
 /** Creates and checks out a branch, as the user would. */
 export async function switchToNewBranchInFixture(fixtures: Fixtures, repo: string, branch: string): Promise<void> {
   await userGit(fixtures, repo, 'switch', '--quiet', '-c', branch)

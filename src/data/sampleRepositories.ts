@@ -1,3 +1,4 @@
+import type { ConflictFile } from '@/types/git'
 import type { SampleCommit, SampleFileChange, SampleRepository } from './sampleTypes'
 import {
   checkoutServiceDiff,
@@ -43,6 +44,54 @@ const SKU_FIX_FILES: SampleFileChange[] = [
   { path: 'src/test/java/com/example/inventory/catalog/SkuLookupTest.java', status: 'M', hunks: skuLookupTestDiff },
 ]
 
+/** application.yml as main and the feature branch both started from it. */
+const APPLICATION_YML = [
+  'spring:',
+  '  application:',
+  '    name: inventory-service',
+  'inventory:',
+  '  reservations:',
+  '    ttl-minutes: 15',
+  '    max-per-order: 5',
+  '  low-stock-threshold: 10',
+  'management:',
+  '  endpoints:',
+  '    web:',
+  '      exposure:',
+  '        include: health',
+  '',
+]
+
+function withLines(lines: string[], changes: Record<number, string[]>): string {
+  return lines.flatMap((line, index) => changes[index] ?? [line]).join('\n')
+}
+
+/** Merging main into feature/stock-reservations: two files clash; each also has changes only one side made. */
+const MAIN_INTO_RESERVATIONS: ConflictFile[] = [
+  {
+    path: 'src/main/resources/application.yml',
+    base: APPLICATION_YML.join('\n'),
+    ours: withLines(APPLICATION_YML, {
+      3: ['inventory:', '  reservations-enabled: true'],
+      5: ['    ttl-minutes: 30'],
+      6: ['    max-per-order: 5', '    expiry-job-interval: PT1M'],
+      7: ['  low-stock-threshold: 25'],
+      12: ['        include: health,metrics'],
+    }),
+    theirs: withLines(APPLICATION_YML, {
+      2: ['    name: inventory'],
+      7: ['  low-stock-threshold: 5', '  reorder-enabled: true'],
+      12: ['        include: health,info'],
+    }),
+  },
+  {
+    path: 'pom.xml',
+    base: '<project>\n  <artifactId>inventory-service</artifactId>\n  <version>2.3.0</version>\n</project>\n',
+    ours: '<project>\n  <artifactId>inventory-service</artifactId>\n  <version>2.4.0-SNAPSHOT</version>\n</project>\n',
+    theirs: '<project>\n  <artifactId>inventory-service</artifactId>\n  <version>2.3.1</version>\n</project>\n',
+  },
+]
+
 const inventoryService: SampleRepository = {
   id: 'inventory',
   name: 'inventory-service',
@@ -50,6 +99,7 @@ const inventoryService: SampleRepository = {
   currentBranch: 'feature/stock-reservations',
   changedFileCount: 3,
   lastFetch: minutesAgo(12),
+  mergeConflicts: { main: MAIN_INTO_RESERVATIONS },
   localBranches: [
     { name: 'feature/stock-reservations', ahead: 2, behind: 0, tipHash: '9f3a1c2' },
     { name: 'main', ahead: 0, behind: 0, tipHash: 'c81f5a3' },

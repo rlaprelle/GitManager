@@ -2,10 +2,12 @@ import type { GitStatus } from '../../../src/types/bridge'
 import { runGit } from './runGit'
 
 /**
- * Oldest git the app supports. Everything it runs works from 2.18; 2.30 (Jan 2021) leaves
- * margin and is still years old. The app is tested on current Git for Windows.
+ * Oldest git the app supports: 2.38 (Oct 2022), the first with `merge-tree --write-tree`, which
+ * the app's merging works a merge out with. Everything else it runs works from 2.18. One minimum
+ * for the whole app means every operation is always there: nothing is hidden for older git. The
+ * app is tested on current Git for Windows.
  */
-export const MINIMUM_GIT_VERSION = '2.30'
+export const MINIMUM_GIT_VERSION = '2.38'
 
 /** 'git version 2.46.1.windows.1' → '2.46.1'. */
 export function parseGitVersion(output: string): string | null {

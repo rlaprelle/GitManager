@@ -479,6 +479,26 @@ describe('App', () => {
     })
   })
 
+  it('shows a failure as a toast naming the repository, as well as in the status bar, until it is dismissed', async () => {
+    const source = new MockGitDataSource()
+    source.fetch = async () => {
+      throw new Error('could not reach origin')
+    }
+    const wrapper = await mountApp(source)
+    await buttonByText(wrapper, 'Fetch').trigger('click')
+    await flushPromises()
+
+    const toast = () => wrapper.get('[data-testid="toasts"]').find('[data-kind="failure"]')
+    expect(toast().attributes('role')).toBe('alert')
+    expect(toast().get('[data-testid="toast-context"]').text()).toBe('inventory-service')
+    expect(toast().get('p').text()).toBe('Failed: could not reach origin')
+    expect(statusText(wrapper)).toBe('Failed: could not reach origin')
+
+    await toast().get('button[aria-label="Dismiss"]').trigger('click')
+    expect(toast().exists()).toBe(false)
+    expect(statusText(wrapper)).toBe('Failed: could not reach origin')
+  })
+
   it('applies a custom accent colour', async () => {
     const wrapper = mount(App, {
       props: { source: new MockGitDataSource(), comparePaths: SAMPLE_COMPARE_PATHS, accent: '#F0A35E' },

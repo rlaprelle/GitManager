@@ -10,6 +10,7 @@ import {
   commitInFixture,
   createFixtures,
   cloneOriginInFixture,
+  createMergeRepository,
   createRepositoryWithRemote,
   createScratchRepository,
   fixtureGit,
@@ -111,7 +112,20 @@ describeGitDataSourceContract(
     await writeFile(join(parent, 'taken', 'notes.txt'), 'mine\n')
     return { source: choosing(parent), url, takenName: 'taken' }
   },
+  async () => {
+    const folder = await createMergeRepository(fixtures, `merge-contract-${++mergeRepositories}`)
+    return {
+      source: sourceFor({ id: 'repo', path: folder }),
+      repoId: 'repo',
+      conflicting: 'feature/login',
+      clean: 'feature/apart',
+      upToDate: 'feature/old',
+      fastForward: async () => 'feature/ahead',
+    }
+  },
 )
+
+let mergeRepositories = 0
 
 let cloneSetups = 0
 
@@ -645,19 +659,34 @@ describe('GitCliDataSource talking to a remote', () => {
     expect(await source.pull('repo', 'main')).toEqual({ message: 'Already up to date with origin/main' })
   })
 
-  it('refuses to pull when both sides have new commits, and leaves the branch where it was', async () => {
+  it('doesn’t move the branch when both sides have new commits, and offers the upstream to merge instead', async () => {
     const { source, folder, colleague } = await withColleague()
     await commitInFixture(fixtures, colleague, 'theirs.txt', 'theirs\n', 'Theirs')
     await gitInFixture(fixtures, colleague, 'push', '--quiet', 'origin', 'main')
     await commitInFixture(fixtures, folder, 'mine.txt', 'mine\n', 'Mine')
     const before = await tipOf(folder, 'main')
 
-    await expect(source.pull('repo', 'main')).rejects.toThrow(
-      'can’t fast-forward: main and origin/main both have new commits. Merge or rebase them in a terminal.',
-    )
+    expect(await source.pull('repo', 'main')).toEqual({
+      message: 'main and origin/main both have new commits, so Pull can’t just move main forward',
+      mergeable: 'origin/main',
+    })
     expect(await tipOf(folder, 'main')).toBe(before)
     // What was fetched stays fetched, so the branch list can show it.
     expect(await tipOf(folder, 'origin/main')).toBe(await tipOf(colleague, 'main'))
+  })
+
+  it('won’t offer to merge an upstream whose name a local branch shares: the name would mean that branch', async () => {
+    const { source, folder, colleague } = await withColleague()
+    await commitInFixture(fixtures, colleague, 'theirs.txt', 'theirs\n', 'Theirs')
+    await gitInFixture(fixtures, colleague, 'push', '--quiet', 'origin', 'main')
+    await commitInFixture(fixtures, folder, 'mine.txt', 'mine\n', 'Mine')
+    await gitInFixture(fixtures, folder, 'branch', 'origin/main')
+    const before = await tipOf(folder, 'main')
+
+    await expect(source.pull('repo', 'main')).rejects.toThrow(
+      'can’t fast-forward: main and origin/main both have new commits, and a local branch is also named origin/main, so it can’t be merged here. Rename or delete that local branch and pull again, or merge or rebase them in a terminal.',
+    )
+    expect(await tipOf(folder, 'main')).toBe(before)
   })
 
   it('refuses to pull, naming the file, when it would overwrite uncommitted changes', async () => {

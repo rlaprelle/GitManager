@@ -4,7 +4,7 @@ A calm, dark-themed git client that puts the questions you ask most often on one
 
 Git Manager is for developers who juggle several repositories and want a quick visual answer without reaching for the command line. That might be a service, its API client, a front end and a dotfiles repo all at once.
 
-> **Status:** the Windows desktop app works on your real repositories with your installed Git for Windows: add or clone repositories, browse their branches, history and diffs, check out branches, and fetch, pull and push. The browser version runs on built-in sample repositories, where every button works against sample data. See [Real repositories](#real-repositories).
+> **Status:** the Windows desktop app works on your real repositories with your installed Git for Windows: add or clone repositories, browse their branches, history and diffs, check out branches, fetch, pull and push, and merge branches, resolving conflicts on screen. The browser version runs on built-in sample repositories, where every button works against sample data. See [Real repositories](#real-repositories).
 
 ## What you can do
 
@@ -20,27 +20,33 @@ Git Manager is for developers who juggle several repositories and want a quick v
 - **See changes made elsewhere.** Commit, switch branches or edit files in your terminal or editor, and Git Manager catches up when you come back to its window, without losing the commit you were looking at. Press **F5** to refresh on demand.
 - **Fetch, pull and push** from the header. The button you clicked says what's happening ("Fetching…") until git finishes, and the status bar says what happened:
   - **Fetch** updates every remote and drops branches deleted there: "Fetched: 2 branches updated, 1 new, 1 removed". The ↑/↓ counts and "Last fetch" update with it.
-  - **Pull** brings the checked-out branch up to its remote branch, but only when that is a plain fast-forward: "Pulled 3 commits from origin/main". If you and the remote both have new commits, nothing changes and the status bar says so; merge or rebase in a terminal. Uncommitted changes that would be overwritten are named, as with Checkout.
+  - **Pull** brings the checked-out branch up to its remote branch, but only when that is a plain fast-forward: "Pulled 3 commits from origin/main". If you and the remote both have new commits, your branch stays where it is and the Merge dialog offers to merge the remote branch. (If you've opened another repository by the time the pull finishes, a notification says so instead; pull again there to get the offer.) Uncommitted changes that would be overwritten are named, as with Checkout.
   - **Push** sends the checked-out branch to the remote branch it tracks: "Pushed 2 commits to origin/feature". It never forces: if the remote has commits you don't, it says to pull first. A branch that tracks nothing yet is published to `origin` and tracks it from then on.
   - **Signing in** uses git's own windows: Git Credential Manager for HTTPS, and Git for Windows' password window for an SSH passphrase or a server's unknown host key.
   - **A stalled connection fails with git's reason**: after 20 seconds trying to connect, or a minute with nothing moving. A slow transfer that keeps moving is never cut off.
+- **Merge a branch, with nothing on disk changing until you're done.** **Merge…** in the header merges a branch you pick into the checked-out one (to merge somewhere else, check that branch out first). The dialog says beforehand what will happen: how many commits come in, whether the branch just moves forward or gets a merge commit (following git's default and your `merge.ff` setting), and which files conflict. A merge with no conflicts completes straight away. With conflicts, the merge screen opens:
+  - **Three panes, lined up:** *Ours* (your branch), the *Result*, and *Theirs* (the branch coming in). Changes only one side made are already in; their arrow takes them back out.
+  - **Arrows bring in a side.** Each conflict has an arrow from each side. Use one or both: they stack in the order you click, and clicking again takes a side back. The conflict also shows what the lines were before either branch changed them, and what each branch did. **Edit by hand** opens a box for just that conflict, for when the answer is a mix of both; until you press Done or Cancel, Complete merge and the file list wait, so nothing you typed is left behind. **Use neither side** drops the lines.
+  - **Finishing:** **Mark resolved** is an optional checkpoint for your own tracking; it stages nothing. **Complete merge** makes the merge commit and only then updates your files. **Discard merge** walks away, and there's nothing to undo because nothing changed. Merge commits are signed if your git signs commits, but commit hooks don’t run. Close the app halfway and your choices are still there next time. (If a merge is ever too large to be kept that way, a notification says so while you work, so you can finish before closing.) One unfinished merge is kept per repository: if one is waiting for its branch to be checked out again and you start another that has conflicts, the Merge dialog says so and asks before replacing it. If a branch moves meanwhile, the merge is worked out again and your choices are kept for the files that came out the same.
+  - **Left to a terminal:** files deleted on one side, binary files, Git LFS files, files that aren't UTF-8 text, links, and files both branches added with only one of them executable can't be resolved here, and the dialog says so before anything starts. Files the merge would overwrite (uncommitted changes, or untracked and ignored files in the way) must be committed, stashed or moved first; other uncommitted work is left alone. A merge, rebase or cherry-pick already under way outside the app gets a notice and is left for you to finish there.
 
 ## Core concepts
 
 - **Current branch vs. selected branch.** The *current* branch is the one checked out (`HEAD`). The *selected* branch is the one you're looking at in the history. Browsing a branch never checks it out. Only the Checkout button does.
 - **Git diff vs. simple diff.** A git diff is about one commit: what that commit did to a file. A simple diff only compares two pieces of text. Comparing two unrelated files only makes sense as a simple diff, so in compare mode the git diff view is turned off.
-- **The status bar is the activity log.** Every action reports its outcome along the bottom of the window, including failures.
+- **The status bar is the activity log.** Every action reports its outcome along the bottom of the window, including failures. What you mustn't miss also comes as a notification.
 
 ## Design principles
 
-- **One screen, no modes to get lost in.** Repositories, branches, history and the diff are always visible together. Compare is the only other view, and its **Back to *commit*** button always takes you out of it.
-- **Nothing changes until you ask.** Clicking around never changes your repository. Checkout, Fetch, Pull and Push are always separate, clearly labelled buttons, and one runs at a time.
+- **One screen, no modes to get lost in.** Repositories, branches, history and the diff are always visible together. Compare and the merge screen are the only other views, and each shows the way out: **Back to *commit***, or **Discard merge** and **Complete merge**.
+- **Nothing changes until you ask.** Clicking around never changes your repository. Checkout, Fetch, Pull, Merge and Push are always separate, clearly labelled buttons, and one runs at a time. A merge touches no file until you complete it.
+- **What matters comes to you.** A line in the status bar is easy to miss. A failure, or anything else you need to know that you didn't just ask for, also appears as a notification over the corner of the window, naming the repository it is about, and stays there until you dismiss it.
 - **Dense but quiet.** A dark palette, monospace type for anything git produces (hashes, paths, code), and colour reserved for meaning: green for additions, red for deletions, and the accent colour for what's selected.
 - **Works narrow.** On a small window or a phone, the panes stack instead of shrinking past usefulness.
 
 ## Quick start
 
-You need [Node.js](https://nodejs.org/) (developed and tested on Node 24), and for the desktop app [Git for Windows](https://git-scm.com/download/win) 2.30 or newer. In PowerShell:
+You need [Node.js](https://nodejs.org/) (developed and tested on Node 24), and for the desktop app [Git for Windows](https://git-scm.com/download/win) 2.38 or newer. In PowerShell:
 
 ```powershell
 npm install
@@ -100,10 +106,10 @@ For how the code is organised, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md
 
 The interface talks to git through a single TypeScript interface, `GitDataSource` (`src/services/GitDataSource.ts`). It asks only for what the screen shows (a repository's branches, a page of history, one commit's files, one file's diff), so large repositories never have to be read in full: the history shows the newest 200 commits, and **Show more commits** at the end of the list adds 200 at a time.
 
-- **Desktop app:** its Electron main process runs your installed Git for Windows, so it uses your own git settings, and passes results to the interface over the preload bridge. Reading never takes git's locks, so it can't get in the way of your own git commands; Checkout, Pull and the rest run git as your own commands do, with your credential helper, SSH keys and hooks. If git is missing or older than 2.30, the app says so instead of starting. Your repository list is kept in `%APPDATA%\git-manager\repositories.json`.
+- **Desktop app:** its Electron main process runs your installed Git for Windows, so it uses your own git settings, and passes results to the interface over the preload bridge. Reading never takes git's locks, so it can't get in the way of your own git commands; Checkout, Pull and the rest run git as your own commands do, with your credential helper, SSH keys and hooks. If git is missing or older than 2.38 (October 2022, the first that can work a merge out without touching your files), the app says so instead of starting. Your repository list is kept in `%APPDATA%\git-manager\repositories.json`.
 - **Browser version:** keeps the sample data (`MockGitDataSource`), so the interface can be developed and tested without touching a real repository.
 
-Renamed files show as one change ("renamed from …", or "moved from …" when only the folder changed), diffed against their old version. Not tried yet: submodules and Git LFS (an LFS checkout that needs to sign in will fail: only Fetch, Pull and Push may ask you to sign in). A branch checked out in another worktree can't be checked out here; git's message says where it is.
+Renamed files show as one change ("renamed from …", or "moved from …" when only the folder changed), diffed against their old version. A merge that moves a submodule goes ahead as git's would, leaving the submodule's own checkout as it is. Otherwise not tried yet: submodules and Git LFS (an LFS checkout that needs to sign in will fail: only Fetch, Pull and Push may ask you to sign in). A branch checked out in another worktree can't be checked out here; git's message says where it is.
 
 The installed app has no menu: Ctrl+R (reload) and Ctrl+Shift+I (DevTools) do nothing, and F5 refreshes. `npm run dev:app` keeps both for development.
 

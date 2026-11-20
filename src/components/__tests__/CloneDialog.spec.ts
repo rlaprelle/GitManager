@@ -97,6 +97,24 @@ describe('CloneDialog', () => {
     expect(wrapper.get('[role="alert"]').text()).toBe('repository not found')
   })
 
+  it('goes straight back up, form intact, if the browser closes it while it is meant to be open', async () => {
+    const wrapper = mountDialog()
+    await urlInput(wrapper).setValue('https://host/tools.git')
+    await wrapper.setProps({ cloning: true })
+    const dialog = wrapper.get('dialog').element as HTMLDialogElement
+    // What the third Esc in a row does, whatever the cancel handler said.
+    dialog.removeAttribute('open')
+    await wrapper.get('dialog').trigger('close')
+    expect(dialog.open).toBe(true)
+    expect((urlInput(wrapper).element as HTMLInputElement).value).toBe('https://host/tools.git')
+    expect(wrapper.emitted('close')).toBeUndefined()
+
+    // Closed by the app: it stays closed.
+    await wrapper.setProps({ cloning: false, open: false })
+    await wrapper.get('dialog').trigger('close')
+    expect(dialog.open).toBe(false)
+  })
+
   it('Esc closes the dialog, but not while cloning', async () => {
     const idle = mountDialog()
     await idle.get('dialog').trigger('cancel')
