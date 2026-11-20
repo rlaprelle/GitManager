@@ -6,8 +6,8 @@ const merging = (branch: string): MergeSession => ({
   request: { branch, into: 'main', ours: 'a'.repeat(40), theirs: 'b'.repeat(40) },
   into: 'main',
   commits: 1,
-  files: [],
-  path: '',
+  files: [{ path: 'session.ts', chunks: [], marked: false }],
+  path: 'session.ts',
 })
 
 /** Storage in memory; `room` is how many saves it takes before refusing, as a full quota does. */
@@ -67,5 +67,17 @@ describe('mergeDrafts', () => {
     expect(drafts.load('inventory')).toBeNull()
     kept.set(mergeDraftKey('inventory'), JSON.stringify({ request: { branch: 'main' } }))
     expect(drafts.load('inventory')).toBeNull()
+  })
+
+  it('reads nothing from a merge with no file to show: the resolver would have nothing to open, or to discard', () => {
+    const { kept, storage } = memory()
+    const drafts = mergeDrafts(storage)
+    const file = { path: 'a.ts', chunks: [], marked: false }
+    kept.set(mergeDraftKey('inventory'), JSON.stringify({ ...merging('main'), files: [], path: '' }))
+    expect(drafts.load('inventory')).toBeNull()
+    kept.set(mergeDraftKey('inventory'), JSON.stringify({ ...merging('main'), files: [file], path: 'gone.ts' }))
+    expect(drafts.load('inventory')).toBeNull()
+    kept.set(mergeDraftKey('inventory'), JSON.stringify({ ...merging('main'), files: [file], path: 'a.ts' }))
+    expect(drafts.load('inventory')?.path).toBe('a.ts')
   })
 })

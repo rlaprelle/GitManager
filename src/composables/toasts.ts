@@ -22,8 +22,8 @@ export interface Toasts {
   showToast(message: string, kind?: ToastKind, context?: string | null): void
   /** The user dismisses a toast. */
   dismissToast(id: number): void
-  /** The app takes back what it said, because it no longer holds. */
-  retractToast(message: string): void
+  /** The app takes back what it said about `context`, because it no longer holds. */
+  retractToast(message: string, context?: string | null): void
 }
 
 /**
@@ -45,8 +45,9 @@ export function useToasts(): Toasts {
     toasts.value = toasts.value.filter((toast) => toast.id !== id)
   }
 
-  function retractToast(message: string): void {
-    toasts.value = toasts.value.filter((toast) => toast.message !== message)
+  /** Only the toast saying this about `context` goes: the same words about something else still hold. */
+  function retractToast(message: string, context: string | null = null): void {
+    toasts.value = toasts.value.filter((toast) => !(toast.message === message && toast.context === context))
   }
 
   return { toasts, showToast, dismissToast, retractToast }

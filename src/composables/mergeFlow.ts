@@ -86,8 +86,11 @@ export function useMergeFlow(host: MergeFlowHost) {
   /** The user is being asked whether the merge they are starting may replace the one that is waiting. */
   const mergeReplacePending = ref(false)
 
-  /** The user has been told that the merge on screen couldn't be saved; once per merge is enough. */
-  let toldNotSaved = false
+  /**
+   * The user has been told that the merge on screen couldn't be saved (once per merge is enough):
+   * which repository that was said about, so it can be taken back about the same one.
+   */
+  let toldNotSaved: ReportOptions | null = null
 
   /**
    * Every change to the merge goes through here, so what's saved always matches the screen. When it
@@ -97,8 +100,8 @@ export function useMergeFlow(host: MergeFlowHost) {
     mergeSession.value = session
     noLongerWaiting()
     if (drafts.save(repoId, session) || toldNotSaved) return
-    toldNotSaved = true
-    report.warn(MERGE_NOT_SAVED, about(host.repository.value))
+    toldNotSaved = about(host.repository.value)
+    report.warn(MERGE_NOT_SAVED, toldNotSaved)
   }
 
   function endSession(repoId: string): void {
@@ -111,24 +114,39 @@ export function useMergeFlow(host: MergeFlowHost) {
    * What was last said about a saved merge that couldn't be shown yet (its branch isn't checked
    * out, say). It is taken back once that merge is on screen again, or gone.
    */
-  let waitingNotice: string | null = null
+  let waitingNotice: { message: string; about: ReportOptions } | null = null
 
   function noLongerWaiting(): void {
-    if (waitingNotice !== null) report.retract(waitingNotice)
+    if (waitingNotice !== null) report.retract(waitingNotice.message, waitingNotice.about)
     waitingNotice = null
+  }
+
+  /**
+   * The repository is being taken off the list. If it is ever added again it is a new one to the
+   * app, so nothing could use what is saved for it: it would only sit in storage, taking up room.
+   */
+  function forgetSavedMerge(repoId: string): void {
+    drafts.clear(repoId)
+    if (host.repository.value?.id === repoId) noLongerWaiting()
   }
 
   /** Takes the merge off the screen, leaving whatever is saved of it. A warning about it goes with it. */
   function closeSession(): void {
     mergeSession.value = null
-    if (toldNotSaved) report.retract(MERGE_NOT_SAVED)
-    toldNotSaved = false
+    if (toldNotSaved) report.retract(MERGE_NOT_SAVED, toldNotSaved)
+    toldNotSaved = null
   }
 
-  /** What can be merged into the checked-out branch: other local branches, then remote ones. */
+  /**
+   * What can be merged into the checked-out branch: other local branches, then remote ones. A merge
+   * names its branch as the branch list does, and a name that is both a local branch and a remote
+   * one ('origin/main' made by hand) means the local branch, as it does to git: it is offered once.
+   */
   const mergeableBranches = computed(() => {
     const { local, remote } = host.branches.value
-    return [...local.map((branch) => branch.name).filter((name) => name !== host.currentBranch.value), ...remote.map((branch) => branch.name)]
+    const localNames = local.map((branch) => branch.name)
+    const remoteOnly = remote.map((branch) => branch.name).filter((name) => !localNames.includes(name))
+    return [...localNames.filter((name) => name !== host.currentBranch.value), ...remoteOnly]
   })
 
   const mergePreview = previewLoad.value
@@ -284,8 +302,8 @@ export function useMergeFlow(host: MergeFlowHost) {
     const { branch, into } = draft.request
     const say = (message: string) => {
       if (quietly) return
-      waitingNotice = message
-      report.notice(message, about(repo))
+      waitingNotice = { message, about: about(repo) }
+      report.notice(message, waitingNotice.about)
     }
     const { local, remote } = host.branches.value
     const listed = [...local, ...remote]
@@ -297,7 +315,7 @@ export function useMergeFlow(host: MergeFlowHost) {
     }
     const waitingForBranch = `Your merge of ${branch} into ${into} is waiting: check out ${into} to continue it`
     if (repo.currentBranch !== into) return say(waitingForBranch)
-    if (waitingNotice === waitingForBranch) noLongerWaiting()
+    if (waitingNotice?.message === waitingForBranch) noLongerWaiting()
     try {
       const preview = await source.previewMerge(repo.id, branch)
       // The dialog may have been opened while git was answering: it wins, and the merge stays waiting.
@@ -336,8 +354,11 @@ export function useMergeFlow(host: MergeFlowHost) {
       report.notice(`${branch} no longer conflicts with ${into}: start the merge again from Merge…`, about(repo))
       return
     }
+    // Two looks at one saved merge can overlap (opening the repository, then a refresh). The first to
+    // finish puts the merge on screen, where choices can be made at once: the other mustn't replace it.
+    const onScreen = mergeSession.value
     const { files, changed } = carryChoices(earlier.files, await conflictFiles(repo, preview))
-    if (!stillOpen(repo) || mergeDialog.value) return
+    if (!stillOpen(repo) || mergeDialog.value || mergeSession.value !== onScreen) return
     const path = files.some((file) => file.path === earlier.path) ? earlier.path : (files[0]?.path ?? '')
     setSession(repo.id, sessionFor(preview, files, path))
     report.notice(
@@ -484,6 +505,7 @@ export function useMergeFlow(host: MergeFlowHost) {
     cancelDiscardMerge,
     resetMerge,
     resumeSavedMerge,
+    forgetSavedMerge,
   }
 }
 

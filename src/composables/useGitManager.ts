@@ -712,6 +712,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
       report.info((await source.removeRepository(id)).message)
     }, repositoryWithId(id))
     if (!removed) return
+    merging.forgetSavedMerge(id)
     repositories.value = repositories.value.filter((repo) => repo.id !== id)
     if (wasOpen) await openFirstRepositoryOrClose()
   }
