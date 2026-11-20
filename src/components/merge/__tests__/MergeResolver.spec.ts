@@ -165,6 +165,39 @@ describe('MergeResolver', () => {
       expect(paneText('result')).toContain('4typed')
     })
 
+    it('keeps Complete merge back while a box is open, since what is typed isn’t in the result yet', async () => {
+      mountResolver([toggleSide(fileA(), CONFLICT, 'ours')], { conflictsLeft: 0 })
+      const complete = () => button('Complete merge')
+      expect(complete().attributes('disabled')).toBeUndefined()
+
+      await button('Edit').trigger('click')
+      await wrapper.get('textarea').setValue('typed, and not yet Done')
+      expect(complete().attributes('disabled')).toBeDefined()
+      expect(complete().attributes('title')).toBe('Finish or cancel your edit first')
+      await complete().trigger('click')
+      expect(wrapper.emitted('complete')).toBeUndefined()
+
+      await button('Cancel').trigger('click')
+      expect(complete().attributes('disabled')).toBeUndefined()
+      expect(complete().attributes('title')).toBe('Commit the merge and update your files')
+    })
+
+    it('keeps the file list back too, on wide screens and narrow, until the box is closed', async () => {
+      mountResolver()
+      const files = () => [...wrapper.get('nav').findAll('button'), wrapper.get('select')]
+      for (const control of files()) expect(control.attributes('disabled')).toBeUndefined()
+
+      await button('Edit conflict 1 by hand').trigger('click')
+      for (const control of files()) {
+        expect(control.attributes('disabled')).toBeDefined()
+        expect(control.attributes('title')).toBe('Finish or cancel your edit first')
+      }
+
+      await button('Done').trigger('click')
+      for (const control of files()) expect(control.attributes('disabled')).toBeUndefined()
+      expect(wrapper.get('nav').findAll('button')[1]!.attributes('title')).toBe('b.ts')
+    })
+
     it('closes the box when another file is shown', async () => {
       mountResolver()
       await button('Edit conflict 1 by hand').trigger('click')

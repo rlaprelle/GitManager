@@ -45,6 +45,17 @@ const branchName = computed(() => props.session.request.branch)
 const currentConflict = ref(0)
 /** The chunk whose edit box is open. */
 const editingChunk = ref<number | null>(null)
+/**
+ * What is typed in an open edit box isn't in the result until Done. Completing the merge, or
+ * showing another file, would drop it without a word, so both wait for the box to be closed.
+ */
+const editing = computed(() => editingChunk.value !== null)
+const FINISH_EDIT_FIRST = 'Finish or cancel your edit first'
+
+const completeTitle = computed(() => {
+  if (editing.value) return FINISH_EDIT_FIRST
+  return props.conflictsLeft > 0 ? 'Resolve every conflict first' : 'Commit the merge and update your files'
+})
 
 watch(
   () => props.file.path,
@@ -215,8 +226,8 @@ const sideOnly = 'max-[860px]:hidden'
         <button
           type="button"
           class="inline-flex h-9 cursor-pointer items-center justify-center rounded-lg border-0 bg-gm-accent px-3.5 font-semibold text-gm-on-accent disabled:cursor-default disabled:opacity-60 max-[860px]:flex-1"
-          :disabled="conflictsLeft > 0 || completing"
-          :title="conflictsLeft > 0 ? 'Resolve every conflict first' : 'Commit the merge and update your files'"
+          :disabled="conflictsLeft > 0 || completing || editing"
+          :title="completeTitle"
           @click="emit('complete')"
         >
           {{ completing ? 'Merging…' : 'Complete merge' }}
@@ -231,10 +242,11 @@ const sideOnly = 'max-[860px]:hidden'
           <li v-for="candidate in session.files" :key="candidate.path">
             <button
               type="button"
-              class="gm-row-hover flex w-full cursor-pointer items-center gap-2 rounded-md border-0 px-2 py-[7px] text-left text-gm-text"
+              class="gm-row-hover flex w-full cursor-pointer items-center gap-2 rounded-md border-0 px-2 py-[7px] text-left text-gm-text disabled:cursor-default"
               :class="candidate.path === file.path ? 'bg-gm-selected' : 'bg-transparent'"
               :aria-current="candidate.path === file.path ? 'true' : undefined"
-              :title="candidate.path"
+              :title="editing ? FINISH_EDIT_FIRST : candidate.path"
+              :disabled="editing"
               @click="emit('selectFile', candidate.path)"
             >
               <span class="min-w-0 flex-auto truncate font-mono text-[12px]">{{ candidate.path }}</span>
@@ -262,6 +274,8 @@ const sideOnly = 'max-[860px]:hidden'
             aria-label="Conflicted file"
             class="box-border h-8 min-w-0 flex-[1_1_160px] rounded-md border border-gm-line-input bg-gm-code px-2 font-mono text-[12px] text-gm-text min-[861px]:hidden"
             :value="file.path"
+            :disabled="editing"
+            :title="editing ? FINISH_EDIT_FIRST : undefined"
             @change="emit('selectFile', ($event.target as HTMLSelectElement).value)"
           >
             <option v-for="candidate in session.files" :key="candidate.path" :value="candidate.path">

@@ -499,6 +499,28 @@ test.describe('merging', () => {
     await expect(arrow(page, 'Take back ours for conflict 1')).toHaveAttribute('aria-pressed', 'true')
   })
 
+  test('Complete merge and the file list wait while a conflict is being edited by hand', async ({ page }) => {
+    await openResolver(page)
+    for (const file of ['src/main/resources/application.yml', 'pom.xml']) {
+      await resolver(page).getByRole('navigation', { name: 'Conflicted files' }).getByRole('button', { name: file }).click()
+      while ((await resolver(page).getByTestId('merge-conflict').count()) > 0) {
+        await resolver(page).getByTestId('merge-conflict').first().getByRole('button', { name: /^Use neither side/ }).click()
+      }
+    }
+    await expect(complete(page)).toBeEnabled()
+
+    await resolver(page).getByTestId('merge-settled').first().getByRole('button', { name: 'Edit' }).click()
+    await resolver(page).getByRole('textbox', { name: 'Lines for conflict 1' }).fill('<version>2.4.0</version>')
+    await expect(complete(page)).toBeDisabled()
+    await expect(complete(page)).toHaveAttribute('title', 'Finish or cancel your edit first')
+    await expect(resolver(page).getByRole('navigation', { name: 'Conflicted files' }).getByRole('button').first()).toBeDisabled()
+
+    await resolver(page).getByRole('button', { name: 'Done' }).click()
+    await expect(resolver(page).locator('[data-pane="result"] [data-source="edited"]')).toContainText('<version>2.4.0</version>')
+    await complete(page).click()
+    await expect(status(page)).toHaveText(`Merged main into ${INTO} (2 commits)`)
+  })
+
   test('a merge saved and waiting is only replaced once you agree', async ({ page }) => {
     await openResolver(page)
     // As if another branch had been checked out outside the app: the saved merge is for one that isn't current.
