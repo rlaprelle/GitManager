@@ -181,7 +181,8 @@ describe('App merging', () => {
     await mountApp()
     await openResolver()
     const warning = () => wrapper.get('[data-testid="toasts"]').find('[role="alert"]')
-    expect(warning().text()).toBe('This merge couldn’t be saved, so closing the app would lose it. Complete or discard it before you close.')
+    expect(warning().get('p').text()).toBe('This merge couldn’t be saved, so closing the app would lose it. Complete or discard it before you close.')
+    expect(warning().get('[data-testid="toast-context"]').text()).toBe('inventory-service')
 
     await warning().get('button[aria-label="Dismiss"]').trigger('click')
     expect(warning().exists()).toBe(false)
@@ -225,7 +226,10 @@ describe('App merging', () => {
     await flushPromises()
 
     const toasts = () => wrapper.get('[data-testid="toasts"]')
-    expect(toasts().get('[role="status"]').text()).toContain('Pull in inventory-service: feature/stock-reservations and origin/feature/stock-reservations both have new commits')
+    expect(toasts().get('[data-testid="toast-context"]').text()).toBe('inventory-service')
+    expect(toasts().get('[role="status"] p').text()).toBe(
+      'feature/stock-reservations and origin/feature/stock-reservations both have new commits, so Pull can’t just move feature/stock-reservations forward. Open inventory-service and press Pull again to merge them.',
+    )
     expect(wrapper.find('#merge-title').exists()).toBe(false)
     await toasts().get('button[aria-label="Dismiss"]').trigger('click')
     expect(toasts().findAll('[data-kind]')).toHaveLength(0)

@@ -531,7 +531,12 @@ test.describe('merging', () => {
       localStorage.setItem(key, JSON.stringify(saved))
     })
     await page.reload()
-    await expect(status(page)).toHaveText('Your merge of main into release/2.4 is waiting: check out release/2.4 to continue it')
+    const waiting = 'Your merge of main into release/2.4 is waiting: check out release/2.4 to continue it'
+    await expect(status(page)).toHaveText(waiting)
+    // Too easy to miss in the status bar alone, so it is a notification as well, naming the repository.
+    const notice = page.getByTestId('toasts').getByRole('status')
+    await expect(notice.getByRole('paragraph')).toHaveText(waiting)
+    await expect(notice.getByTestId('toast-context')).toHaveText('inventory-service')
 
     await pickBranch(page, 'main')
     await expect(mergeDialog(page).getByTestId('merge-waiting')).toHaveText('Your merge of main into release/2.4 is saved and waiting.')
@@ -547,6 +552,8 @@ test.describe('merging', () => {
     await asking.getByRole('button', { name: 'Replace it' }).click()
     await expect(resolver(page)).toBeVisible()
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem('gm.mergeDraft.inventory')!).into)).toBe(INTO)
+    // Nothing is waiting any more, so nothing says so.
+    await expect(notice).toHaveCount(0)
   })
 
   test('a merge that can’t be saved says so in a notification, which stays until dismissed and never makes the page scroll', async ({ page }) => {
@@ -563,7 +570,8 @@ test.describe('merging', () => {
     await openResolver(page)
 
     const warnings = page.getByTestId('toasts').getByRole('alert')
-    await expect(warnings).toHaveText('This merge couldn’t be saved, so closing the app would lose it. Complete or discard it before you close.')
+    await expect(warnings.getByRole('paragraph')).toHaveText('This merge couldn’t be saved, so closing the app would lose it. Complete or discard it before you close.')
+    await expect(warnings.getByTestId('toast-context')).toHaveText('inventory-service')
     expect(await pageOverflow(page)).toEqual({ x: 0, y: 0 })
     await arrow(page, 'Bring in ours for conflict 1').click()
     await expect(warnings).toHaveCount(1)

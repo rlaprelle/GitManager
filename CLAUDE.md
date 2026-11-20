@@ -41,7 +41,8 @@ src/composables/latestLoad.ts    one async area: value + loading, only the lates
 src/composables/useGitManager.ts ALL state, derived state, actions
 src/composables/mergeFlow.ts     the merge dialog + resolver state and actions (created by useGitManager, returned as part of it)
 src/composables/mergeDrafts.ts   a merge being resolved, saved per repository in localStorage
-src/composables/toasts.ts        toasts: what the user must not miss (created by useGitManager, returned as part of it)
+src/composables/reporter.ts      Reporter (info/notice/warn/failure/retract): how code tells the user things; useReporter decides where each appears
+src/composables/toasts.ts        toasts, one of the reporter's ways of showing a message (never raised directly)
 src/composables/usePaneSizes.ts  dragged pane sizes (layout, not git state): localStorage + --gm-*-size CSS vars
 src/lib/{diff,graph,format}.ts   pure functions (diff rows, graph geometry, labels)
 src/lib/checkout.ts              checkout wording + names (switchedMessage, localNameOf, remotesToCheckOut, destinationOf)
@@ -101,9 +102,9 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
   - selection change resets file index + closes compare; a refresh doesn't close it (it re-reads the compared files), even when the selected commit has gone;
   - compare forces `diffMode = 'simple'` and ignores `setDiffMode`;
   - every async area (branches, history, files, diff, compare, merge preview, unfinished operation) goes through `latestLoad`, so stale responses are dropped;
-  - a failed load → `status = "Couldn’t load <area>: …"` and only that area empties;
+  - a failed load → `report.failure("Couldn’t load <area>: …")` and only that area empties;
   - local state (`currentBranch`, `lastFetch`) changes only after the source resolves;
-  - operation failures → `status = "Failed: …"` (so git refusals are worded to follow "Failed: ");
+  - operation failures → `report.failure("Failed: …")` (so git refusals are worded to follow "Failed: ");
   - one operation at a time (`runningOperation` says which; its button says "Fetching…" etc.), and every operation waits for a running refresh;
   - fetch/pull/push re-read everything afterwards, after a failure too (a refused pull has still fetched);
   - a refresh reads the selection when its history arrives, so a click made meanwhile is kept;
@@ -120,7 +121,7 @@ Unit/component tests follow the create-vue layout: `src/<dir>/X.ts` ↔ `src/<di
 - `<script setup lang="ts">` SFCs only; `@/` alias = `src/`.
 - Colours: use `gm-*` Tailwind tokens (`bg-gm-main`, `text-gm-muted`, …). No raw hex in components. Exception: lane colours in `lib/graph.ts` (SVG strokes, fixed by lane, independent of accent).
 - New colour → add `--color-gm-*` to `@theme` in `src/style.css`.
-- **Don't rely on the status bar for anything the user must not miss**: it is a running commentary, and easy to overlook. Important news (something the app couldn't keep or do, an outcome in a repository the user has left) goes in a toast: `showToast(message, kind)` in `useGitManager` (`notify` inside `mergeFlow`), shown by `ToastStack` until dismissed. The status bar may say it as well. A toast is a sentence that stands on its own: it names the repository when that isn't the open one.
+- **Tell the user things through the `Reporter`** (`src/composables/reporter.ts`; `report` in `useGitManager`, `host.report` in `mergeFlow`), choosing the level by what the message means: `info` (running commentary), `notice` (news they didn't ask for and shouldn't miss), `warn` (something won't go as expected, or couldn't be kept), `failure` (what they asked for didn't happen); `retract` takes back one that no longer holds. Never write `status` or raise a toast directly: where each level appears is decided in one place, `useReporter`. Today every message is the status bar's line, and a notice, warning or failure is also a toast that stays until dismissed, because the status bar is easy to overlook. Pass `{ repository }` for anything about a repository (the user may have opened another by the time they read it), and `{ alreadyShown: true }` when a dialog or the pane itself is showing it.
 - Monospace (`font-mono`, JetBrains Mono) for hashes, paths, code; Inter for UI. Both are bundled Fontsource variable fonts (families `'Inter Variable'`, `'JetBrains Mono Variable'`) imported in `src/main.ts`. Never load anything from another host.
 - Responsive: `max-[860px]:` variant is the narrow breakpoint. Page must never scroll horizontally (e2e enforces at phone width); wide content scrolls inside its own pane.
 - Smallest desktop size is 1024×640 content (Electron `minWidth`/`minHeight` with `useContentSize`; root `min-h-[640px]`). Both e2e suites assert no page scroll there — change all three together.

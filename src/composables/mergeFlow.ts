@@ -1,4 +1,4 @@
-import { type ComputedRef, type Ref, computed, ref, shallowRef } from 'vue'
+import { type ComputedRef, computed, ref, shallowRef } from 'vue'
 import { errorMessage } from '@/lib/errorMessage'
 import { pluralize } from '@/lib/format'
 import { MERGE_NOT_SAVED, MOVED_SINCE, mergeRefusal } from '@/lib/merge'
@@ -20,7 +20,7 @@ import type { GitDataSource, RepositoryOperation } from '@/services/GitDataSourc
 import type { Branches, MergePreview, MergeRequest, Repository } from '@/types/git'
 import { latestLoad } from './latestLoad'
 import type { MergeDrafts } from './mergeDrafts'
-import type { ToastKind } from './toasts'
+import type { ReportOptions, Reporter } from './reporter'
 
 /** The Merge dialog while it's open. */
 export interface MergeDialogState {
@@ -56,7 +56,8 @@ export interface MergeSession {
 /** What the merge flow needs from useGitManager. */
 export interface MergeFlowHost {
   source: GitDataSource
-  status: Ref<string>
+  /** How the merge flow tells the user things; where each appears isn't its business. */
+  report: Reporter
   repository: ComputedRef<Repository | undefined>
   branches: ComputedRef<Branches>
   currentBranch: ComputedRef<string>
@@ -65,10 +66,6 @@ export interface MergeFlowHost {
   /** Resolves when a refresh already running has finished, so what it read can't land after the merge. */
   refreshFinished(): Promise<void> | null
   reload(): Promise<void>
-  /** Says something the user must not miss, as a toast. */
-  notify(message: string, kind?: ToastKind): void
-  /** Takes such a toast back, once what it said no longer holds. */
-  retract(message: string): void
   /** Where a merge being resolved is kept, so closing the app doesn't lose it. */
   drafts: MergeDrafts
 }
@@ -76,7 +73,10 @@ export interface MergeFlowHost {
 const NOTHING_ON_DISK = 'Nothing on disk has changed yet'
 
 export function useMergeFlow(host: MergeFlowHost) {
-  const { source, status, drafts } = host
+  const { source, report, drafts } = host
+
+  /** A message about a repository says which, in case the user has moved on by the time they read it. */
+  const about = (repo: Repository | undefined): ReportOptions => (repo ? { repository: repo.name } : {})
 
   const mergeDialog = ref<MergeDialogState | null>(null)
   const previewLoad = latestLoad<MergePreview | null>(null)
@@ -95,20 +95,33 @@ export function useMergeFlow(host: MergeFlowHost) {
    */
   function setSession(repoId: string, session: MergeSession): void {
     mergeSession.value = session
+    noLongerWaiting()
     if (drafts.save(repoId, session) || toldNotSaved) return
     toldNotSaved = true
-    host.notify(MERGE_NOT_SAVED, 'warning')
+    report.warn(MERGE_NOT_SAVED, about(host.repository.value))
   }
 
   function endSession(repoId: string): void {
     closeSession()
+    noLongerWaiting()
     drafts.clear(repoId)
+  }
+
+  /**
+   * What was last said about a saved merge that couldn't be shown yet (its branch isn't checked
+   * out, say). It is taken back once that merge is on screen again, or gone.
+   */
+  let waitingNotice: string | null = null
+
+  function noLongerWaiting(): void {
+    if (waitingNotice !== null) report.retract(waitingNotice)
+    waitingNotice = null
   }
 
   /** Takes the merge off the screen, leaving whatever is saved of it. A warning about it goes with it. */
   function closeSession(): void {
     mergeSession.value = null
-    if (toldNotSaved) host.retract(MERGE_NOT_SAVED)
+    if (toldNotSaved) report.retract(MERGE_NOT_SAVED)
     toldNotSaved = false
   }
 
@@ -212,7 +225,8 @@ export function useMergeFlow(host: MergeFlowHost) {
         else await finishCleanMerge(repo, preview)
       } catch (error) {
         const reason = errorMessage(error)
-        status.value = `Failed: ${reason}`
+        // The dialog stays open with the reason, and that is where the user is looking.
+        report.failure(`Failed: ${reason}`, { alreadyShown: true })
         setDialogProblem(reason)
       }
     })
@@ -221,7 +235,7 @@ export function useMergeFlow(host: MergeFlowHost) {
   async function finishCleanMerge(repo: Repository, preview: MergePreview): Promise<void> {
     const { message } = await source.merge(repo.id, requestOf(preview), [])
     endDialog()
-    status.value = message
+    report.info(message)
     await host.reload()
   }
 
@@ -231,7 +245,7 @@ export function useMergeFlow(host: MergeFlowHost) {
     setSession(repo.id, sessionFor(preview, files, files[0]?.path ?? ''))
     endDialog()
     const conflicts = files.reduce((total, file) => total + conflictsLeftIn(file), 0)
-    status.value = `${pluralize(conflicts, 'conflict', 'conflicts')} to resolve in ${pluralize(files.length, 'file', 'files')} · ${NOTHING_ON_DISK}`
+    report.info(`${pluralize(conflicts, 'conflict', 'conflicts')} to resolve in ${pluralize(files.length, 'file', 'files')} · ${NOTHING_ON_DISK}`)
   }
 
   async function conflictFiles(repo: Repository, preview: MergePreview): Promise<MergeFile[]> {
@@ -269,23 +283,29 @@ export function useMergeFlow(host: MergeFlowHost) {
     if (!draft) return
     const { branch, into } = draft.request
     const say = (message: string) => {
-      if (!quietly) status.value = message
+      if (quietly) return
+      waitingNotice = message
+      report.notice(message, about(repo))
     }
     const { local, remote } = host.branches.value
     const listed = [...local, ...remote]
     if (listed.length > 0 && !listed.some((candidate) => candidate.name === branch)) {
       drafts.clear(repo.id)
-      status.value = `Your merge of ${branch} was dropped: that branch no longer exists`
+      noLongerWaiting()
+      report.warn(`Your merge of ${branch} was dropped: that branch no longer exists`, about(repo))
       return
     }
-    if (repo.currentBranch !== into) return say(`Your merge of ${branch} into ${into} is waiting: check out ${into} to continue it`)
+    const waitingForBranch = `Your merge of ${branch} into ${into} is waiting: check out ${into} to continue it`
+    if (repo.currentBranch !== into) return say(waitingForBranch)
+    if (waitingNotice === waitingForBranch) noLongerWaiting()
     try {
       const preview = await source.previewMerge(repo.id, branch)
       // The dialog may have been opened while git was answering: it wins, and the merge stays waiting.
       if (!stillOpen(repo) || mergeSession.value || mergeDialog.value) return
       if (preview.ours === draft.request.ours && preview.theirs === draft.request.theirs) {
         mergeSession.value = draft
-        status.value = `Continuing your merge of ${branch} into ${into} · ${NOTHING_ON_DISK}`
+        noLongerWaiting()
+        report.info(`Continuing your merge of ${branch} into ${into} · ${NOTHING_ON_DISK}`)
       } else await workOutAgain(repo, draft, preview)
     } catch (error) {
       say(`Couldn’t continue your merge of ${branch} yet: ${errorMessage(error)}. Your choices are saved`)
@@ -296,31 +316,34 @@ export function useMergeFlow(host: MergeFlowHost) {
   async function workOutAgain(repo: Repository, earlier: MergeSession, preview: MergePreview): Promise<void> {
     const { branch, into } = earlier.request
     if (preview.into !== into) {
-      status.value = `${preview.into} is checked out now: check out ${into} to finish this merge, or discard it`
+      report.warn(`${preview.into} is checked out now: check out ${into} to finish this merge, or discard it`, about(repo))
       return
     }
     if (preview.outcome === 'up-to-date') {
       endSession(repo.id)
-      status.value = `${into} already has every commit on ${branch}, so there is nothing left to merge`
+      report.notice(`${into} already has every commit on ${branch}, so there is nothing left to merge`, about(repo))
       return
     }
     const refusal = mergeRefusal(preview)
     if (refusal) {
       // Possibly temporary (a file to commit, say): the merge stays open, and Complete tries again.
       mergeSession.value = earlier
-      status.value = `This merge can’t continue yet: ${refusal}. Your choices are kept`
+      report.warn(`This merge can’t continue yet: ${refusal}. Your choices are kept`, about(repo))
       return
     }
     if (preview.conflicts.length === 0) {
       endSession(repo.id)
-      status.value = `${branch} no longer conflicts with ${into}: start the merge again from Merge…`
+      report.notice(`${branch} no longer conflicts with ${into}: start the merge again from Merge…`, about(repo))
       return
     }
     const { files, changed } = carryChoices(earlier.files, await conflictFiles(repo, preview))
     if (!stillOpen(repo) || mergeDialog.value) return
     const path = files.some((file) => file.path === earlier.path) ? earlier.path : (files[0]?.path ?? '')
     setSession(repo.id, sessionFor(preview, files, path))
-    status.value = `A branch moved, so the merge was worked out again: ${pluralize(changed, 'file needs', 'files need')} another look · ${NOTHING_ON_DISK}`
+    report.notice(
+      `A branch moved, so the merge was worked out again: ${pluralize(changed, 'file needs', 'files need')} another look · ${NOTHING_ON_DISK}`,
+      about(repo),
+    )
   }
 
   // ---- resolving ----
@@ -339,7 +362,7 @@ export function useMergeFlow(host: MergeFlowHost) {
     if (!session || !repo || host.operationRunning.value) return
     setSession(repo.id, { ...session, files: session.files.map((file) => (file.path === session.path ? change(file) : file)) })
     const left = mergeConflictsLeft.value
-    status.value = `${left > 0 ? `${pluralize(left, 'conflict', 'conflicts')} left` : 'All conflicts resolved'} · ${NOTHING_ON_DISK}`
+    report.info(`${left > 0 ? `${pluralize(left, 'conflict', 'conflicts')} left` : 'All conflicts resolved'} · ${NOTHING_ON_DISK}`)
   }
 
   function toggleMergeSide(chunkIndex: number, side: MergeSide): void {
@@ -362,7 +385,7 @@ export function useMergeFlow(host: MergeFlowHost) {
   function markMergeFileResolved(): void {
     changeFile((file) => (conflictsLeftIn(file) === 0 ? { ...file, marked: true } : file))
     const path = mergeFile.value?.marked ? mergeFile.value.path : null
-    if (path) status.value = `Marked ${path} as resolved. Nothing is staged or written: this only tracks your progress`
+    if (path) report.info(`Marked ${path} as resolved. Nothing is staged or written: this only tracks your progress`)
   }
 
   // ---- finishing ----
@@ -377,7 +400,7 @@ export function useMergeFlow(host: MergeFlowHost) {
         const resolutions = session.files.map((file) => ({ path: file.path, text: resultText(file) }))
         const { message } = await source.merge(repo.id, session.request, resolutions)
         endSession(repo.id)
-        status.value = message
+        report.info(message)
         await host.reload()
       } catch (error) {
         await explainFailedCompletion(repo, session, error)
@@ -388,13 +411,13 @@ export function useMergeFlow(host: MergeFlowHost) {
   async function explainFailedCompletion(repo: Repository, session: MergeSession, error: unknown): Promise<void> {
     const reason = errorMessage(error)
     if (!reason.includes(MOVED_SINCE)) {
-      status.value = `Failed: ${reason}`
+      report.failure(`Failed: ${reason}`, about(repo))
       return
     }
     try {
       await workOutAgain(repo, session, await source.previewMerge(repo.id, session.request.branch))
     } catch (again) {
-      status.value = `Failed: ${errorMessage(again)}`
+      report.failure(`Failed: ${errorMessage(again)}`, about(repo))
     }
   }
 
@@ -419,13 +442,15 @@ export function useMergeFlow(host: MergeFlowHost) {
     const repo = host.repository.value
     if (repo) endSession(repo.id)
     else closeSession()
-    status.value = 'Merge discarded; nothing changed'
+    report.info('Merge discarded; nothing changed')
   }
 
   /** Another repository is being opened: nothing on screen applies to it. A saved merge stays saved. */
   function resetMerge(): void {
     endDialog()
     closeSession()
+    // What was said about a merge waiting in the repository being left still holds, and says where.
+    waitingNotice = null
     mergeDiscardPending.value = false
   }
 

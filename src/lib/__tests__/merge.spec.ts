@@ -41,9 +41,9 @@ describe('status messages', () => {
     expect(divergedMessage('main', 'origin/main')).toBe('main and origin/main both have new commits, so Pull can’t just move main forward')
   })
 
-  it('name the repository when a pull’s outcome is told somewhere else', () => {
+  it('say where to go when a pull’s outcome is told after its repository was left', () => {
     expect(divergedElsewhereMessage('pricing-api', divergedMessage('main', 'origin/main'))).toBe(
-      'Pull in pricing-api: main and origin/main both have new commits, so Pull can’t just move main forward. Open pricing-api and press Pull again to merge them.',
+      'main and origin/main both have new commits, so Pull can’t just move main forward. Open pricing-api and press Pull again to merge them.',
     )
   })
 

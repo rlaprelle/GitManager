@@ -40,7 +40,7 @@ Git Manager is for developers who juggle several repositories and want a quick v
 
 - **One screen, no modes to get lost in.** Repositories, branches, history and the diff are always visible together. Compare and the merge screen are the only other views, and each shows the way out: **Back to *commit***, or **Discard merge** and **Complete merge**.
 - **Nothing changes until you ask.** Clicking around never changes your repository. Checkout, Fetch, Pull, Merge and Push are always separate, clearly labelled buttons, and one runs at a time. A merge touches no file until you complete it.
-- **What matters comes to you.** A line in the status bar is easy to miss. Anything you need to know that you didn't just ask for appears as a notification over the corner of the window, and stays there until you dismiss it.
+- **What matters comes to you.** A line in the status bar is easy to miss. A failure, or anything else you need to know that you didn't just ask for, also appears as a notification over the corner of the window, naming the repository it is about, and stays there until you dismiss it.
 - **Dense but quiet.** A dark palette, monospace type for anything git produces (hashes, paths, code), and colour reserved for meaning: green for additions, red for deletions, and the accent colour for what's selected.
 - **Works narrow.** On a small window or a phone, the panes stack instead of shrinking past usefulness.
 

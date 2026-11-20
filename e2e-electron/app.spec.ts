@@ -268,7 +268,8 @@ test.describe('merging a real repository', () => {
     await expect(window.getByTestId('header-repo')).toHaveText(/^e2e-merge-second/)
 
     const toast = window.getByTestId('toasts').getByRole('status')
-    await expect(toast).toHaveText(`Pull in ${first}: ${diverged}. Open ${first} and press Pull again to merge them.`)
+    await expect(toast.getByRole('paragraph')).toHaveText(`${diverged}. Open ${first} and press Pull again to merge them.`)
+    await expect(toast.getByTestId('toast-context')).toHaveText(first)
     await expect(window.getByRole('dialog')).toHaveCount(0)
     await toast.getByRole('button', { name: 'Dismiss' }).click()
     await expect(toast).toHaveCount(0)
@@ -331,9 +332,15 @@ test.describe('with git installed', () => {
     // The sample has README.md edited but not committed, and feature/search has another README.
     await sidebar().getByRole('button', { name: 'feature/search', exact: true }).click()
     await sidebar().getByRole('button', { name: 'Checkout', exact: true }).click()
-    await expect(status()).toHaveText(
-      'Failed: your changes to README.md would be overwritten by switching to feature/search. Commit or stash them first.',
-    )
+    const refusal = 'Failed: your changes to README.md would be overwritten by switching to feature/search. Commit or stash them first.'
+    await expect(status()).toHaveText(refusal)
+    // A failure is too easy to miss in the status bar alone: it is a notification too, until dismissed.
+    const failure = window.getByTestId('toasts').getByRole('alert')
+    await expect(failure.getByRole('paragraph')).toHaveText(refusal)
+    await expect(failure.getByTestId('toast-context')).toHaveText('sample')
+    await failure.getByRole('button', { name: 'Dismiss' }).click()
+    await expect(failure).toHaveCount(0)
+    await expect(status()).toHaveText(refusal)
     await expect(window.getByTestId('header-branch')).toHaveText('main')
     expect((await fixtureGit(fixtures.sample, 'symbolic-ref', '--short', 'HEAD')).trim()).toBe('main')
   })
@@ -805,6 +812,9 @@ test.describe('fetching, pulling and pushing', () => {
 
     await headerButton('Push').click()
     await expect(status()).toHaveText('Failed: origin/main has commits that main doesn’t have. Pull them first, then push again.')
+    await expect(window.getByTestId('toasts').getByRole('alert').getByRole('paragraph')).toHaveText(
+      'Failed: origin/main has commits that main doesn’t have. Pull them first, then push again.',
+    )
     expect(await tipOf(originOf(fixtures, name), 'main')).toBe(await tipOf(colleague, 'main'))
   })
 

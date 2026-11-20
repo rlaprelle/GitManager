@@ -29,6 +29,10 @@ async function loaded(source: GitDataSource = new MockGitDataSource()) {
 
 type Manager = Awaited<ReturnType<typeof loaded>>
 
+/** What has been raised for the user to dismiss, without the ids. */
+const raised = (gm: Manager) => gm.toasts.value.map(({ kind, message, context }) => ({ kind, message, context }))
+const HERE = { context: 'inventory-service' }
+
 /** Index of the file's first conflict among its chunks, as the arrows address it. */
 function firstConflict(gm: Manager): number {
   return gm.mergeFile.value!.chunks.findIndex((chunk) => chunk.kind === 'conflict')
@@ -160,6 +164,8 @@ describe('a clean merge', () => {
     await gm.startMerge()
     expect(gm.mergeDialog.value?.problem).toBe('your changes would be overwritten')
     expect(gm.status.value).toBe('Failed: your changes would be overwritten')
+    // The dialog is where the user is looking, and it says why.
+    expect(gm.toasts.value).toEqual([])
   })
 
   it('names the running operation, so the button can say so, and waits for a refresh first', async () => {
@@ -293,6 +299,7 @@ describe('a merge with conflicts', () => {
     resolveAll(gm)
     await gm.completeMerge()
     expect(gm.status.value).toBe('Failed: a branch has moved since')
+    expect(raised(gm)).toEqual([{ kind: 'failure', message: 'Failed: a branch has moved since', ...HERE }])
     expect(gm.mergeSession.value).not.toBeNull()
     expect(gm.mergeConflictsLeft.value).toBe(0)
   })
@@ -406,6 +413,7 @@ describe('a merge left unfinished', () => {
     const after = await loaded(source())
     expect(after.mergeSession.value?.request.theirs).toBe('bb00001')
     expect(after.status.value).toContain('1 file needs another look')
+    expect(raised(after)).toEqual([{ kind: 'notice', message: after.status.value, ...HERE }])
     expect(after.mergeConflictsLeft.value).toBe(2)
     after.selectMergeFile('pom.xml')
     expect(conflictsIn(after.mergeFile.value!)[0]!.picks).toEqual(['ours'])
@@ -419,12 +427,32 @@ describe('a merge left unfinished', () => {
 
     const after = await loaded(source())
     expect(after.mergeSession.value).toBeNull()
-    expect(after.status.value).toBe('Your merge of main into feature/stock-reservations is waiting: check out feature/stock-reservations to continue it')
+    const waiting = 'Your merge of main into feature/stock-reservations is waiting: check out feature/stock-reservations to continue it'
+    expect(after.status.value).toBe(waiting)
+    expect(raised(after)).toEqual([{ kind: 'notice', message: waiting, ...HERE }])
     expect(storage.has(KEY)).toBe(true)
 
     await after.checkoutBranch('feature/stock-reservations')
     expect(after.mergeSession.value?.request.branch).toBe('main')
     expect(after.mergeConflictsLeft.value).toBe(2)
+    // It is no longer waiting, so that is no longer said.
+    expect(after.toasts.value).toEqual([])
+  })
+
+  it('is announced when its repository is opened, not again every time the window is looked at', async () => {
+    const { repositories, source } = sameRepositories()
+    await resolving(source())
+    repositories.find((repo) => repo.id === 'inventory')!.currentBranch = 'bugfix/sku-null-check'
+
+    const gm = await loaded(source())
+    expect(raised(gm)).toHaveLength(1)
+    gm.dismissToast(gm.toasts.value[0]!.id)
+    await gm.refresh()
+    expect(gm.toasts.value).toEqual([])
+
+    await gm.selectRepository('pricing')
+    await gm.selectRepository('inventory')
+    expect(raised(gm)).toMatchObject([{ kind: 'notice', ...HERE }])
   })
 
   it('keeps its choices when it can’t be read back yet', async () => {
@@ -438,6 +466,9 @@ describe('a merge left unfinished', () => {
     const after = await loaded(failing)
     expect(after.mergeSession.value).toBeNull()
     expect(after.status.value).toBe('Couldn’t continue your merge of main yet: no branch is checked out. Your choices are saved')
+    expect(raised(after)).toEqual([
+      { kind: 'notice', message: 'Couldn’t continue your merge of main yet: no branch is checked out. Your choices are saved', ...HERE },
+    ])
     expect(storage.has(KEY)).toBe(true)
   })
 
@@ -452,6 +483,7 @@ describe('a merge left unfinished', () => {
     expect(after.mergeConflictsLeft.value).toBe(2)
     expect(after.status.value).toContain('This merge can’t continue yet')
     expect(after.status.value).toContain('Your choices are kept')
+    expect(raised(after)).toEqual([{ kind: 'warning', message: after.status.value, ...HERE }])
     expect(storage.has(KEY)).toBe(true)
   })
 
@@ -464,6 +496,7 @@ describe('a merge left unfinished', () => {
     const after = await loaded(source())
     expect(after.mergeSession.value).toBeNull()
     expect(after.status.value).toBe('Your merge of main was dropped: that branch no longer exists')
+    expect(raised(after)).toEqual([{ kind: 'warning', message: 'Your merge of main was dropped: that branch no longer exists', ...HERE }])
     expect(storage.has(KEY)).toBe(false)
   })
 
@@ -784,11 +817,12 @@ describe('a Pull that can’t fast-forward', () => {
 
     expect(gm.repository.value?.id).toBe('pricing')
     expect(gm.mergeDialog.value).toBeNull()
-    expect(gm.toasts.value.map(({ kind, message }) => ({ kind, message }))).toEqual([
+    expect(raised(gm)).toEqual([
       {
         kind: 'notice',
         message:
-          'Pull in inventory-service: feature/stock-reservations and origin/feature/stock-reservations both have new commits, so Pull can’t just move feature/stock-reservations forward. Open inventory-service and press Pull again to merge them.',
+          'feature/stock-reservations and origin/feature/stock-reservations both have new commits, so Pull can’t just move feature/stock-reservations forward. Open inventory-service and press Pull again to merge them.',
+        ...HERE,
       },
     ])
   })
