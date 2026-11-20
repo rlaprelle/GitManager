@@ -144,6 +144,25 @@ describe('MergeDialog', () => {
     wrapper.unmount()
   })
 
+  it('goes straight back up if the browser closes it while there is still something to show', async () => {
+    const wrapper = mountDialog({ merging: true })
+    const dialog = wrapper.get('dialog').element as HTMLDialogElement
+    expect(dialog.showModal).toHaveBeenCalledOnce()
+    // What the third Esc in a row does, whatever the cancel handler said.
+    dialog.open = false
+    await wrapper.get('dialog').trigger('close')
+    expect(dialog.showModal).toHaveBeenCalledTimes(2)
+    expect(dialog.open).toBe(true)
+    expect(wrapper.emitted('close')).toBeUndefined()
+
+    // Closed by the app (no state left): it stays closed.
+    await wrapper.setProps({ state: null })
+    await wrapper.get('dialog').trigger('close')
+    expect(dialog.showModal).toHaveBeenCalledTimes(2)
+    expect(dialog.open).toBe(false)
+    wrapper.unmount()
+  })
+
   it('closes on Cancel and on Esc', async () => {
     const wrapper = mountDialog()
     await wrapper.findAll('button').find((button) => button.text() === 'Cancel')!.trigger('click')
