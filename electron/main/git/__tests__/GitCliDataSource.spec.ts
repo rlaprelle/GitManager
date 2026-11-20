@@ -675,6 +675,20 @@ describe('GitCliDataSource talking to a remote', () => {
     expect(await tipOf(folder, 'origin/main')).toBe(await tipOf(colleague, 'main'))
   })
 
+  it('won’t offer to merge an upstream whose name a local branch shares: the name would mean that branch', async () => {
+    const { source, folder, colleague } = await withColleague()
+    await commitInFixture(fixtures, colleague, 'theirs.txt', 'theirs\n', 'Theirs')
+    await gitInFixture(fixtures, colleague, 'push', '--quiet', 'origin', 'main')
+    await commitInFixture(fixtures, folder, 'mine.txt', 'mine\n', 'Mine')
+    await gitInFixture(fixtures, folder, 'branch', 'origin/main')
+    const before = await tipOf(folder, 'main')
+
+    await expect(source.pull('repo', 'main')).rejects.toThrow(
+      'can’t fast-forward: main and origin/main both have new commits, and a local branch is also named origin/main, so it can’t be merged here. Merge or rebase them in a terminal.',
+    )
+    expect(await tipOf(folder, 'main')).toBe(before)
+  })
+
   it('refuses to pull, naming the file, when it would overwrite uncommitted changes', async () => {
     const { source, folder, colleague } = await withColleague()
     await commitInFixture(fixtures, colleague, 'README.md', '# Changed upstream\n', 'Edit the readme')

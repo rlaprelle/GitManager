@@ -43,6 +43,14 @@ describe('useReporter', () => {
     expect(reporting.toasts.value).toEqual([])
   })
 
+  it('takes back a message about one repository without touching the same message about another', () => {
+    const reporting = useReporter()
+    reporting.report.notice('Your merge is waiting', { repository: 'pricing-api' })
+    reporting.report.notice('Your merge is waiting', { repository: 'inventory-service' })
+    reporting.report.retract('Your merge is waiting', { repository: 'inventory-service' })
+    expect(shown(reporting).map((toast) => toast.context)).toEqual(['pricing-api'])
+  })
+
   it('takes a message back once it no longer holds, and lets the user dismiss one', () => {
     const reporting = useReporter()
     reporting.report.warn('This merge couldn’t be saved')

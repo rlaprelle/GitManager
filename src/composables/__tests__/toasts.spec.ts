@@ -57,6 +57,16 @@ describe('useToasts', () => {
     expect(toasts.value.map((toast) => toast.message)).toEqual(['Still true'])
   })
 
+  it('takes back only the toast about the thing named, when another says the same about something else', () => {
+    const { toasts, showToast, retractToast } = useToasts()
+    showToast('Your merge is waiting', 'notice', 'pricing-api')
+    showToast('Your merge is waiting', 'notice', 'inventory-service')
+    retractToast('Your merge is waiting', 'inventory-service')
+    expect(toasts.value.map((toast) => toast.context)).toEqual(['pricing-api'])
+    retractToast('Your merge is waiting')
+    expect(toasts.value.map((toast) => toast.context)).toEqual(['pricing-api'])
+  })
+
   it('drops the oldest when more than fit are showing', () => {
     const { toasts, showToast } = useToasts()
     for (let number = 1; number <= MAX_TOASTS + 1; number++) showToast(`Toast ${number}`)

@@ -76,6 +76,8 @@ function validDraft(value: unknown): MergeSession | null {
     typeof draft.commits === 'number' &&
     typeof draft.path === 'string' &&
     Array.isArray(draft.files) &&
-    draft.files.every((file) => typeof file?.path === 'string' && Array.isArray(file.chunks))
+    draft.files.every((file) => typeof file?.path === 'string' && Array.isArray(file.chunks)) &&
+    // The file on screen must be one of them: with none to show there would be a merge open and no resolver to leave it by.
+    draft.files.some((file) => file.path === draft.path)
   return valid ? (draft as MergeSession) : null
 }

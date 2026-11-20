@@ -406,7 +406,7 @@ onUnmounted(() => {
         @cancel="cancelDiscardMerge"
       >
         The choices you made are dropped. Nothing on disk has changed, so
-        <span class="font-mono text-gm-text">{{ currentBranch }}</span> stays where it was.
+        <span class="font-mono text-gm-text">{{ mergeSession?.into }}</span> stays where it was.
       </ConfirmDialog>
 
       <StatusBar

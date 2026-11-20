@@ -29,8 +29,8 @@ export interface Reporter {
   warn(message: string, options?: ReportOptions): void
   /** Something the user asked for didn't happen. */
   failure(message: string, options?: ReportOptions): void
-  /** Takes back something said earlier, once it no longer holds. */
-  retract(message: string): void
+  /** Takes back something said earlier (about the same repository, if it was about one), once it no longer holds. */
+  retract(message: string, options?: ReportOptions): void
 }
 
 /** A reporter, and what it puts on screen for the components that show it. */
@@ -67,7 +67,7 @@ export function useReporter(): Reporting {
     notice: (message, options) => announce('notice', message, options),
     warn: (message, options) => announce('warning', message, options),
     failure: (message, options) => announce('failure', message, options),
-    retract: retractToast,
+    retract: (message, options) => retractToast(message, options?.repository ?? null),
   }
 
   return { report, status, toasts, dismissToast }

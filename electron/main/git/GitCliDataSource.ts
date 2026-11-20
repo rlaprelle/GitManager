@@ -39,6 +39,7 @@ import {
   LOG_FORMAT,
   PUSH_FLAG,
   type PushedRef,
+  REMOTE_BRANCH_PREFIX,
   UPSTREAM_FORMAT,
   type Upstream,
   checkoutRefusal,
@@ -315,8 +316,11 @@ export class GitCliDataSource implements GitDataSource {
     const upstream = await fetchedUpstreamOf(folder, branch)
     const { behind, ahead } = await divergenceFrom(folder, upstream.ref)
     if (behind === 0) return { message: pulledMessage(0, upstream.name) }
-    // Not a failure: the app offers to merge the upstream instead.
-    if (ahead > 0) return { message: divergedMessage(branch, upstream.name), mergeable: upstream.name }
+    if (ahead > 0) {
+      await this.refuseShadowedUpstream(folder, branch, upstream)
+      // Not a failure: the app offers to merge the upstream instead.
+      return { message: divergedMessage(branch, upstream.name), mergeable: upstream.name }
+    }
     await fastForward(folder, upstream)
     return { message: pulledMessage(behind, upstream.name) }
   }
@@ -357,6 +361,21 @@ export class GitCliDataSource implements GitDataSource {
   async merge(repoId: string, request: MergeRequest, resolutions: MergeResolution[]): Promise<OperationResult> {
     const folder = await this.folderOf(repoId)
     return merge(folder, await this.branchesAt(folder), request, resolutions)
+  }
+
+  /**
+   * A merge names its branch as the branch list does, and there a local branch someone named
+   * 'origin/main' has the same name as the remote one: offering to merge the upstream by that name
+   * would merge the local branch instead. (Git itself then calls the upstream 'remotes/origin/main',
+   * a name the list doesn't have.) Rare enough to leave to a terminal, too wrong to let happen.
+   */
+  private async refuseShadowedUpstream(folder: string, branch: string, upstream: Upstream): Promise<void> {
+    if (!upstream.ref.startsWith(REMOTE_BRANCH_PREFIX)) return
+    const listedAs = upstream.ref.slice(REMOTE_BRANCH_PREFIX.length)
+    if (!hasBranchNamed((await this.branchesAt(folder)).local, listedAs)) return
+    throw new GitError(
+      `can’t fast-forward: ${branch} and ${listedAs} both have new commits, and a local branch is also named ${listedAs}, so it can’t be merged here. Merge or rebase them in a terminal.`,
+    )
   }
 
   /** One repository's list entry. A repository git can't read is still listed, with the problem. */

@@ -144,6 +144,9 @@ function toggleCurrent(side: MergeSide): void {
 }
 
 function onKeydown(event: KeyboardEvent): void {
+  // Like the file list and Complete merge, the shortcuts wait for an open edit to be finished,
+  // wherever the focus is by then; and nothing is chosen while the merge is being completed.
+  if (editing.value || props.completing) return
   const target = event.target as HTMLElement | null
   if (target?.closest?.('textarea, select, dialog')) return
   if (event.key === 'F7') {
@@ -298,7 +301,7 @@ const sideOnly = 'max-[860px]:hidden'
           <button
             type="button"
             :class="smallButton"
-            :disabled="leftInFile > 0 || file.marked"
+            :disabled="leftInFile > 0 || file.marked || editing || completing"
             title="Marks this file as checked. Nothing is staged or written."
             @click="emit('mark')"
           >
@@ -323,7 +326,8 @@ const sideOnly = 'max-[860px]:hidden'
               {{ branchName }} <span class="font-mono text-gm-ref-local-text">{{ session.request.theirs.slice(0, 7) }}</span>
             </div>
 
-            <template v-for="row in rows" :key="row.index">
+            <!-- Keyed by file too: a conflict in the same place in another file is another conflict, with its own unfolded base. -->
+            <template v-for="row in rows" :key="`${file.path}:${row.index}`">
               <div :class="[sideOnly, cellTint(row)]" class="min-w-0" data-pane="ours">
                 <MergePaneLines :lines="row.ours" />
               </div>
