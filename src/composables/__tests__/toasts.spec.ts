@@ -12,6 +12,15 @@ describe('useToasts', () => {
     ])
   })
 
+  it('keeps what a toast is about with it, and treats the same words about something else as another toast', () => {
+    const { toasts, showToast } = useToasts()
+    showToast('Failed: no upstream branch', 'failure', 'pricing-api')
+    showToast('Failed: no upstream branch', 'failure', 'pricing-api')
+    showToast('Failed: no upstream branch', 'failure', 'inventory-service')
+    showToast('Nothing in particular')
+    expect(toasts.value.map((toast) => toast.context)).toEqual(['pricing-api', 'inventory-service', null])
+  })
+
   it('keeps a toast until it is dismissed, and dismisses only that one', () => {
     const { toasts, showToast, dismissToast } = useToasts()
     showToast('Stays')

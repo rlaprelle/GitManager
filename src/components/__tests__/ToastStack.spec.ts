@@ -4,8 +4,9 @@ import type { Toast } from '@/composables/toasts'
 import ToastStack from '../ToastStack.vue'
 
 const TOASTS: Toast[] = [
-  { id: 1, kind: 'notice', message: 'Pull in pricing-api found new commits on both sides' },
-  { id: 2, kind: 'warning', message: 'This merge couldn’t be saved' },
+  { id: 1, kind: 'notice', message: 'Your merge of main into feature/login is waiting', context: 'pricing-api' },
+  { id: 2, kind: 'warning', message: 'This merge couldn’t be saved', context: null },
+  { id: 3, kind: 'failure', message: 'Failed: no upstream branch to pull from', context: 'inventory-service' },
 ]
 
 describe('ToastStack', () => {
@@ -14,10 +15,19 @@ describe('ToastStack', () => {
     expect(wrapper.findAll('p').map((message) => message.text())).toEqual(TOASTS.map((toast) => toast.message))
   })
 
-  it('announces a notice politely and a warning at once', () => {
+  it('says what a toast is about, above its message, when it has that to say', () => {
+    const wrapper = mount(ToastStack, { props: { toasts: TOASTS } })
+    expect(wrapper.get('[data-kind="failure"]').get('[data-testid="toast-context"]').text()).toBe('inventory-service')
+    expect(wrapper.get('[data-kind="notice"]').get('[data-testid="toast-context"]').text()).toBe('pricing-api')
+    expect(wrapper.get('[data-kind="notice"]').get('p').text()).toBe('Your merge of main into feature/login is waiting')
+    expect(wrapper.get('[data-kind="warning"]').find('[data-testid="toast-context"]').exists()).toBe(false)
+  })
+
+  it('announces a notice politely, and a warning or a failure at once', () => {
     const wrapper = mount(ToastStack, { props: { toasts: TOASTS } })
     expect(wrapper.get('[data-kind="notice"]').attributes('role')).toBe('status')
     expect(wrapper.get('[data-kind="warning"]').attributes('role')).toBe('alert')
+    expect(wrapper.get('[data-kind="failure"]').attributes('role')).toBe('alert')
   })
 
   it('asks for the toast whose Dismiss was pressed to go', async () => {
