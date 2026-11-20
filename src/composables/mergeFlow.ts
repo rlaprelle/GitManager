@@ -30,6 +30,17 @@ export interface MergeDialogState {
   branch: string | null
   /** Why the branch can't be previewed or the merge failed, shown in the dialog. */
   problem: string | null
+  /**
+   * A merge saved for this repository that isn't on screen (the branch it merges into isn't checked
+   * out, say). Only one is kept per repository, so resolving another would replace it.
+   */
+  waiting: WaitingMerge | null
+}
+
+/** A saved merge, as the dialog names it. */
+export interface WaitingMerge {
+  branch: string
+  into: string
 }
 
 /** A merge being resolved. It exists only here until Complete merge: nothing on disk has changed. */
@@ -70,6 +81,8 @@ export function useMergeFlow(host: MergeFlowHost) {
   // shallow: files are replaced whole on every change, and must reach IPC as plain objects.
   const mergeSession = shallowRef<MergeSession | null>(null)
   const mergeDiscardPending = ref(false)
+  /** The user is being asked whether the merge they are starting may replace the one that is waiting. */
+  const mergeReplacePending = ref(false)
 
   /** Every change to the merge goes through here, so what's saved always matches the screen. */
   function setSession(repoId: string, session: MergeSession): void {
@@ -109,20 +122,29 @@ export function useMergeFlow(host: MergeFlowHost) {
   function openMergeDialog(): void {
     if (!dialogMayOpen()) return
     previewLoad.clear()
-    mergeDialog.value = { fromPull: false, branch: null, problem: null }
+    mergeDialog.value = { fromPull: false, branch: null, problem: null, waiting: waitingMerge() }
+  }
+
+  /** No merge is on screen when the dialog opens, so one that is saved is waiting for its branch. */
+  function waitingMerge(): WaitingMerge | null {
+    const repo = host.repository.value
+    const saved = repo ? drafts.load(repo.id) : null
+    return saved ? { branch: saved.request.branch, into: saved.request.into } : null
   }
 
   /** Pull found both sides have new commits: offers to merge the upstream, already picked. */
   async function offerMerge(upstream: string): Promise<void> {
     if (!dialogMayOpen()) return
-    mergeDialog.value = { fromPull: true, branch: null, problem: null }
+    mergeDialog.value = { fromPull: true, branch: null, problem: null, waiting: waitingMerge() }
     await chooseMergeBranch(upstream)
   }
 
   function closeMergeDialog(): void {
     if (host.operationRunning.value) return
-    mergeDialog.value = null
-    previewLoad.clear()
+    endDialog()
+    // A saved merge the open dialog kept off screen can come back now, if it is able to continue.
+    const repo = host.repository.value
+    if (repo) void resumeSavedMerge(repo, { quietly: true })
   }
 
   /** Works out what merging the branch would do. Changes nothing, so it runs as soon as one is picked. */
@@ -141,10 +163,31 @@ export function useMergeFlow(host: MergeFlowHost) {
     if (mergeDialog.value) mergeDialog.value = { ...mergeDialog.value, problem }
   }
 
-  /** The dialog's Merge button: a clean merge completes now; conflicts open the resolver first. */
+  /**
+   * The dialog's Merge button: a clean merge completes now; conflicts open the resolver first. That
+   * would save this merge over one that is waiting, so the user is asked before that happens.
+   */
   async function startMerge(): Promise<void> {
     const preview = mergePreview.value
     if (!preview || mergeRefusal(preview)) return
+    if (preview.conflicts.length > 0 && mergeDialog.value?.waiting) mergeReplacePending.value = true
+    else await runMerge(preview)
+  }
+
+  /** The user agreed to drop the waiting merge's choices for the one they are starting. */
+  async function confirmReplaceMerge(): Promise<void> {
+    const preview = mergePreview.value
+    if (!mergeReplacePending.value || !preview) return
+    mergeReplacePending.value = false
+    await runMerge(preview)
+  }
+
+  /** Back to the dialog, with the waiting merge untouched. */
+  function cancelReplaceMerge(): void {
+    mergeReplacePending.value = false
+  }
+
+  async function runMerge(preview: MergePreview): Promise<void> {
     await host.runOperation('merge', 'Merging…', async (repo) => {
       try {
         await host.refreshFinished()
@@ -184,6 +227,7 @@ export function useMergeFlow(host: MergeFlowHost) {
 
   function endDialog(): void {
     mergeDialog.value = null
+    mergeReplacePending.value = false
     previewLoad.clear()
   }
 
@@ -220,7 +264,8 @@ export function useMergeFlow(host: MergeFlowHost) {
     if (repo.currentBranch !== into) return say(`Your merge of ${branch} into ${into} is waiting: check out ${into} to continue it`)
     try {
       const preview = await source.previewMerge(repo.id, branch)
-      if (!stillOpen(repo) || mergeSession.value) return
+      // The dialog may have been opened while git was answering: it wins, and the merge stays waiting.
+      if (!stillOpen(repo) || mergeSession.value || mergeDialog.value) return
       if (preview.ours === draft.request.ours && preview.theirs === draft.request.theirs) {
         mergeSession.value = draft
         status.value = `Continuing your merge of ${branch} into ${into} · ${NOTHING_ON_DISK}`
@@ -255,7 +300,7 @@ export function useMergeFlow(host: MergeFlowHost) {
       return
     }
     const { files, changed } = carryChoices(earlier.files, await conflictFiles(repo, preview))
-    if (!stillOpen(repo)) return
+    if (!stillOpen(repo) || mergeDialog.value) return
     const path = files.some((file) => file.path === earlier.path) ? earlier.path : (files[0]?.path ?? '')
     setSession(repo.id, sessionFor(preview, files, path))
     status.value = `A branch moved, so the merge was worked out again: ${pluralize(changed, 'file needs', 'files need')} another look · ${NOTHING_ON_DISK}`
@@ -362,8 +407,7 @@ export function useMergeFlow(host: MergeFlowHost) {
 
   /** Another repository is being opened: nothing on screen applies to it. A saved merge stays saved. */
   function resetMerge(): void {
-    mergeDialog.value = null
-    previewLoad.clear()
+    endDialog()
     mergeSession.value = null
     mergeDiscardPending.value = false
   }
@@ -378,11 +422,14 @@ export function useMergeFlow(host: MergeFlowHost) {
     mergeFile,
     mergeConflictsLeft,
     mergeDiscardPending,
+    mergeReplacePending,
     openMergeDialog,
     offerMerge,
     closeMergeDialog,
     chooseMergeBranch,
     startMerge,
+    confirmReplaceMerge,
+    cancelReplaceMerge,
     selectMergeFile,
     toggleMergeSide,
     useNeitherMergeSide,

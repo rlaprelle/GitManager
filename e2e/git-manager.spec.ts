@@ -499,6 +499,34 @@ test.describe('merging', () => {
     await expect(arrow(page, 'Take back ours for conflict 1')).toHaveAttribute('aria-pressed', 'true')
   })
 
+  test('a merge saved and waiting is only replaced once you agree', async ({ page }) => {
+    await openResolver(page)
+    // As if another branch had been checked out outside the app: the saved merge is for one that isn't current.
+    await page.evaluate(() => {
+      const key = 'gm.mergeDraft.inventory'
+      const saved = JSON.parse(localStorage.getItem(key)!)
+      saved.into = saved.request.into = 'release/2.4'
+      localStorage.setItem(key, JSON.stringify(saved))
+    })
+    await page.reload()
+    await expect(status(page)).toHaveText('Your merge of main into release/2.4 is waiting: check out release/2.4 to continue it')
+
+    await pickBranch(page, 'main')
+    await expect(mergeDialog(page).getByTestId('merge-waiting')).toHaveText('Your merge of main into release/2.4 is saved and waiting.')
+    await mergeDialog(page).getByRole('button', { name: 'Resolve conflicts…' }).click()
+    const asking = page.getByRole('dialog', { name: 'Replace your saved merge?' })
+    await expect(asking).toContainText('The choices you made merging main into release/2.4 will be dropped.')
+    await asking.getByRole('button', { name: 'Cancel' }).click()
+    await expect(asking).toBeHidden()
+    await expect(mergeDialog(page)).toBeVisible()
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('gm.mergeDraft.inventory')!).into)).toBe('release/2.4')
+
+    await mergeDialog(page).getByRole('button', { name: 'Resolve conflicts…' }).click()
+    await asking.getByRole('button', { name: 'Replace it' }).click()
+    await expect(resolver(page)).toBeVisible()
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('gm.mergeDraft.inventory')!).into)).toBe(INTO)
+  })
+
   test('at the smallest desktop size the page itself doesn’t scroll', async ({ page }) => {
     await page.setViewportSize({ width: 1024, height: 640 })
     await openResolver(page)

@@ -122,10 +122,13 @@ const {
   mergeFile,
   mergeConflictsLeft,
   mergeDiscardPending,
+  mergeReplacePending,
   openMergeDialog,
   closeMergeDialog,
   chooseMergeBranch,
   startMerge,
+  confirmReplaceMerge,
+  cancelReplaceMerge,
   selectMergeFile,
   toggleMergeSide,
   useNeitherMergeSide,
@@ -382,6 +385,18 @@ onUnmounted(() => {
         @merge="startMerge"
         @close="closeMergeDialog"
       />
+
+      <!-- Opens over the Merge dialog, which stays as it was if the answer is no. -->
+      <ConfirmDialog
+        :open="mergeReplacePending"
+        title="Replace your saved merge?"
+        confirm-label="Replace it"
+        @confirm="confirmReplaceMerge"
+        @cancel="cancelReplaceMerge"
+      >
+        The choices you made merging <span class="font-mono text-gm-text">{{ mergeDialog?.waiting?.branch }}</span> into
+        <span class="font-mono text-gm-text">{{ mergeDialog?.waiting?.into }}</span> will be dropped.
+      </ConfirmDialog>
 
       <ConfirmDialog
         :open="mergeDiscardPending"

@@ -137,6 +137,43 @@ describe('App merging', () => {
     expect(status()).toBe('Continuing your merge of main into feature/stock-reservations · Nothing on disk has changed yet')
   })
 
+  it('asks before a merge with conflicts replaces one that is saved and waiting', async () => {
+    // A merge left half resolved; then main is checked out outside the app, where the feature branch clashes too.
+    const repositories = structuredClone(sampleRepositories)
+    await mountApp(new MockGitDataSource(repositories))
+    await openResolver()
+    wrapper.unmount()
+    const inventory = repositories[0]!
+    inventory.currentBranch = 'main'
+    inventory.mergeConflicts = { ...inventory.mergeConflicts, 'feature/stock-reservations': inventory.mergeConflicts!['main']! }
+    await mountApp(new MockGitDataSource(repositories))
+    expect(resolver().exists()).toBe(false)
+
+    await chooseBranch('feature/stock-reservations')
+    expect(wrapper.get('[data-testid="merge-waiting"]').text()).toBe('Your merge of main into feature/stock-reservations is saved and waiting.')
+    const asking = () => wrapper.findAll('dialog').find((dialog) => dialog.text().includes('Replace your saved merge?'))!
+    const answer = async (name: string) => {
+      await asking().findAll('button').find((candidate) => candidate.text() === name)!.trigger('click')
+      await flushPromises()
+    }
+    expect((asking().element as HTMLDialogElement).open).toBe(false)
+
+    await wrapper.get('dialog form').trigger('submit')
+    await flushPromises()
+    expect((asking().element as HTMLDialogElement).open).toBe(true)
+    expect(asking().text()).toContain('The choices you made merging main into feature/stock-reservations will be dropped.')
+
+    await answer('Cancel')
+    expect((asking().element as HTMLDialogElement).open).toBe(false)
+    expect(wrapper.find('#merge-title').exists()).toBe(true)
+    expect(resolver().exists()).toBe(false)
+
+    await wrapper.get('dialog form').trigger('submit')
+    await flushPromises()
+    await answer('Replace it')
+    expect(resolver().get('h2').text()).toBe('Merging feature/stock-reservations into main')
+  })
+
   it('shows a notice while something is left unfinished outside the app', async () => {
     const source = new MockGitDataSource()
     source.getUnfinishedOperation = async () => 'merge'

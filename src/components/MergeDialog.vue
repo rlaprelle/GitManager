@@ -74,6 +74,11 @@ function onChoose(event: Event): void {
           else has changed.
         </p>
 
+        <p v-if="state.waiting" class="m-0 rounded-lg bg-gm-selected px-3 py-2 leading-[1.5] text-gm-soft [overflow-wrap:anywhere]" data-testid="merge-waiting">
+          Your merge of <span class="font-mono">{{ state.waiting.branch }}</span> into
+          <span class="font-mono">{{ state.waiting.into }}</span> is saved and waiting.
+        </p>
+
         <label class="flex flex-col gap-1.5 text-[12px] text-gm-muted">
           Branch to merge
           <select
