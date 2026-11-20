@@ -125,6 +125,21 @@ describe('App merging', () => {
     expect(resolver().exists()).toBe(false)
   })
 
+  it('names the branch the merge is into when asking about discarding it, whatever is checked out by then', async () => {
+    const repositories = structuredClone(sampleRepositories)
+    await mountApp(new MockGitDataSource(repositories))
+    await openResolver()
+    await click('Bring in ours for conflict 1')
+    // Outside the app, another branch is checked out; the app sees it when its window is looked at again.
+    repositories[0]!.currentBranch = 'main'
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+
+    await click('Discard merge')
+    const asking = wrapper.findAll('dialog').find((dialog) => dialog.text().includes('Discard this merge?'))!
+    expect(asking.text()).toContain('feature/stock-reservations stays where it was')
+  })
+
   it('picks up a merge left open, with its choices, when the app starts again', async () => {
     await mountApp()
     await openResolver()

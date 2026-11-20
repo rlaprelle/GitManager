@@ -906,6 +906,14 @@ describe('a Pull that can’t fast-forward', () => {
     expect(gm.mergeDialog.value).toBeNull()
   })
 
+  it('stops speaking of the Pull once another branch is picked in the dialog it opened', async () => {
+    const gm = await loaded(new MockGitDataSource(divergedRepositories()))
+    await gm.pull()
+    expect(gm.mergeDialog.value).toMatchObject({ fromPull: true, branch: 'origin/feature/stock-reservations' })
+    await gm.chooseMergeBranch('main')
+    expect(gm.mergeDialog.value).toMatchObject({ fromPull: false, branch: 'main' })
+  })
+
   it('offers nothing when the host doesn’t offer merging', async () => {
     const gm = useGitManager(new MockGitDataSource(divergedRepositories()), {
       comparePaths: { ...SAMPLE_COMPARE_PATHS },

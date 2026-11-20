@@ -200,7 +200,9 @@ export function useMergeFlow(host: MergeFlowHost) {
     const repo = host.repository.value
     const dialog = mergeDialog.value
     if (!repo || !dialog) return
-    mergeDialog.value = { ...dialog, branch, problem: null }
+    // The dialog speaks of the Pull that opened it only while the upstream it offered is the one picked.
+    const fromPull = dialog.fromPull && (dialog.branch === null || dialog.branch === branch)
+    mergeDialog.value = { ...dialog, fromPull, branch, problem: null }
     await previewLoad.run(
       () => source.previewMerge(repo.id, branch),
       (error) => setDialogProblem(errorMessage(error)),

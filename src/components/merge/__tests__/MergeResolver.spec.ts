@@ -106,6 +106,15 @@ describe('MergeResolver', () => {
     expect(wrapper.get('[data-testid="merge-base"]').text()).toContain('l4')
   })
 
+  it('folds a long base away again for another file’s conflict, whatever was unfolded in the last', async () => {
+    const withLongBase = (path: string) => toMergeFile({ path, base: 'l1\nl2\nl3\nl4\n', ours: 'o\n', theirs: 't\n' })
+    mountResolver([withLongBase('one.ts'), withLongBase('two.ts')])
+    await button('Show what it was before (4 lines)').trigger('click')
+    expect(wrapper.get('[data-testid="merge-base"]').text()).toContain('l4')
+    await wrapper.setProps({ file: withLongBase('two.ts') })
+    expect(wrapper.get('[data-testid="merge-base"]').text()).not.toContain('l4')
+  })
+
   it('says so when there was no base', () => {
     mountResolver([toMergeFile({ path: 'f', base: null, ours: 'o\n', theirs: 't\n' })])
     expect(wrapper.get('[data-testid="merge-base"]').text()).toContain('Both added lines here')
@@ -277,6 +286,27 @@ describe('MergeResolver', () => {
       ])
     })
 
+    it('leaves those keys alone for as long as an edit box is open, wherever the focus has gone', async () => {
+      mountResolver([fileB()], { conflictsLeft: 2 })
+      await button('Edit conflict 1 by hand').trigger('click')
+      ;(button('Done').element as HTMLElement).focus()
+      press({ key: 'F7' })
+      press({ key: 'ArrowRight', altKey: true })
+      await wrapper.vm.$nextTick()
+      expect(position()).toBe('1/2')
+      expect(wrapper.emitted('toggle')).toBeUndefined()
+      expect(wrapper.find('textarea').exists()).toBe(true)
+    })
+
+    it('leaves those keys alone while the merge is being completed', async () => {
+      mountResolver([fileB()], { conflictsLeft: 2, completing: true })
+      press({ key: 'F7' })
+      press({ key: 'ArrowRight', altKey: true })
+      await wrapper.vm.$nextTick()
+      expect(position()).toBe('1/2')
+      expect(wrapper.emitted('toggle')).toBeUndefined()
+    })
+
     it('leaves those keys alone while typing', async () => {
       mountResolver()
       await button('Edit conflict 1 by hand').trigger('click')
@@ -297,6 +327,17 @@ describe('MergeResolver', () => {
       expect(wrapper.emitted('mark')).toHaveLength(1)
       await wrapper.setProps({ file: { ...useNeitherSide(fileA(), CONFLICT), marked: true } })
       expect(button('Marked resolved').attributes('disabled')).toBeDefined()
+    })
+
+    it('doesn’t take a mark while a conflict is being edited, or the merge completed: it would be cleared at once', async () => {
+      mountResolver([toggleSide(fileA(), CONFLICT, 'ours')], { conflictsLeft: 0 })
+      expect(button('Mark resolved').attributes('disabled')).toBeUndefined()
+      await button('Edit').trigger('click')
+      expect(button('Mark resolved').attributes('disabled')).toBeDefined()
+      await button('Cancel').trigger('click')
+      expect(button('Mark resolved').attributes('disabled')).toBeUndefined()
+      await wrapper.setProps({ completing: true })
+      expect(button('Mark resolved').attributes('disabled')).toBeDefined()
     })
 
     it('completes once no conflicts are left anywhere, marked or not', async () => {
