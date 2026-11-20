@@ -28,7 +28,7 @@ Git Manager is for developers who juggle several repositories and want a quick v
   - **Three panes, lined up:** *Ours* (your branch), the *Result*, and *Theirs* (the branch coming in). Changes only one side made are already in; their arrow takes them back out.
   - **Arrows bring in a side.** Each conflict has an arrow from each side. Use one or both: they stack in the order you click, and clicking again takes a side back. The conflict also shows what the lines were before either branch changed them, and what each branch did. **Edit by hand** opens a box for just that conflict, for when the answer is a mix of both; until you press Done or Cancel, Complete merge and the file list wait, so nothing you typed is left behind. **Use neither side** drops the lines.
   - **Finishing:** **Mark resolved** is an optional checkpoint for your own tracking; it stages nothing. **Complete merge** makes the merge commit and only then updates your files. **Discard merge** walks away, and there's nothing to undo because nothing changed. Merge commits are signed if your git signs commits, but commit hooks don’t run. Close the app halfway and your choices are still there next time. One unfinished merge is kept per repository: if one is waiting for its branch to be checked out again and you start another that has conflicts, the Merge dialog says so and asks before replacing it. If a branch moves meanwhile, the merge is worked out again and your choices are kept for the files that came out the same.
-  - **Left to a terminal:** files deleted on one side, binary files, Git LFS files, files that aren't UTF-8 text, and links can't be resolved here, and the dialog says so before anything starts. Files the merge would overwrite (uncommitted changes, or untracked and ignored files in the way) must be committed, stashed or moved first; other uncommitted work is left alone. A merge, rebase or cherry-pick already under way outside the app gets a notice and is left for you to finish there. Merging needs git 2.38 or newer; with older git the button doesn't appear.
+  - **Left to a terminal:** files deleted on one side, binary files, Git LFS files, files that aren't UTF-8 text, and links can't be resolved here, and the dialog says so before anything starts. Files the merge would overwrite (uncommitted changes, or untracked and ignored files in the way) must be committed, stashed or moved first; other uncommitted work is left alone. A merge, rebase or cherry-pick already under way outside the app gets a notice and is left for you to finish there.
 
 ## Core concepts
 
@@ -46,7 +46,7 @@ Git Manager is for developers who juggle several repositories and want a quick v
 
 ## Quick start
 
-You need [Node.js](https://nodejs.org/) (developed and tested on Node 24), and for the desktop app [Git for Windows](https://git-scm.com/download/win) 2.30 or newer. In PowerShell:
+You need [Node.js](https://nodejs.org/) (developed and tested on Node 24), and for the desktop app [Git for Windows](https://git-scm.com/download/win) 2.38 or newer. In PowerShell:
 
 ```powershell
 npm install
@@ -106,7 +106,7 @@ For how the code is organised, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md
 
 The interface talks to git through a single TypeScript interface, `GitDataSource` (`src/services/GitDataSource.ts`). It asks only for what the screen shows (a repository's branches, a page of history, one commit's files, one file's diff), so large repositories never have to be read in full: the history shows the newest 200 commits, and **Show more commits** at the end of the list adds 200 at a time.
 
-- **Desktop app:** its Electron main process runs your installed Git for Windows, so it uses your own git settings, and passes results to the interface over the preload bridge. Reading never takes git's locks, so it can't get in the way of your own git commands; Checkout, Pull and the rest run git as your own commands do, with your credential helper, SSH keys and hooks. If git is missing or older than 2.30, the app says so instead of starting (merging needs 2.38; with older git its button is hidden). Your repository list is kept in `%APPDATA%\git-manager\repositories.json`.
+- **Desktop app:** its Electron main process runs your installed Git for Windows, so it uses your own git settings, and passes results to the interface over the preload bridge. Reading never takes git's locks, so it can't get in the way of your own git commands; Checkout, Pull and the rest run git as your own commands do, with your credential helper, SSH keys and hooks. If git is missing or older than 2.38 (October 2022, the first that can work a merge out without touching your files), the app says so instead of starting. Your repository list is kept in `%APPDATA%\git-manager\repositories.json`.
 - **Browser version:** keeps the sample data (`MockGitDataSource`), so the interface can be developed and tested without touching a real repository.
 
 Renamed files show as one change ("renamed from …", or "moved from …" when only the folder changed), diffed against their old version. Not tried yet: submodules and Git LFS (an LFS checkout that needs to sign in will fail: only Fetch, Pull and Push may ask you to sign in). A branch checked out in another worktree can't be checked out here; git's message says where it is.

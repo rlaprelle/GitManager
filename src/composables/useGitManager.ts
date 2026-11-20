@@ -36,7 +36,7 @@ export interface GitManagerOptions {
   comparePaths: { left: string; right: string }
   /** Where merges being resolved are kept across restarts; localStorage unless a test says otherwise. */
   mergeDrafts?: MergeDrafts
-  /** False when the host doesn't offer merging (git too old): a diverged Pull then offers nothing. */
+  /** False when the host doesn't offer merging (`merge` isn't among its operations): a diverged Pull then offers nothing. */
   canMerge?: boolean
 }
 

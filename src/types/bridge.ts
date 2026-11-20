@@ -1,12 +1,9 @@
 import type { GitDataSource } from '@/services/GitDataSource'
 import type { AddRepositoryResult, CloneProgress, CloneRequest } from '@/types/git'
 
-/**
- * Whether the installed git can be used, from `git --version` at startup. `canMerge`: it is new
- * enough for the app's merging, which works a merge out in memory (`git merge-tree`, 2.38).
- */
+/** Whether the installed git can be used, from `git --version` at startup. */
 export type GitStatus =
-  | { state: 'ready'; version: string; canMerge: boolean }
+  | { state: 'ready'; version: string }
   | { state: 'too-old'; version: string; minimum: string }
   | { state: 'missing'; minimum: string }
 

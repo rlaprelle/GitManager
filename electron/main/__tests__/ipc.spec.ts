@@ -15,7 +15,7 @@ function registeredHandlers(source: GitDataSource = new MockGitDataSource()) {
   registerIpcHandlers(ipc, {
     source,
     appVersion: '1.2.3',
-    checkGit: async () => ({ state: 'ready', version: '2.46.1', canMerge: true }),
+    checkGit: async () => ({ state: 'ready', version: '2.46.1' }),
   })
   return (channel: string, ...args: unknown[]) => handlers.get(channel)!({}, ...args)
 }
@@ -26,7 +26,7 @@ describe('registerIpcHandlers', () => {
     registerIpcHandlers({ handle: (channel) => handlers.add(channel) }, {
       source: new MockGitDataSource(),
       appVersion: '1.2.3',
-      checkGit: async () => ({ state: 'missing', minimum: '2.30' }),
+      checkGit: async () => ({ state: 'missing', minimum: '2.38' }),
     })
     expect([...handlers].sort()).toEqual(Object.values(IpcChannel).sort())
   })
@@ -34,7 +34,7 @@ describe('registerIpcHandlers', () => {
   it('wraps each answer as ok with its value', async () => {
     const invoke = registeredHandlers()
     expect(await invoke(IpcChannel.GetAppVersion)).toEqual({ ok: true, value: '1.2.3' })
-    expect(await invoke(IpcChannel.GetGitStatus)).toEqual({ ok: true, value: { state: 'ready', version: '2.46.1', canMerge: true } })
+    expect(await invoke(IpcChannel.GetGitStatus)).toEqual({ ok: true, value: { state: 'ready', version: '2.46.1' } })
     const history = (await invoke(IpcChannel.GetHistory, 'inventory', 2)) as { ok: true; value: { commits: unknown[] } }
     expect(history.ok).toBe(true)
     expect(history.value.commits).toHaveLength(2)
@@ -68,7 +68,7 @@ describe('registerIpcHandlers', () => {
     registerIpcHandlers({ handle: (channel, listener) => handlers.set(channel, listener as Handler) }, {
       source: new MockGitDataSource(undefined, 0),
       appVersion: '1.2.3',
-      checkGit: async () => ({ state: 'missing', minimum: '2.30' }),
+      checkGit: async () => ({ state: 'missing', minimum: '2.38' }),
     })
     const sent: unknown[][] = []
     const window = { sender: { send: (...args: unknown[]) => sent.push(args) } }
@@ -94,7 +94,7 @@ describe('registerIpcHandlers', () => {
     registerIpcHandlers({ handle: (channel, listener) => handlers.set(channel, listener as Handler) }, {
       source: new MockGitDataSource(),
       appVersion: '1.2.3',
-      checkGit: async () => ({ state: 'missing', minimum: '2.30' }),
+      checkGit: async () => ({ state: 'missing', minimum: '2.38' }),
       updates: { readyVersion: () => '0.2.1', install: () => void installed++ },
     })
     expect(await handlers.get(IpcChannel.GetReadyUpdate)!({})).toEqual({ ok: true, value: '0.2.1' })

@@ -2,13 +2,12 @@ import type { GitStatus } from '../../../src/types/bridge'
 import { runGit } from './runGit'
 
 /**
- * Oldest git the app supports. Everything it runs works from 2.18; 2.30 (Jan 2021) leaves
- * margin and is still years old. The app is tested on current Git for Windows.
+ * Oldest git the app supports: 2.38 (Oct 2022), the first with `merge-tree --write-tree`, which
+ * the app's merging works a merge out with. Everything else it runs works from 2.18. One minimum
+ * for the whole app means every operation is always there: nothing is hidden for older git. The
+ * app is tested on current Git for Windows.
  */
-export const MINIMUM_GIT_VERSION = '2.30'
-
-/** Oldest git whose `merge-tree --write-tree` the app's merging relies on (Oct 2022). Older git still runs everything else. */
-export const MINIMUM_MERGE_GIT_VERSION = '2.38'
+export const MINIMUM_GIT_VERSION = '2.38'
 
 /** 'git version 2.46.1.windows.1' → '2.46.1'. */
 export function parseGitVersion(output: string): string | null {
@@ -20,7 +19,7 @@ export function gitStatusFrom(output: string | null): GitStatus {
   const version = output === null ? null : parseGitVersion(output)
   if (version === null) return { state: 'missing', minimum: MINIMUM_GIT_VERSION }
   if (compareVersions(version, MINIMUM_GIT_VERSION) < 0) return { state: 'too-old', version, minimum: MINIMUM_GIT_VERSION }
-  return { state: 'ready', version, canMerge: compareVersions(version, MINIMUM_MERGE_GIT_VERSION) >= 0 }
+  return { state: 'ready', version }
 }
 
 export async function checkGit(): Promise<GitStatus> {

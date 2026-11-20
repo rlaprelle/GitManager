@@ -723,7 +723,7 @@ describe('a Pull that can’t fast-forward', () => {
     expect(gm.mergeDialog.value).toBeNull()
   })
 
-  it('offers nothing when the host can’t merge (git too old)', async () => {
+  it('offers nothing when the host doesn’t offer merging', async () => {
     const gm = useGitManager(new MockGitDataSource(divergedRepositories()), {
       comparePaths: { ...SAMPLE_COMPARE_PATHS },
       mergeDrafts: mergeDrafts(memoryStorage()),
