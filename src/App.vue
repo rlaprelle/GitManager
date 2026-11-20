@@ -20,6 +20,7 @@ import NoRepositories from '@/components/NoRepositories.vue'
 import PaneDivider from '@/components/PaneDivider.vue'
 import RepositoryList from '@/components/RepositoryList.vue'
 import StatusBar from '@/components/StatusBar.vue'
+import ToastStack from '@/components/ToastStack.vue'
 import DiffPanel from '@/components/diff/DiffPanel.vue'
 import BranchFileDialog from '@/components/diff/BranchFileDialog.vue'
 
@@ -121,10 +122,13 @@ const {
   mergeFile,
   mergeConflictsLeft,
   mergeDiscardPending,
+  mergeReplacePending,
   openMergeDialog,
   closeMergeDialog,
   chooseMergeBranch,
   startMerge,
+  confirmReplaceMerge,
+  cancelReplaceMerge,
   selectMergeFile,
   toggleMergeSide,
   useNeitherMergeSide,
@@ -135,6 +139,8 @@ const {
   discardMerge,
   confirmDiscardMerge,
   cancelDiscardMerge,
+  toasts,
+  dismissToast,
   // The data source is a service, not state: unwrap it in case a parent passed it in reactive props.
 } = useGitManager(toRaw(props.source), { comparePaths: props.comparePaths, canMerge: props.operations.includes('merge') })
 
@@ -380,6 +386,18 @@ onUnmounted(() => {
         @close="closeMergeDialog"
       />
 
+      <!-- Opens over the Merge dialog, which stays as it was if the answer is no. -->
+      <ConfirmDialog
+        :open="mergeReplacePending"
+        title="Replace your saved merge?"
+        confirm-label="Replace it"
+        @confirm="confirmReplaceMerge"
+        @cancel="cancelReplaceMerge"
+      >
+        The choices you made merging <span class="font-mono text-gm-text">{{ mergeDialog?.waiting?.branch }}</span> into
+        <span class="font-mono text-gm-text">{{ mergeDialog?.waiting?.into }}</span> will be dropped.
+      </ConfirmDialog>
+
       <ConfirmDialog
         :open="mergeDiscardPending"
         title="Discard this merge?"
@@ -438,5 +456,7 @@ onUnmounted(() => {
       @close="closeCloneDialog"
       @cancel-clone="cancelClone"
     />
+
+    <ToastStack :toasts="toasts" @dismiss="dismissToast" />
   </div>
 </template>

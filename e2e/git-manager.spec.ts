@@ -499,6 +499,97 @@ test.describe('merging', () => {
     await expect(arrow(page, 'Take back ours for conflict 1')).toHaveAttribute('aria-pressed', 'true')
   })
 
+  test('Complete merge and the file list wait while a conflict is being edited by hand', async ({ page }) => {
+    await openResolver(page)
+    for (const file of ['src/main/resources/application.yml', 'pom.xml']) {
+      await resolver(page).getByRole('navigation', { name: 'Conflicted files' }).getByRole('button', { name: file }).click()
+      while ((await resolver(page).getByTestId('merge-conflict').count()) > 0) {
+        await resolver(page).getByTestId('merge-conflict').first().getByRole('button', { name: /^Use neither side/ }).click()
+      }
+    }
+    await expect(complete(page)).toBeEnabled()
+
+    await resolver(page).getByTestId('merge-settled').first().getByRole('button', { name: 'Edit' }).click()
+    await resolver(page).getByRole('textbox', { name: 'Lines for conflict 1' }).fill('<version>2.4.0</version>')
+    await expect(complete(page)).toBeDisabled()
+    await expect(complete(page)).toHaveAttribute('title', 'Finish or cancel your edit first')
+    await expect(resolver(page).getByRole('navigation', { name: 'Conflicted files' }).getByRole('button').first()).toBeDisabled()
+
+    await resolver(page).getByRole('button', { name: 'Done' }).click()
+    await expect(resolver(page).locator('[data-pane="result"] [data-source="edited"]')).toContainText('<version>2.4.0</version>')
+    await complete(page).click()
+    await expect(status(page)).toHaveText(`Merged main into ${INTO} (2 commits)`)
+  })
+
+  test('a merge saved and waiting is only replaced once you agree', async ({ page }) => {
+    await openResolver(page)
+    // As if another branch had been checked out outside the app: the saved merge is for one that isn't current.
+    await page.evaluate(() => {
+      const key = 'gm.mergeDraft.inventory'
+      const saved = JSON.parse(localStorage.getItem(key)!)
+      saved.into = saved.request.into = 'release/2.4'
+      localStorage.setItem(key, JSON.stringify(saved))
+    })
+    await page.reload()
+    const waiting = 'Your merge of main into release/2.4 is waiting: check out release/2.4 to continue it'
+    await expect(status(page)).toHaveText(waiting)
+    // Too easy to miss in the status bar alone, so it is a notification as well, naming the repository.
+    const notice = page.getByTestId('toasts').getByRole('status')
+    await expect(notice.getByRole('paragraph')).toHaveText(waiting)
+    await expect(notice.getByTestId('toast-context')).toHaveText('inventory-service')
+
+    await pickBranch(page, 'main')
+    await expect(mergeDialog(page).getByTestId('merge-waiting')).toHaveText('Your merge of main into release/2.4 is saved and waiting.')
+    await mergeDialog(page).getByRole('button', { name: 'Resolve conflicts…' }).click()
+    const asking = page.getByRole('dialog', { name: 'Replace your saved merge?' })
+    await expect(asking).toContainText('The choices you made merging main into release/2.4 will be dropped.')
+    await asking.getByRole('button', { name: 'Cancel' }).click()
+    await expect(asking).toBeHidden()
+    await expect(mergeDialog(page)).toBeVisible()
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('gm.mergeDraft.inventory')!).into)).toBe('release/2.4')
+
+    await mergeDialog(page).getByRole('button', { name: 'Resolve conflicts…' }).click()
+    await asking.getByRole('button', { name: 'Replace it' }).click()
+    await expect(resolver(page)).toBeVisible()
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('gm.mergeDraft.inventory')!).into)).toBe(INTO)
+    // Nothing is waiting any more, so nothing says so.
+    await expect(notice).toHaveCount(0)
+  })
+
+  test('a merge that can’t be saved says so in a notification, which stays until dismissed and never makes the page scroll', async ({ page }) => {
+    // Storage refuses the merge, as it does when its quota is full.
+    await page.addInitScript(() => {
+      const setItem = Storage.prototype.setItem
+      Storage.prototype.setItem = function (key: string, value: string) {
+        if (key.startsWith('gm.mergeDraft.')) throw new DOMException('The quota has been exceeded.', 'QuotaExceededError')
+        setItem.call(this, key, value)
+      }
+    })
+    await page.reload()
+    await page.setViewportSize({ width: 1024, height: 640 })
+    await openResolver(page)
+
+    const warnings = page.getByTestId('toasts').getByRole('alert')
+    await expect(warnings.getByRole('paragraph')).toHaveText('This merge couldn’t be saved, so closing the app would lose it. Complete or discard it before you close.')
+    await expect(warnings.getByTestId('toast-context')).toHaveText('inventory-service')
+    expect(await pageOverflow(page)).toEqual({ x: 0, y: 0 })
+    await arrow(page, 'Bring in ours for conflict 1').click()
+    await expect(warnings).toHaveCount(1)
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    await expect(warnings).toBeVisible()
+    expect((await pageOverflow(page)).x).toBeLessThanOrEqual(0)
+
+    await warnings.getByRole('button', { name: 'Dismiss' }).click()
+    await expect(warnings).toHaveCount(0)
+
+    // Nothing was kept, so nothing half-remembered comes back.
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.reload()
+    await expect(sidebar(page)).toBeVisible()
+    await expect(resolver(page)).toBeHidden()
+  })
+
   test('at the smallest desktop size the page itself doesn’t scroll', async ({ page }) => {
     await page.setViewportSize({ width: 1024, height: 640 })
     await openResolver(page)

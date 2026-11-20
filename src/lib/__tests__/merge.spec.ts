@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { MergePreview } from '@/types/git'
 import {
   blockedMessage,
+  divergedElsewhereMessage,
   divergedMessage,
   mergeCommitMessage,
   mergeRefusal,
@@ -38,6 +39,12 @@ describe('status messages', () => {
     expect(mergedMessage('a', 'main', 1)).toBe('Merged a into main (1 commit)')
     expect(movedForwardMessage('main', 'a', 3)).toBe('Moved main forward to a (3 commits)')
     expect(divergedMessage('main', 'origin/main')).toBe('main and origin/main both have new commits, so Pull can’t just move main forward')
+  })
+
+  it('say where to go when a pull’s outcome is told after its repository was left', () => {
+    expect(divergedElsewhereMessage('pricing-api', divergedMessage('main', 'origin/main'))).toBe(
+      'main and origin/main both have new commits, so Pull can’t just move main forward. Open pricing-api and press Pull again to merge them.',
+    )
   })
 
   it('name the files in the way, in the right number', () => {

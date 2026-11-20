@@ -123,6 +123,16 @@ describe('line endings and final newlines', () => {
     expect(resultText(editConflict(file, 0, 'one\ntwo'))).toBe('one\ntwo')
   })
 
+  it('gives typed lines the file’s ending when the conflict’s own lines have none', () => {
+    const file = toMergeFile({ path: 'f', base: 'a\r\nb\r\nlast', ours: 'a\r\nb\r\nours', theirs: 'a\r\nb\r\ntheirs' })
+    expect(resultText(editConflict(file, only(file), 'one\ntwo'))).toBe('a\r\nb\r\none\r\ntwo')
+  })
+
+  it('gives typed lines the conflict’s own ending in a file that mixes endings', () => {
+    const file = toMergeFile({ path: 'f', base: 'a\r\nb\n', ours: 'a\r\nO\n', theirs: 'a\r\nT\n' })
+    expect(resultText(editConflict(file, only(file), 'one\ntwo'))).toBe('a\r\none\ntwo\n')
+  })
+
   it('needs another look when only a final newline changed', () => {
     const earlier = toMergeFile({ path: 'f', base: 'a\n', ours: 'o\n', theirs: 't\n' })
     expect(carryChoices([earlier], [toMergeFile({ path: 'f', base: 'a\n', ours: 'o\n', theirs: 't' })]).changed).toBe(1)
@@ -229,7 +239,7 @@ describe('resolving a file', () => {
   })
 
   it('settles on typed lines, which the arrows then leave alone until reopened', () => {
-    const edited = editConflict(file(), CONFLICT, 'mine\nalso\n\n')
+    const edited = editConflict(file(), CONFLICT, 'mine\nalso\n')
     expect(conflict(edited).edited).toEqual(['mine\n', 'also\n'])
     expect(conflictsLeftIn(edited)).toBe(0)
     expect(resultText(edited)).toBe('A\nb\nc\nmine\nalso\ne\n')
@@ -277,6 +287,62 @@ describe('resolving a file', () => {
   it('gives an empty file when no lines are left', () => {
     const only = toMergeFile({ path: 'f', base: null, ours: 'o\n', theirs: 't\n' })
     expect(resultText(useNeitherSide(only, 0))).toBe('')
+  })
+})
+
+describe('editing a conflict by hand', () => {
+  /** Both branches add a line followed by a blank one, between `top` and `end`. */
+  const spaced = (): MergeFile => toMergeFile({ path: 'f', base: 'top\nend\n', ours: 'top\nours\n\nend\n', theirs: 'top\ntheirs\n\nend\n' })
+  const CONFLICT = 1
+  const conflict = (f: MergeFile) => f.chunks[CONFLICT] as ConflictChunk
+  const typed = (text: string) => conflict(editConflict(spaced(), CONFLICT, text)).edited
+  /** Edit, then Done, with the box left as it opened. */
+  const doneWithoutTyping = (f: MergeFile) => editConflict(f, CONFLICT, editStartText(conflict(f)))
+
+  it('changes nothing when Done follows Edit with nothing typed, a blank line at the end included', () => {
+    const ours = toggleSide(spaced(), CONFLICT, 'ours')
+    expect(resultText(ours)).toBe('top\nours\n\nend\n')
+    expect(resultText(doneWithoutTyping(ours))).toBe('top\nours\n\nend\n')
+  })
+
+  it.each<[string, (f: MergeFile) => MergeFile, string[]]>([
+    ['both sides, for a conflict still open', (f) => f, ['ours\n', '\n', 'theirs\n', '\n']],
+    ['the side brought in', (f) => toggleSide(f, CONFLICT, 'theirs'), ['theirs\n', '\n']],
+    ['both sides in the order chosen', (f) => toggleSide(toggleSide(f, CONFLICT, 'theirs'), CONFLICT, 'ours'), ['theirs\n', '\n', 'ours\n', '\n']],
+    ['an earlier edit', (f) => editConflict(f, CONFLICT, 'mine\n\n\n'), ['mine\n', '\n', '\n']],
+    ['an earlier edit down to one blank line', (f) => editConflict(f, CONFLICT, '\n'), ['\n']],
+    ['an earlier edit down to nothing', (f) => editConflict(f, CONFLICT, ''), []],
+  ])('gives back the lines the box started from: %s', (_name, state, lines) => {
+    expect(conflict(doneWithoutTyping(state(spaced()))).edited).toEqual(lines)
+  })
+
+  it('starts the box with one more newline when the last line is blank, for Done to ignore', () => {
+    expect(editStartText(conflict(toggleSide(spaced(), CONFLICT, 'ours')))).toBe('ours\n\n')
+    expect(editStartText(conflict(spaced()))).toBe('ours\n\ntheirs\n\n')
+    expect(editStartText(conflict(editConflict(spaced(), CONFLICT, '\n')))).toBe('\n')
+  })
+
+  it('keeps blank lines typed at the end, forgiving one Enter after the last line', () => {
+    expect(typed('mine')).toEqual(['mine\n'])
+    expect(typed('mine\n')).toEqual(['mine\n'])
+    expect(typed('mine\n\n')).toEqual(['mine\n', '\n'])
+    expect(typed('mine\n\n\n')).toEqual(['mine\n', '\n', '\n'])
+  })
+
+  it('keeps blank lines anywhere else as they were typed', () => {
+    expect(typed('\nmine\n\nmore')).toEqual(['\n', 'mine\n', '\n', 'more\n'])
+  })
+
+  it('reads a box holding only a newline as one blank line, and an empty box as no lines', () => {
+    expect(typed('\n')).toEqual(['\n'])
+    expect(typed('')).toEqual([])
+  })
+
+  it('leaves untouched lines exactly as they were: mixed endings and a missing final newline too', () => {
+    const mixed = toMergeFile({ path: 'f', base: 'top\nb\n', ours: 'top\no1\r\no2', theirs: 'top\nt\n' })
+    const ours = toggleSide(mixed, CONFLICT, 'ours')
+    expect(conflict(doneWithoutTyping(ours)).edited).toEqual(['o1\r\n', 'o2'])
+    expect(resultText(doneWithoutTyping(ours))).toBe(resultText(ours))
   })
 })
 

@@ -31,7 +31,7 @@ const preview = (changes: Partial<MergePreview> = {}): MergePreview => ({
   ...changes,
 })
 
-const open: MergeDialogState = { fromPull: false, branch: 'feature/login', problem: null }
+const open: MergeDialogState = { fromPull: false, branch: 'feature/login', problem: null, waiting: null }
 
 function mountDialog(props: Partial<InstanceType<typeof MergeDialog>['$props']> = {}) {
   return mount(MergeDialog, {
@@ -119,7 +119,7 @@ describe('MergeDialog', () => {
   })
 
   it('explains itself when a Pull opened it, and asks about that branch', () => {
-    const wrapper = mountDialog({ state: { fromPull: true, branch: 'origin/main', problem: null }, preview: preview({ branch: 'origin/main' }) })
+    const wrapper = mountDialog({ state: { ...open, fromPull: true, branch: 'origin/main' }, preview: preview({ branch: 'origin/main' }) })
     expect(wrapper.get('h2').text()).toBe('Merge origin/main into main?')
     expect(wrapper.text()).toContain('Pull has fetched, and nothing else has changed.')
     expect(wrapper.text()).toContain('If your team rebases instead')
@@ -127,10 +127,39 @@ describe('MergeDialog', () => {
     wrapper.unmount()
   })
 
+  it('says when another merge is saved and waiting, and nothing of the kind otherwise', () => {
+    const waiting = mountDialog({ state: { ...open, waiting: { branch: 'release/2.4', into: 'develop' } } })
+    expect(waiting.get('[data-testid="merge-waiting"]').text()).toBe('Your merge of release/2.4 into develop is saved and waiting.')
+    waiting.unmount()
+
+    const none = mountDialog()
+    expect(none.find('[data-testid="merge-waiting"]').exists()).toBe(false)
+    none.unmount()
+  })
+
   it('locks while merging', () => {
     const wrapper = mountDialog({ merging: true })
     expect(submit(wrapper).text()).toBe('Merging…')
     for (const control of wrapper.findAll('button, select')) expect(control.attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('goes straight back up if the browser closes it while there is still something to show', async () => {
+    const wrapper = mountDialog({ merging: true })
+    const dialog = wrapper.get('dialog').element as HTMLDialogElement
+    expect(dialog.showModal).toHaveBeenCalledOnce()
+    // What the third Esc in a row does, whatever the cancel handler said.
+    dialog.open = false
+    await wrapper.get('dialog').trigger('close')
+    expect(dialog.showModal).toHaveBeenCalledTimes(2)
+    expect(dialog.open).toBe(true)
+    expect(wrapper.emitted('close')).toBeUndefined()
+
+    // Closed by the app (no state left): it stays closed.
+    await wrapper.setProps({ state: null })
+    await wrapper.get('dialog').trigger('close')
+    expect(dialog.showModal).toHaveBeenCalledTimes(2)
+    expect(dialog.open).toBe(false)
     wrapper.unmount()
   })
 

@@ -44,6 +44,8 @@
   --color-gm-warn: #f0b86e;
   --color-gm-warn-bg: #33281a;
   --color-gm-on-warn: #1f1608;
+  /* Something that was asked for and didn't happen: the red of a removed line, on a toast's edge and icon. */
+  --color-gm-failure: #ff9a9a;
   /* Behind a modal dialog */
   --color-gm-backdrop: rgb(5 7 10 / 0.72);
   --color-gm-chip: #1b2130;

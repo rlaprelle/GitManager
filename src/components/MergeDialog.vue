@@ -47,6 +47,14 @@ function onEscape(event: Event): void {
   emit('close')
 }
 
+// Esc pressed again and again gets past a refused cancel: the browser closes the dialog itself on
+// the third press, and the app wouldn't know. While there is a state to show (a merge running, or
+// why one failed), the dialog goes straight back up.
+function onClosed(): void {
+  const element = dialog.value
+  if (props.state !== null && element && !element.open) element.showModal()
+}
+
 function onChoose(event: Event): void {
   emit('choose', (event.target as HTMLSelectElement).value)
 }
@@ -58,6 +66,7 @@ function onChoose(event: Event): void {
     aria-labelledby="merge-title"
     class="m-auto w-[min(480px,calc(100vw-32px))] rounded-xl border border-gm-line-strong bg-gm-raised p-0 text-[13px] text-gm-text shadow-2xl backdrop:bg-gm-backdrop"
     @cancel="onEscape"
+    @close="onClosed"
   >
     <form v-if="state" class="flex flex-col" @submit.prevent="emit('merge')">
       <div class="flex flex-col gap-4 p-5">
@@ -72,6 +81,11 @@ function onChoose(event: Event): void {
           <span class="font-mono">{{ into }}</span> and <span class="font-mono">{{ state.branch }}</span> both have new
           commits, so Pull can’t just move <span class="font-mono">{{ into }}</span> forward. Pull has fetched, and nothing
           else has changed.
+        </p>
+
+        <p v-if="state.waiting" class="m-0 rounded-lg bg-gm-selected px-3 py-2 leading-[1.5] text-gm-soft [overflow-wrap:anywhere]" data-testid="merge-waiting">
+          Your merge of <span class="font-mono">{{ state.waiting.branch }}</span> into
+          <span class="font-mono">{{ state.waiting.into }}</span> is saved and waiting.
         </p>
 
         <label class="flex flex-col gap-1.5 text-[12px] text-gm-muted">

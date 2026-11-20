@@ -23,6 +23,14 @@ export function divergedMessage(branch: string, upstream: string): string {
   return `${branch} and ${upstream} both have new commits, so Pull can’t just move ${branch} forward`
 }
 
+/**
+ * The same, for a Pull that finished after the user had opened another repository: the merge dialog
+ * would be about the wrong one, so they are told how to get to it.
+ */
+export function divergedElsewhereMessage(repoName: string, diverged: string): string {
+  return `${diverged}. Open ${repoName} and press Pull again to merge them.`
+}
+
 export function upToDateMessage(into: string, branch: string): string {
   return `${into} already has every commit on ${branch}`
 }
@@ -54,6 +62,9 @@ export function blockedMessage(files: string[]): string {
 export function unresolvableMessage(files: string[]): string {
   return `${files.join(', ')} can’t be resolved here (deleted on one side, binary, or not a plain file). Merge in a terminal instead`
 }
+
+/** A merge being resolved couldn't be kept for a restart (storage full or unavailable): a warning, once per merge. */
+export const MERGE_NOT_SAVED = 'This merge couldn’t be saved, so closing the app would lose it. Complete or discard it before you close.'
 
 export const MOVED_SINCE = 'a branch has moved since this merge was worked out. Start the merge again'
 

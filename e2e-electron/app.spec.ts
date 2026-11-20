@@ -28,7 +28,8 @@ import {
   policyViolationsOnReload,
   primaryFontsLoaded,
 } from '../e2e/support/pageChecks'
-import type { GitManagerBridge } from '../src/types/bridge'
+import { IpcChannel } from '../electron/shared/channels'
+import type { GitManagerBridge, IpcResult } from '../src/types/bridge'
 
 // Acceptance pass for the desktop app: the built app (out/) on real repositories, read with
 // the installed git. Each test gets its own data folder listing the fixture repository.
@@ -86,6 +87,31 @@ async function folderPickerChooses(folder: string): Promise<void> {
   await app!.evaluate(({ dialog }, chosen) => {
     dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [chosen] })) as typeof dialog.showOpenDialog
   }, folder)
+}
+
+/**
+ * Makes one of the app's calls answer with this after a wait, in place of really asking git: a slow
+ * connection or a waiting sign-in, for a test that needs the call to still be running.
+ */
+async function answerSlowly(channel: string, answer: IpcResult<unknown>, waitMs: number): Promise<void> {
+  await app!.evaluate(
+    ({ ipcMain }, slow) => {
+      ipcMain.removeHandler(slow.channel)
+      ipcMain.handle(slow.channel, async () => {
+        await new Promise((resolve) => setTimeout(resolve, slow.waitMs))
+        return slow.answer
+      })
+    },
+    { channel, answer, waitMs },
+  )
+}
+
+/** Esc, again and again: the browser closes a modal dialog on the third press in a row, whatever the page says. */
+async function pressEscapeRepeatedly(): Promise<void> {
+  for (let press = 0; press < 4; press++) {
+    await window.keyboard.press('Escape')
+    await window.waitForTimeout(100)
+  }
 }
 
 async function savedRepositoryPaths(): Promise<string[]> {
@@ -211,6 +237,44 @@ test.describe('merging a real repository', () => {
     await expect(notice).toHaveCount(0)
   })
 
+  test('Esc can’t push the dialog aside while a merge runs, so a failure is still seen there', async () => {
+    await answerSlowly(IpcChannel.Merge, { ok: false, message: 'made to fail for the test' }, 2500)
+    await pickBranch('feature/apart')
+    await expect(mergeDialog().getByTestId('merge-conflicts')).toHaveText('No conflicts.')
+    await mergeDialog().getByRole('button', { name: 'Merge', exact: true }).click()
+    await pressEscapeRepeatedly()
+
+    await expect(mergeDialog()).toBeVisible()
+    await expect(mergeDialog().getByRole('alert')).toHaveText('made to fail for the test', { timeout: 10_000 })
+    await mergeDialog().getByRole('button', { name: 'Cancel' }).click()
+    await expect(mergeDialog()).toBeHidden()
+    await window.getByRole('banner').getByRole('button', { name: 'Merge…' }).click()
+    await expect(mergeDialog()).toBeVisible()
+  })
+
+  test('a Pull that finishes after another repository was opened says so in a notification, not a dialog', async () => {
+    const second = await createMergeRepository(fixtures, `e2e-merge-second-${repositories}`)
+    await launch([
+      { id: 'repo', path: repo },
+      { id: 'second', path: second },
+    ])
+    await expect(window.getByRole('button', { name: /Sessions last 30 minutes/ })).toBeVisible()
+    const first = await window.getByTestId('header-repo').innerText()
+    const diverged = 'main and origin/main both have new commits, so Pull can’t just move main forward'
+    await answerSlowly(IpcChannel.Pull, { ok: true, value: { message: diverged, mergeable: 'origin/main' } }, 1500)
+
+    await window.getByRole('banner').getByRole('button', { name: 'Pull', exact: true }).click()
+    await sidebar().getByRole('button', { name: /^e2e-merge-second/ }).click()
+    await expect(window.getByTestId('header-repo')).toHaveText(/^e2e-merge-second/)
+
+    const toast = window.getByTestId('toasts').getByRole('status')
+    await expect(toast.getByRole('paragraph')).toHaveText(`${diverged}. Open ${first} and press Pull again to merge them.`)
+    await expect(toast.getByTestId('toast-context')).toHaveText(first)
+    await expect(window.getByRole('dialog')).toHaveCount(0)
+    await toast.getByRole('button', { name: 'Dismiss' }).click()
+    await expect(toast).toHaveCount(0)
+  })
+
   test('a merge being resolved survives closing the app, choices included, and can then complete', async () => {
     await pickBranch('feature/login')
     await mergeDialog().getByRole('button', { name: 'Resolve conflicts…' }).click()
@@ -268,9 +332,15 @@ test.describe('with git installed', () => {
     // The sample has README.md edited but not committed, and feature/search has another README.
     await sidebar().getByRole('button', { name: 'feature/search', exact: true }).click()
     await sidebar().getByRole('button', { name: 'Checkout', exact: true }).click()
-    await expect(status()).toHaveText(
-      'Failed: your changes to README.md would be overwritten by switching to feature/search. Commit or stash them first.',
-    )
+    const refusal = 'Failed: your changes to README.md would be overwritten by switching to feature/search. Commit or stash them first.'
+    await expect(status()).toHaveText(refusal)
+    // A failure is too easy to miss in the status bar alone: it is a notification too, until dismissed.
+    const failure = window.getByTestId('toasts').getByRole('alert')
+    await expect(failure.getByRole('paragraph')).toHaveText(refusal)
+    await expect(failure.getByTestId('toast-context')).toHaveText('sample')
+    await failure.getByRole('button', { name: 'Dismiss' }).click()
+    await expect(failure).toHaveCount(0)
+    await expect(status()).toHaveText(refusal)
     await expect(window.getByTestId('header-branch')).toHaveText('main')
     expect((await fixtureGit(fixtures.sample, 'symbolic-ref', '--short', 'HEAD')).trim()).toBe('main')
   })
@@ -429,6 +499,29 @@ test('on first run, clones a repository from its URL into the folder the user pi
     await expect(window.getByRole('button', { name: /Work locally/ })).toBeVisible()
     expect(await savedRepositoryPaths()).toEqual([join(parent, 'cloned')])
     expect(await readdir(join(parent, 'cloned'))).toContain('.git')
+  } finally {
+    await app?.close()
+    app = undefined
+    await rm(parent, { recursive: true, force: true })
+  }
+})
+
+test('Esc can’t push the Clone dialog aside while a clone runs, so a failure is still seen there', async () => {
+  const parent = await mkdtemp(join(tmpdir(), 'git-manager-clone-'))
+  try {
+    await launch([])
+    await answerSlowly(IpcChannel.CloneRepository, { ok: false, message: 'made to fail for the test' }, 2500)
+    await folderPickerChooses(parent)
+    await window.getByRole('button', { name: 'Clone repository…' }).click()
+    const dialog = window.getByRole('dialog', { name: 'Clone a repository' })
+    await dialog.getByRole('button', { name: 'Browse…' }).click()
+    await dialog.getByLabel('Repository URL').fill('https://example.com/tools.git')
+    await dialog.getByRole('button', { name: 'Clone', exact: true }).click()
+    await pressEscapeRepeatedly()
+
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByRole('alert')).toHaveText('made to fail for the test', { timeout: 10_000 })
+    await expect(dialog.getByLabel('Repository URL')).toHaveValue('https://example.com/tools.git')
   } finally {
     await app?.close()
     app = undefined
@@ -719,6 +812,9 @@ test.describe('fetching, pulling and pushing', () => {
 
     await headerButton('Push').click()
     await expect(status()).toHaveText('Failed: origin/main has commits that main doesn’t have. Pull them first, then push again.')
+    await expect(window.getByTestId('toasts').getByRole('alert').getByRole('paragraph')).toHaveText(
+      'Failed: origin/main has commits that main doesn’t have. Pull them first, then push again.',
+    )
     expect(await tipOf(originOf(fixtures, name), 'main')).toBe(await tipOf(colleague, 'main'))
   })
 

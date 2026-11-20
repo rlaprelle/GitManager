@@ -17,10 +17,12 @@ import type {
 import { destinationOf, remotesToCheckOut } from '@/lib/checkout'
 import { CLONE_CANCELLED, cloneProgressLabel } from '@/lib/clone'
 import { errorMessage } from '@/lib/errorMessage'
+import { divergedElsewhereMessage } from '@/lib/merge'
 import { headLabel as describeHead, pluralize, shortHash, splitPath, syncLabel } from '@/lib/format'
 import { latestLoad } from './latestLoad'
 import { type MergeDrafts, mergeDrafts } from './mergeDrafts'
 import { useMergeFlow } from './mergeFlow'
+import { type ReportOptions, useReporter } from './reporter'
 
 export type DiffMode = 'git' | 'simple'
 
@@ -34,8 +36,15 @@ export interface GitManagerOptions {
   comparePaths: { left: string; right: string }
   /** Where merges being resolved are kept across restarts; localStorage unless a test says otherwise. */
   mergeDrafts?: MergeDrafts
-  /** False when the host doesn't offer merging (git too old): a diverged Pull then offers nothing. */
+  /** False when the host doesn't offer merging (`merge` isn't among its operations): a diverged Pull then offers nothing. */
   canMerge?: boolean
+}
+
+/** A Pull that couldn't fast-forward: where it ran, the upstream that could be merged, and what the source said. */
+interface DivergedPull {
+  repo: Repository
+  upstream: string
+  message: string
 }
 
 /** A checkout waiting for the user to agree to leave a detached HEAD's commits behind. */
@@ -61,7 +70,11 @@ const NO_HISTORY: HistoryPage = { commits: [], hasMore: false }
 export function useGitManager(source: GitDataSource, options: GitManagerOptions) {
   const repositories = ref<Repository[]>([])
   const loading = ref(true)
-  const status = ref('Ready')
+  /**
+   * Everything the app tells the user goes through `report`, by what it means (info, notice, warn,
+   * failure); the reporter decides where each appears. `status` and `toasts` are what it shows.
+   */
+  const { report, status, toasts, dismissToast } = useReporter()
 
   const selectedRepoId = ref<string | null>(null)
   const selectedBranch = ref<string | null>(null)
@@ -188,17 +201,21 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
       repositories.value = await source.listRepositories()
       return true
     } catch (error) {
-      status.value = `Couldn’t load repositories: ${errorMessage(error)}`
+      report.failure(`Couldn’t load repositories: ${errorMessage(error)}`)
       return false
     } finally {
       loading.value = false
     }
   }
 
+  /** What a load of the open repository reports when it fails: the area it empties gives no reason. */
   function reportFailure(what: string): (error: unknown) => void {
-    return (error) => {
-      status.value = `Couldn’t load ${what}: ${errorMessage(error)}`
-    }
+    return (error) => report.failure(`Couldn’t load ${what}: ${errorMessage(error)}`, about(repository.value))
+  }
+
+  /** Says which repository a message is about (nothing, when it isn't about one). */
+  function about(repo: Repository | undefined): ReportOptions {
+    return repo ? { repository: repo.name } : {}
   }
 
   /** Loads branches and history, then opens the newest commit. */
@@ -267,7 +284,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   async function selectRepository(id: string): Promise<void> {
     const repo = repositories.value.find((r) => r.id === id)
     if (!repo) return
-    status.value = `Opened ${repo.name}`
+    report.info(`Opened ${repo.name}`)
     await openRepository(repo)
   }
 
@@ -275,7 +292,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     const tipHash = tipHashOf(name)
     selectedBranch.value = name
     resetCommitView(tipIndexOf(name))
-    status.value = `Selected ${name} (tip ${tipHash ? shortHash(tipHash) : 'unknown'})`
+    report.info(`Selected ${name} (tip ${tipHash ? shortHash(tipHash) : 'unknown'})`)
     await openCommit()
   }
 
@@ -283,7 +300,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     const target = commits.value[index]
     if (!target) return
     resetCommitView(index)
-    status.value = `Viewing commit ${shortHash(target.hash)}`
+    report.info(`Viewing commit ${shortHash(target.hash)}`)
     await openCommit()
   }
 
@@ -308,7 +325,15 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     }
     const compared = await compareLoad.run(() => source.compareFiles(...sides), reportCompareFailure)
     // A side changed mid-way (a branch picked before its file) may have failed; once it works, say so.
-    if (compared && status.value.startsWith(COMPARE_FAILED)) status.value = 'Comparing two files'
+    if (compared && compareFailureReported) reportComparing()
+  }
+
+  /** The last thing said about the comparison was that it failed. */
+  let compareFailureReported = false
+
+  function reportComparing(): void {
+    compareFailureReported = false
+    report.info('Comparing two files')
   }
 
   function bothSidesChosen(): boolean {
@@ -357,7 +382,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
       const loaded = await source.getBranches(repoId)
       otherBranches.value = { ...otherBranches.value, [repoId]: loaded }
     } catch (error) {
-      status.value = `Couldn’t load branches: ${errorMessage(error)}`
+      report.failure(`Couldn’t load branches: ${errorMessage(error)}`, about(repositoryWithId(repoId)))
     }
   }
 
@@ -390,7 +415,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
       if (picker?.which === which) branchFilePicker.value = { ...picker, files, loading: false }
     } catch (error) {
       branchFilePicker.value = null
-      status.value = `Couldn’t list the files on ${side.branch}: ${errorMessage(error)}`
+      report.failure(`Couldn’t list the files on ${side.branch}: ${errorMessage(error)}`, about(repositoryWithId(repoId)))
     }
   }
 
@@ -418,19 +443,25 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     return [otherRepo, side.branch, name].filter(Boolean).join(' · ')
   }
 
+  /**
+   * The diff area itself says the files couldn't be compared, and a path fails on the way to being
+   * typed right: this is the reason, for the record, not news.
+   */
   function reportCompareFailure(error: unknown): void {
-    status.value = `${COMPARE_FAILED}: ${errorMessage(error)}`
+    compareFailureReported = true
+    report.failure(`${COMPARE_FAILED}: ${errorMessage(error)}`, { alreadyShown: true })
   }
 
   async function openCompare(): Promise<void> {
     compareOpen.value = true
-    status.value = 'Comparing two files'
+    reportComparing()
     await refreshCompare()
   }
 
   function closeCompare(): void {
     compareOpen.value = false
-    if (commit.value) status.value = `Viewing commit ${shortHash(commit.value.hash)}`
+    compareFailureReported = false
+    if (commit.value) report.info(`Viewing commit ${shortHash(commit.value.hash)}`)
   }
 
   async function setLeftPath(path: string): Promise<void> {
@@ -469,12 +500,12 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   function cancelCheckout(): void {
     if (!pendingCheckout.value) return
     pendingCheckout.value = null
-    status.value = 'Checkout cancelled; nothing changed'
+    report.info('Checkout cancelled; nothing changed')
   }
 
   async function runCheckout(request: CheckoutRequest): Promise<void> {
     await runOperation('checkout', `Switching to ${request.branch}…`, async (repo) => {
-      await attempt(() => switchBranch(repo, request))
+      await attempt(() => switchBranch(repo, request), repo)
     })
   }
 
@@ -493,13 +524,14 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     }
     repo.currentBranch = result.branch
     selectedBranch.value = result.branch
-    status.value = result.message
+    report.info(result.message)
     await reload()
   }
 
   function askToLeaveCommits({ target, branch }: CheckoutRequest, commitsLeft: number): void {
     pendingCheckout.value = { target, branch, destination: destinationOf(target), commitsLeft }
-    status.value = `Switching to ${branch} would leave ${pluralize(commitsLeft, 'commit', 'commits')} on no branch`
+    // The dialog that opens asks the question; this is its line in the commentary.
+    report.info(`Switching to ${branch} would leave ${pluralize(commitsLeft, 'commit', 'commits')} on no branch`)
   }
 
   async function fetchRemote(): Promise<void> {
@@ -511,13 +543,22 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
    * commits the source says which upstream could be merged instead, and the Merge dialog offers it.
    */
   async function pull(): Promise<void> {
-    let mergeable: string | undefined
+    const found: { diverged?: DivergedPull } = {}
     await runRemoteOperation('pull', 'Pulling…', async (repo) => {
       const result = await source.pull(repo.id, checkedOutBranch(repo))
-      mergeable = result.mergeable
+      if (result.mergeable) found.diverged = { repo, upstream: result.mergeable, message: result.message }
       return result
     })
-    if (mergeable && options.canMerge !== false) await merging.offerMerge(mergeable)
+    if (found.diverged && options.canMerge !== false) await offerMergeAfterPull(found.diverged)
+  }
+
+  /**
+   * The pull may have taken a while, and the user may be looking at another repository by now. The
+   * dialog would then be about the wrong one, so they are told what happened, and where, instead.
+   */
+  async function offerMergeAfterPull({ repo, upstream, message }: DivergedPull): Promise<void> {
+    if (repository.value?.id === repo.id) await merging.offerMerge(upstream)
+    else report.notice(divergedElsewhereMessage(repo.name, message), about(repo))
   }
 
   async function push(): Promise<void> {
@@ -537,7 +578,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     operation: (repo: Repository) => Promise<OperationResult>,
   ): Promise<void> {
     await runOperation(name, progress, async (repo) => {
-      await attempt(() => reportRemoteOperation(repo, operation))
+      await attempt(() => reportRemoteOperation(repo, operation), repo)
       await reload()
     })
   }
@@ -547,7 +588,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     operation: (repo: Repository) => Promise<OperationResult>,
   ): Promise<void> {
     await refreshInFlight
-    status.value = (await operation(repo)).message
+    report.info((await operation(repo)).message)
   }
 
   /** Runs one repository operation, unless one is running already; `runningOperation` names it until `work` ends. */
@@ -559,7 +600,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     const repo = repository.value
     if (!repo || operationRunning.value) return
     runningOperation.value = name
-    status.value = progress
+    report.info(progress)
     try {
       await work(repo)
     } finally {
@@ -567,13 +608,16 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     }
   }
 
-  /** Runs `work`; when it fails, the status bar says "Failed: …". Resolves whether it succeeded. */
-  async function attempt(work: () => Promise<void>): Promise<boolean> {
+  /**
+   * Runs `work`; when it fails, reports "Failed: …", about `repo` when it was done to one. Resolves
+   * whether it succeeded.
+   */
+  async function attempt(work: () => Promise<void>, repo?: Repository): Promise<boolean> {
     try {
       await work()
       return true
     } catch (error) {
-      status.value = `Failed: ${errorMessage(error)}`
+      report.failure(`Failed: ${errorMessage(error)}`, about(repo))
       return false
     }
   }
@@ -587,7 +631,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
 
   async function addChosenRepository(): Promise<void> {
     const { repository: added, message } = await source.addRepository()
-    if (message) status.value = message
+    if (message) report.info(message)
     if (added) await listAndOpen(added)
   }
 
@@ -623,7 +667,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     cloneCancelRequested = false
     const showProgress = (label: string) => {
       cloneProgress.value = label
-      status.value = label
+      report.info(label)
     }
     try {
       await refreshInFlight
@@ -635,11 +679,13 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
       )
       cloneDialogOpen.value = false
       if (cloned) await listAndOpen(cloned)
-      status.value = message
+      report.info(message)
     } catch (error) {
       const reason = errorMessage(error)
       const cancelled = reason === CLONE_CANCELLED
-      status.value = cancelled ? CLONE_CANCELLED : `Failed: ${reason}`
+      if (cancelled) report.info(CLONE_CANCELLED)
+      // The dialog stays open with the reason, and that is where the user is looking.
+      else report.failure(`Failed: ${reason}`, { alreadyShown: true })
       cloneError.value = cancelled ? null : reason
     } finally {
       cloneProgress.value = null
@@ -663,11 +709,15 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
   async function removeRepository(id: string): Promise<void> {
     const wasOpen = repository.value?.id === id
     const removed = await attempt(async () => {
-      status.value = (await source.removeRepository(id)).message
-    })
+      report.info((await source.removeRepository(id)).message)
+    }, repositoryWithId(id))
     if (!removed) return
     repositories.value = repositories.value.filter((repo) => repo.id !== id)
     if (wasOpen) await openFirstRepositoryOrClose()
+  }
+
+  function repositoryWithId(id: string): Repository | undefined {
+    return repositories.value.find((repo) => repo.id === id)
   }
 
   /** Opens the first repository on the list, or shows none when the list is empty. */
@@ -709,14 +759,14 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     try {
       await rereadEverything(announce)
     } catch (error) {
-      status.value = `Couldn’t refresh: ${errorMessage(error)}`
+      report.failure(`Couldn’t refresh: ${errorMessage(error)}`)
     }
   }
 
   async function rereadEverything(announce: boolean): Promise<void> {
     repositories.value = await source.listRepositories()
     await refreshOpenRepository()
-    if (announce && repository.value) status.value = `Refreshed ${repository.value.name}`
+    if (announce && repository.value) report.info(`Refreshed ${repository.value.name}`)
   }
 
   async function refreshOpenRepository(): Promise<void> {
@@ -805,7 +855,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
 
   const merging = useMergeFlow({
     source,
-    status,
+    report,
     repository,
     branches,
     currentBranch,
@@ -818,6 +868,8 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
 
   return {
     ...merging,
+    toasts,
+    dismissToast,
     unfinishedOperation: unfinishedLoad.value,
     // state
     repositories,

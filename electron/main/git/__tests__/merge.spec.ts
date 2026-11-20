@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { GitCliDataSource } from '../GitCliDataSource'
-import { parseMergeTree } from '../merge'
+import { parseMergeTree, parseTreeChanges } from '../merge'
 import {
   type Fixtures,
   MERGE_TEXT,
@@ -279,6 +279,27 @@ describe('GitCliDataSource merging', () => {
     expect(await git(folder, 'status', '--porcelain=v1')).toBe('')
   })
 
+  it('keeps settings the app was started with for the last step too, and its own still win', async () => {
+    const { folder, source } = await mergeRepository()
+    const started = {
+      GIT_CONFIG_COUNT: '2',
+      GIT_CONFIG_KEY_0: 'user.name',
+      GIT_CONFIG_VALUE_0: 'Set In The Environment',
+      GIT_CONFIG_KEY_1: 'branch.main.mergeoptions',
+      GIT_CONFIG_VALUE_1: '--squash',
+    }
+    for (const [name, value] of Object.entries(started)) vi.stubEnv(name, value)
+    try {
+      const preview = await source.previewMerge('repo', 'feature/apart')
+      await source.merge('repo', preview, [])
+      expect(await git(folder, 'log', '-1', '--format=%P')).toBe(`${preview.ours} ${preview.theirs}`)
+      // The reflog records who moved the branch, which shows the settings that step ran with.
+      expect(await git(folder, 'log', '-g', '-1', '--format=%gn')).toBe('Set In The Environment')
+    } finally {
+      for (const name of Object.keys(started)) vi.stubEnv(name, undefined)
+    }
+  })
+
   it('signs the merge commit when commit.gpgsign asks for it', async () => {
     const { folder, source } = await mergeRepository()
     await gitInFixture(fixtures, folder, 'config', 'commit.gpgsign', 'true')
@@ -332,6 +353,18 @@ describe('GitCliDataSource merging files that aren’t simple edits', () => {
     await ours(folder)
     await commitAll(folder, 'Ours')
     return { folder, source: sourceOver(folder) }
+  }
+
+  /**
+   * Commits `path` as executable. The bit is set in the index, the only place Windows has for it,
+   * and core.filemode is switched off (as it already is there) so that git elsewhere doesn't put
+   * back the mode it sees on disk when the file is added again.
+   */
+  const putExecutable = async (repo: string, path: string, content: Content) => {
+    await put(repo, path, content)
+    await gitInFixture(fixtures, repo, 'config', 'core.filemode', 'false')
+    await gitInFixture(fixtures, repo, 'add', path)
+    await gitInFixture(fixtures, repo, 'update-index', '--chmod=+x', path)
   }
 
   const clash = (path: string, base: Content, ours: Content, theirs: Content) =>
@@ -437,11 +470,7 @@ describe('GitCliDataSource merging files that aren’t simple edits', () => {
     const { folder, source } = await diverged(
       (repo) => put(repo, 'run.sh', 'base\n'),
       (repo) => put(repo, 'run.sh', 'ours\n'),
-      async (repo) => {
-        await put(repo, 'run.sh', 'theirs\n')
-        await gitInFixture(fixtures, repo, 'add', 'run.sh')
-        await gitInFixture(fixtures, repo, 'update-index', '--chmod=+x', 'run.sh')
-      },
+      (repo) => putExecutable(repo, 'run.sh', 'theirs\n'),
     )
     const preview = await source.previewMerge('repo', 'theirs')
     await source.merge('repo', preview, [{ path: 'run.sh', text: 'settled\n' }])
@@ -471,19 +500,82 @@ describe('GitCliDataSource merging files that aren’t simple edits', () => {
     expect(await readFile(join(folder, '.env'), 'utf8')).toBe('my local secrets\n')
   })
 
-  it('keeps a file’s executable bit', async () => {
+  it('lets a merge move a submodule whose own checkout is out of step, and leaves that checkout alone', async () => {
+    const library = await createScratchRepository(fixtures, `merge-library-${++repositories}`)
+    const libraryCommit = async (text: string) => {
+      await put(library, 'lib.txt', text)
+      await commitAll(library, `Library ${text.trim()}`)
+      return git(library, 'rev-parse', 'HEAD')
+    }
+    const [one, two, three] = [await libraryCommit('one\n'), await libraryCommit('two\n'), await libraryCommit('three\n')]
+    const checkOutLibrary = (repo: string, commit: string) => gitInFixture(fixtures, join(repo, 'sub'), 'checkout', '--quiet', commit).then(() => {})
+
+    // main records the library at "one"; theirs moves it to "two".
     const { folder, source } = await diverged(
       async (repo) => {
-        await put(repo, 'run.sh', 'base\n')
-        await gitInFixture(fixtures, repo, 'add', 'run.sh')
-        await gitInFixture(fixtures, repo, 'update-index', '--chmod=+x', 'run.sh')
+        await gitInFixture(fixtures, repo, '-c', 'protocol.file.allow=always', 'submodule', '--quiet', 'add', library, 'sub')
+        await checkOutLibrary(repo, one)
       },
+      async (repo) => {
+        await checkOutLibrary(repo, one)
+        await put(repo, 'mine.txt', 'mine\n')
+      },
+      (repo) => checkOutLibrary(repo, two),
+    )
+    // The library's own checkout is somewhere else again, as when nobody has run `git submodule update`.
+    await checkOutLibrary(folder, three)
+    expect(await git(folder, 'status', '--porcelain=v1')).toBe('M sub')
+
+    const preview = await source.previewMerge('repo', 'theirs')
+    expect(preview).toMatchObject({ outcome: 'merge-commit', conflicts: [], unresolvable: [], blockedBy: [] })
+    await source.merge('repo', preview, [])
+    expect(await git(folder, 'log', '-1', '--format=%P')).toBe(`${preview.ours} ${preview.theirs}`)
+    expect(await git(folder, 'ls-tree', 'HEAD', 'sub')).toContain(two)
+    expect(await git(join(folder, 'sub'), 'rev-parse', 'HEAD')).toBe(three)
+  })
+
+  it('keeps a file’s executable bit', async () => {
+    const { folder, source } = await diverged(
+      (repo) => putExecutable(repo, 'run.sh', 'base\n'),
       (repo) => put(repo, 'run.sh', 'ours\n'),
       (repo) => put(repo, 'run.sh', 'theirs\n'),
     )
     const preview = await source.previewMerge('repo', 'theirs')
     await source.merge('repo', preview, [{ path: 'run.sh', text: 'settled\n' }])
     expect(await git(folder, 'ls-tree', 'HEAD', 'run.sh')).toMatch(/^100755 /)
+  })
+})
+
+describe('parseTreeChanges', () => {
+  const [before, after] = ['a'.repeat(40), 'b'.repeat(40)]
+  const NONE = '0'.repeat(40)
+  const NUL = '\u0000'
+
+  it('reads each path with whether it is new, and whether it is a submodule', () => {
+    const output = [
+      `:100644 100644 ${before} ${after} M`, 'docs/read me.md',
+      `:000000 100755 ${NONE} ${after} A`, 'run.sh',
+      `:100644 000000 ${before} ${NONE} D`, 'gone.txt',
+      `:160000 160000 ${before} ${after} M`, 'vendor/library',
+      `:000000 160000 ${NONE} ${after} A`, 'vendor/new',
+      '',
+    ].join(NUL)
+    expect(parseTreeChanges(output)).toEqual([
+      { path: 'docs/read me.md', added: false, submodule: false },
+      { path: 'run.sh', added: true, submodule: false },
+      { path: 'gone.txt', added: false, submodule: false },
+      { path: 'vendor/library', added: false, submodule: true },
+      { path: 'vendor/new', added: true, submodule: true },
+    ])
+  })
+
+  it('reads no changes from no output', () => {
+    expect(parseTreeChanges('')).toEqual([])
+  })
+
+  it('refuses output it doesn’t recognise', () => {
+    expect(() => parseTreeChanges(`M${NUL}a.txt${NUL}`)).toThrow(/something unexpected/)
+    expect(() => parseTreeChanges(`:100644 100644 ${before} ${after} M${NUL}`)).toThrow(/something unexpected/)
   })
 })
 

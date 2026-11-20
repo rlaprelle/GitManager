@@ -9,6 +9,7 @@ import {
   alignedChunks,
   conflictsLeftIn,
 } from '@/lib/mergeChunks'
+import { type Extent, ribbonPath } from '@/lib/mergeRibbon'
 import GmIcon from '../GmIcon.vue'
 import MergeConflictBlock from './MergeConflictBlock.vue'
 import MergeGutter from './MergeGutter.vue'
@@ -44,12 +45,32 @@ const branchName = computed(() => props.session.request.branch)
 const currentConflict = ref(0)
 /** The chunk whose edit box is open. */
 const editingChunk = ref<number | null>(null)
+/**
+ * What is typed in an open edit box isn't in the result until Done. Completing the merge, or
+ * showing another file, would drop it without a word, so both wait for the box to be closed.
+ */
+const editing = computed(() => editingChunk.value !== null)
+const FINISH_EDIT_FIRST = 'Finish or cancel your edit first'
+
+const completeTitle = computed(() => {
+  if (editing.value) return FINISH_EDIT_FIRST
+  return props.conflictsLeft > 0 ? 'Resolve every conflict first' : 'Commit the merge and update your files'
+})
 
 watch(
   () => props.file.path,
   () => {
     currentConflict.value = 0
     editingChunk.value = null
+  },
+)
+
+// Choices never change how many conflicts a file has: a new count means the merge was worked out
+// again and this is another version of the file, where the old position may not even exist.
+watch(
+  () => conflictRows.value.length,
+  () => {
+    currentConflict.value = 0
   },
 )
 
@@ -144,30 +165,23 @@ function finishEdit(row: AlignedChunk, text: string): void {
 const grid = ref<HTMLElement | null>(null)
 
 /** Where the elements matching `selector` start and end, measured from the top of `cell`. */
-function extent(cell: Element, selector: string): [number, number] | null {
+function extent(cell: Element, selector: string): Extent | null {
   const found = cell.querySelectorAll(selector)
   if (found.length === 0) return null
   const top = cell.getBoundingClientRect().top
   return [found[0]!.getBoundingClientRect().top - top, found[found.length - 1]!.getBoundingClientRect().bottom - top]
 }
 
-/** Drawn from measurements, because wrapped lines make rows taller than their line count says. */
+/** Measured here, because wrapped lines make rows taller than their line count says; `ribbonPath` has the shape. */
 function drawRibbons(): void {
   for (const gutter of grid.value?.querySelectorAll<HTMLElement>('[data-ribbon-side]') ?? []) {
     const side = gutter.dataset['ribbonSide'] as MergeSide
     const [sideCell, resultCell] =
       side === 'ours' ? [gutter.previousElementSibling, gutter.nextElementSibling] : [gutter.nextElementSibling, gutter.previousElementSibling]
     if (!sideCell || !resultCell) continue
-    const from = extent(sideCell, `[data-source="${side}"]`) ?? [0, 2]
-    const to = extent(resultCell, `[data-source="${side}"]`) ?? extent(resultCell, '[data-conflict]:not([data-testid="merge-settled"]), [data-source="edited"]') ?? [0, 0]
-    const width = gutter.offsetWidth
-    const middle = width / 2
-    const [sideX, resultX] = side === 'ours' ? [0, width] : [width, 0]
-    gutter.querySelector('path')?.setAttribute(
-      'd',
-      `M${sideX},${from[0]} C${middle},${from[0]} ${middle},${to[0]} ${resultX},${to[0]} ` +
-        `L${resultX},${to[1]} C${middle},${to[1]} ${middle},${from[1]} ${sideX},${from[1]} Z`,
-    )
+    const from = extent(sideCell, `[data-source="${side}"]`)
+    const to = extent(resultCell, `[data-source="${side}"]`) ?? extent(resultCell, '[data-conflict]:not([data-testid="merge-settled"]), [data-source="edited"]')
+    gutter.querySelector('path')?.setAttribute('d', ribbonPath(side, from, to, gutter.offsetWidth))
   }
 }
 
@@ -212,8 +226,8 @@ const sideOnly = 'max-[860px]:hidden'
         <button
           type="button"
           class="inline-flex h-9 cursor-pointer items-center justify-center rounded-lg border-0 bg-gm-accent px-3.5 font-semibold text-gm-on-accent disabled:cursor-default disabled:opacity-60 max-[860px]:flex-1"
-          :disabled="conflictsLeft > 0 || completing"
-          :title="conflictsLeft > 0 ? 'Resolve every conflict first' : 'Commit the merge and update your files'"
+          :disabled="conflictsLeft > 0 || completing || editing"
+          :title="completeTitle"
           @click="emit('complete')"
         >
           {{ completing ? 'Merging…' : 'Complete merge' }}
@@ -228,10 +242,11 @@ const sideOnly = 'max-[860px]:hidden'
           <li v-for="candidate in session.files" :key="candidate.path">
             <button
               type="button"
-              class="gm-row-hover flex w-full cursor-pointer items-center gap-2 rounded-md border-0 px-2 py-[7px] text-left text-gm-text"
+              class="gm-row-hover flex w-full cursor-pointer items-center gap-2 rounded-md border-0 px-2 py-[7px] text-left text-gm-text disabled:cursor-default disabled:opacity-60"
               :class="candidate.path === file.path ? 'bg-gm-selected' : 'bg-transparent'"
               :aria-current="candidate.path === file.path ? 'true' : undefined"
-              :title="candidate.path"
+              :title="editing ? FINISH_EDIT_FIRST : candidate.path"
+              :disabled="editing"
               @click="emit('selectFile', candidate.path)"
             >
               <span class="min-w-0 flex-auto truncate font-mono text-[12px]">{{ candidate.path }}</span>
@@ -257,8 +272,10 @@ const sideOnly = 'max-[860px]:hidden'
           <span class="min-w-0 truncate font-mono text-[12px] text-gm-soft max-[860px]:hidden" data-testid="merge-file">{{ file.path }}</span>
           <select
             aria-label="Conflicted file"
-            class="box-border h-8 min-w-0 flex-[1_1_160px] rounded-md border border-gm-line-input bg-gm-code px-2 font-mono text-[12px] text-gm-text min-[861px]:hidden"
+            class="box-border h-8 min-w-0 flex-[1_1_160px] rounded-md border border-gm-line-input bg-gm-code px-2 font-mono text-[12px] text-gm-text disabled:opacity-60 min-[861px]:hidden"
             :value="file.path"
+            :disabled="editing"
+            :title="editing ? FINISH_EDIT_FIRST : undefined"
             @change="emit('selectFile', ($event.target as HTMLSelectElement).value)"
           >
             <option v-for="candidate in session.files" :key="candidate.path" :value="candidate.path">

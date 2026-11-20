@@ -165,6 +165,39 @@ describe('MergeResolver', () => {
       expect(paneText('result')).toContain('4typed')
     })
 
+    it('keeps Complete merge back while a box is open, since what is typed isn’t in the result yet', async () => {
+      mountResolver([toggleSide(fileA(), CONFLICT, 'ours')], { conflictsLeft: 0 })
+      const complete = () => button('Complete merge')
+      expect(complete().attributes('disabled')).toBeUndefined()
+
+      await button('Edit').trigger('click')
+      await wrapper.get('textarea').setValue('typed, and not yet Done')
+      expect(complete().attributes('disabled')).toBeDefined()
+      expect(complete().attributes('title')).toBe('Finish or cancel your edit first')
+      await complete().trigger('click')
+      expect(wrapper.emitted('complete')).toBeUndefined()
+
+      await button('Cancel').trigger('click')
+      expect(complete().attributes('disabled')).toBeUndefined()
+      expect(complete().attributes('title')).toBe('Commit the merge and update your files')
+    })
+
+    it('keeps the file list back too, on wide screens and narrow, until the box is closed', async () => {
+      mountResolver()
+      const files = () => [...wrapper.get('nav').findAll('button'), wrapper.get('select')]
+      for (const control of files()) expect(control.attributes('disabled')).toBeUndefined()
+
+      await button('Edit conflict 1 by hand').trigger('click')
+      for (const control of files()) {
+        expect(control.attributes('disabled')).toBeDefined()
+        expect(control.attributes('title')).toBe('Finish or cancel your edit first')
+      }
+
+      await button('Done').trigger('click')
+      for (const control of files()) expect(control.attributes('disabled')).toBeUndefined()
+      expect(wrapper.get('nav').findAll('button')[1]!.attributes('title')).toBe('b.ts')
+    })
+
     it('closes the box when another file is shown', async () => {
       mountResolver()
       await button('Edit conflict 1 by hand').trigger('click')
@@ -212,6 +245,19 @@ describe('MergeResolver', () => {
       expect(position()).toBe('2/2')
       await button('Previous conflict').trigger('click')
       expect(position()).toBe('1/2')
+    })
+
+    it('keeps its place when a choice is made, and starts again when the file comes back with other conflicts', async () => {
+      const file = fileB()
+      mountResolver([file], { conflictsLeft: 2 })
+      await button('Next conflict').trigger('click')
+      await wrapper.setProps({ file: toggleSide(file, 2, 'ours'), conflictsLeft: 1 })
+      expect(position()).toBe('2/2')
+
+      // The merge worked out again: the same file, now with one conflict.
+      const reworked = toMergeFile({ path: 'b.ts', base: '1\nkeep\n3\n', ours: 'one\nkeep\n3\n', theirs: 'uno\nkeep\n3\n' })
+      await wrapper.setProps({ file: reworked, conflictsLeft: 1 })
+      expect(position()).toBe('1/1')
     })
 
     it('moves focus to the conflict', async () => {

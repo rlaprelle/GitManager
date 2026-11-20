@@ -1120,3 +1120,116 @@ describe('useGitManager comparing files from branches, repositories and disk', (
     expect(gm.rightSide.value).toEqual(left)
   })
 })
+
+describe('useGitManager telling the user things', () => {
+  type Manager = Awaited<ReturnType<typeof loadedManager>>
+  /** What has been raised for the user to dismiss, without the ids. */
+  const raised = (gm: Manager) => gm.toasts.value.map(({ kind, message, context }) => ({ kind, message, context }))
+  const failing = (reason: string) => async (): Promise<never> => {
+    throw new Error(reason)
+  }
+
+  it('keeps routine commentary to the status bar', async () => {
+    const gm = await loadedManager()
+    await gm.selectCommit(1)
+    await gm.selectBranch('main')
+    await gm.fetchRemote()
+    await gm.checkoutBranch('main')
+    await gm.refresh({ announce: true })
+    expect(gm.status.value).toBe('Refreshed inventory-service')
+    expect(gm.toasts.value).toEqual([])
+  })
+
+  it('raises a failed operation for the user to dismiss, naming the repository', async () => {
+    const source = new MockGitDataSource()
+    source.fetch = failing('could not reach origin')
+    const gm = await loadedManager(source)
+    await gm.fetchRemote()
+    expect(gm.status.value).toBe('Failed: could not reach origin')
+    expect(raised(gm)).toEqual([{ kind: 'failure', message: 'Failed: could not reach origin', context: 'inventory-service' }])
+  })
+
+  it('names the repository an operation ran in, even when another has been opened since', async () => {
+    const held = heldSource()
+    const gm = await loadedManager(held.source)
+    held.hold('push')
+    const pushing = gm.push()
+    await settle()
+    await gm.selectRepository('pricing')
+    await held.callsTo('push')[0]!.fail(new Error('the remote refused the push'))
+    await pushing
+    expect(gm.repository.value?.name).toBe('pricing-api')
+    expect(raised(gm)).toEqual([{ kind: 'failure', message: 'Failed: the remote refused the push', context: 'inventory-service' }])
+  })
+
+  it('says a failure once, however often it happens, until it is dismissed', async () => {
+    const source = new MockGitDataSource()
+    source.fetch = failing('could not reach origin')
+    const gm = await loadedManager(source)
+    await gm.fetchRemote()
+    await gm.fetchRemote()
+    expect(gm.toasts.value).toHaveLength(1)
+    gm.dismissToast(gm.toasts.value[0]!.id)
+    await gm.fetchRemote()
+    expect(gm.toasts.value).toHaveLength(1)
+  })
+
+  it('raises a failed load with its reason, which the emptied area doesn’t give', async () => {
+    const source = new MockGitDataSource()
+    source.getHistory = failing('disk error')
+    const gm = await loadedManager(source)
+    expect(gm.historyMessage.value).toBe('Couldn’t load history')
+    expect(raised(gm)).toEqual([{ kind: 'failure', message: 'Couldn’t load history: disk error', context: 'inventory-service' }])
+  })
+
+  it('raises a repository list that can’t be read, and a refresh that fails, about no repository in particular', async () => {
+    const offline = new MockGitDataSource()
+    offline.listRepositories = failing('backend offline')
+    expect(raised(await loadedManager(offline))).toEqual([{ kind: 'failure', message: 'Couldn’t load repositories: backend offline', context: null }])
+
+    const source = new MockGitDataSource()
+    const gm = await loadedManager(source)
+    source.listRepositories = failing('disk asleep')
+    await gm.refresh()
+    expect(raised(gm)).toEqual([{ kind: 'failure', message: 'Couldn’t refresh: disk asleep', context: null }])
+  })
+
+  it('raises a failure that isn’t in a repository without naming one', async () => {
+    const source = new MockGitDataSource()
+    source.addRepository = failing('C:\\temp isn’t inside a git repository')
+    const gm = await loadedManager(source)
+    await gm.addRepository()
+    expect(raised(gm)).toEqual([{ kind: 'failure', message: 'Failed: C:\\temp isn’t inside a git repository', context: null }])
+  })
+
+  it('doesn’t raise again what the user is already being shown: a failed clone in its dialog, a comparison in the diff area', async () => {
+    const source = new MockGitDataSource()
+    source.cloneRepository = failing('C:\\dev\\tools already exists and isn’t empty')
+    source.compareFiles = failing('file not found')
+    const gm = await loadedManager(source)
+
+    gm.openCloneDialog()
+    await gm.cloneRepository({ url: 'https://host/tools.git', name: 'tools' })
+    expect(gm.cloneError.value).toBe('C:\\dev\\tools already exists and isn’t empty')
+    expect(gm.status.value).toBe('Failed: C:\\dev\\tools already exists and isn’t empty')
+
+    await gm.openCompare()
+    expect(gm.diffMessage.value).toBe('Couldn’t compare these files')
+    expect(gm.status.value).toBe('Couldn’t compare files: file not found')
+
+    expect(gm.toasts.value).toEqual([])
+  })
+
+  it('says a comparison works again once it does, after having said it failed', async () => {
+    const source = new MockGitDataSource()
+    const compareFiles = source.compareFiles.bind(source)
+    source.compareFiles = failing('file not found')
+    const gm = await loadedManager(source)
+    await gm.openCompare()
+    expect(gm.status.value).toBe('Couldn’t compare files: file not found')
+
+    source.compareFiles = compareFiles
+    await gm.swapComparePaths()
+    expect(gm.status.value).toBe('Comparing two files')
+  })
+})

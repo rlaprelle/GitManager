@@ -75,6 +75,14 @@ function onEscape(event: Event): void {
   if (!props.cloning) emit('close')
 }
 
+// Esc pressed again and again gets past a refused cancel: the browser closes the dialog itself on
+// the third press, and the app wouldn't know. While it is meant to be open (a clone running, or why
+// one failed), it goes straight back up, with its form as it was.
+function onClosed(): void {
+  const element = dialog.value
+  if (props.open && element && !element.open) element.showModal()
+}
+
 watch(() => props.open, sync)
 onMounted(() => sync(props.open))
 
@@ -91,6 +99,7 @@ const secondaryButton =
     aria-labelledby="clone-title"
     class="m-auto w-[min(520px,calc(100vw-32px))] rounded-xl border border-gm-line-strong bg-gm-raised p-0 text-[13px] text-gm-text shadow-2xl backdrop:bg-gm-backdrop"
     @cancel="onEscape"
+    @close="onClosed"
   >
     <form class="flex flex-col" novalidate @submit.prevent="submit">
       <div class="flex flex-col gap-4 p-5">

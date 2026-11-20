@@ -9,39 +9,49 @@ export type DraftStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 
 export interface MergeDrafts {
   load(repoId: string): MergeSession | null
-  save(repoId: string, session: MergeSession): void
+  /** Resolves whether the merge is now saved as given. When it isn't, no older copy of it is left either. */
+  save(repoId: string, session: MergeSession): boolean
   clear(repoId: string): void
 }
 
 /**
  * A merge being resolved exists only in the app until it's completed, so closing the app mustn't
  * lose the user's choices: they're kept in localStorage (the desktop app's lives in its data
- * folder), one merge per repository. Storage that is missing or full only costs the remembering.
+ * folder), one merge per repository. Storage that is missing or full only costs the remembering:
+ * the merge carries on, and `save` says it wasn't kept so that the user can be told.
  */
 export function mergeDrafts(storage: DraftStorage | null = browserStorage()): MergeDrafts {
-  return {
-    load(repoId) {
-      try {
-        const saved = storage?.getItem(mergeDraftKey(repoId))
-        return saved ? validDraft(JSON.parse(saved)) : null
-      } catch {
-        return null
-      }
-    },
-    save(repoId, session) {
-      attempt(() => storage?.setItem(mergeDraftKey(repoId), JSON.stringify(session)))
-    },
-    clear(repoId) {
-      attempt(() => storage?.removeItem(mergeDraftKey(repoId)))
-    },
+  function load(repoId: string): MergeSession | null {
+    try {
+      const saved = storage?.getItem(mergeDraftKey(repoId))
+      return saved ? validDraft(JSON.parse(saved)) : null
+    } catch {
+      return null
+    }
   }
+
+  function save(repoId: string, session: MergeSession): boolean {
+    const saved = storage !== null && attempt(() => storage.setItem(mergeDraftKey(repoId), JSON.stringify(session)))
+    // A refused save leaves what was saved before in place: choices older than the ones on screen,
+    // which a restart would bring back as if they were current. Better to have nothing saved.
+    if (!saved) clear(repoId)
+    return saved
+  }
+
+  function clear(repoId: string): void {
+    attempt(() => storage?.removeItem(mergeDraftKey(repoId)))
+  }
+
+  return { load, save, clear }
 }
 
-function attempt(work: () => void): void {
+/** Runs `work`, resolving whether it went through: storage refuses in private mode, and when its quota is full. */
+function attempt(work: () => void): boolean {
   try {
     work()
+    return true
   } catch {
-    // Private mode or a full quota: the merge still works, it just won't survive a restart.
+    return false
   }
 }
 

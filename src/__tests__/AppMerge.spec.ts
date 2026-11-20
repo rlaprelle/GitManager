@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { type VueWrapper, flushPromises, mount } from '@vue/test-utils'
 import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositories'
-import { ALL_OPERATIONS, type RepositoryOperation } from '@/services/GitDataSource'
+import { heldSource } from '@/composables/__tests__/heldSource'
+import { ALL_OPERATIONS, type GitDataSource, type RepositoryOperation } from '@/services/GitDataSource'
 import { MockGitDataSource } from '@/services/MockGitDataSource'
 import App from '../App.vue'
 
@@ -24,7 +25,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-async function mountApp(source = new MockGitDataSource(), operations: readonly RepositoryOperation[] = ALL_OPERATIONS) {
+async function mountApp(source: GitDataSource = new MockGitDataSource(), operations: readonly RepositoryOperation[] = ALL_OPERATIONS) {
   wrapper = mount(App, { props: { source, comparePaths: SAMPLE_COMPARE_PATHS, operations }, attachTo: document.body })
   await flushPromises()
   return wrapper
@@ -136,6 +137,58 @@ describe('App merging', () => {
     expect(status()).toBe('Continuing your merge of main into feature/stock-reservations · Nothing on disk has changed yet')
   })
 
+  it('asks before a merge with conflicts replaces one that is saved and waiting', async () => {
+    // A merge left half resolved; then main is checked out outside the app, where the feature branch clashes too.
+    const repositories = structuredClone(sampleRepositories)
+    await mountApp(new MockGitDataSource(repositories))
+    await openResolver()
+    wrapper.unmount()
+    const inventory = repositories[0]!
+    inventory.currentBranch = 'main'
+    inventory.mergeConflicts = { ...inventory.mergeConflicts, 'feature/stock-reservations': inventory.mergeConflicts!['main']! }
+    await mountApp(new MockGitDataSource(repositories))
+    expect(resolver().exists()).toBe(false)
+
+    await chooseBranch('feature/stock-reservations')
+    expect(wrapper.get('[data-testid="merge-waiting"]').text()).toBe('Your merge of main into feature/stock-reservations is saved and waiting.')
+    const asking = () => wrapper.findAll('dialog').find((dialog) => dialog.text().includes('Replace your saved merge?'))!
+    const answer = async (name: string) => {
+      await asking().findAll('button').find((candidate) => candidate.text() === name)!.trigger('click')
+      await flushPromises()
+    }
+    expect((asking().element as HTMLDialogElement).open).toBe(false)
+
+    await wrapper.get('dialog form').trigger('submit')
+    await flushPromises()
+    expect((asking().element as HTMLDialogElement).open).toBe(true)
+    expect(asking().text()).toContain('The choices you made merging main into feature/stock-reservations will be dropped.')
+
+    await answer('Cancel')
+    expect((asking().element as HTMLDialogElement).open).toBe(false)
+    expect(wrapper.find('#merge-title').exists()).toBe(true)
+    expect(resolver().exists()).toBe(false)
+
+    await wrapper.get('dialog form').trigger('submit')
+    await flushPromises()
+    await answer('Replace it')
+    expect(resolver().get('h2').text()).toBe('Merging feature/stock-reservations into main')
+  })
+
+  it('warns in a toast when the merge can’t be saved, until the toast is dismissed', async () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError')
+    })
+    await mountApp()
+    await openResolver()
+    const warning = () => wrapper.get('[data-testid="toasts"]').find('[role="alert"]')
+    expect(warning().get('p').text()).toBe('This merge couldn’t be saved, so closing the app would lose it. Complete or discard it before you close.')
+    expect(warning().get('[data-testid="toast-context"]').text()).toBe('inventory-service')
+
+    await warning().get('button[aria-label="Dismiss"]').trigger('click')
+    expect(warning().exists()).toBe(false)
+    expect(resolver().exists()).toBe(true)
+  })
+
   it('shows a notice while something is left unfinished outside the app', async () => {
     const source = new MockGitDataSource()
     source.getUnfinishedOperation = async () => 'merge'
@@ -158,5 +211,27 @@ describe('App merging', () => {
     expect(wrapper.get('#merge-title').text()).toBe(
       'Merge origin/feature/stock-reservations into feature/stock-reservations?',
     )
+  })
+
+  it('tells of a Pull that finished after another repository was opened in a toast, until it is dismissed', async () => {
+    const repositories = structuredClone(sampleRepositories)
+    repositories[0]!.localBranches[0]!.behind = 1
+    const held = heldSource(new MockGitDataSource(repositories))
+    await mountApp(held.source)
+    held.hold('pull')
+    await click('Pull')
+    await wrapper.findAll('button').find((candidate) => /^pricing-api/.test(candidate.text()))!.trigger('click')
+    await flushPromises()
+    await held.callsTo('pull')[0]!.release()
+    await flushPromises()
+
+    const toasts = () => wrapper.get('[data-testid="toasts"]')
+    expect(toasts().get('[data-testid="toast-context"]').text()).toBe('inventory-service')
+    expect(toasts().get('[role="status"] p').text()).toBe(
+      'feature/stock-reservations and origin/feature/stock-reservations both have new commits, so Pull can’t just move feature/stock-reservations forward. Open inventory-service and press Pull again to merge them.',
+    )
+    expect(wrapper.find('#merge-title').exists()).toBe(false)
+    await toasts().get('button[aria-label="Dismiss"]').trigger('click')
+    expect(toasts().findAll('[data-kind]')).toHaveLength(0)
   })
 })
