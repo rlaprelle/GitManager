@@ -412,21 +412,42 @@ export function editConflict(file: MergeFile, index: number, text: string): Merg
  * Typed text as lines of this file: a text box only has '\n', so the conflict's own ending goes
  * back on. A conflict with no ending of its own (the file's last line, unterminated on every
  * side) takes the rest of the file's, so a CRLF file isn't given a lone LF.
+ *
+ * What the box showed is what comes back: text left as it started gives the very lines it started
+ * from, and blank lines at the end are lines like any other. Only one newline at the very end is
+ * ignored, so that finishing the last line with Enter doesn't add a blank line; `editStartText`
+ * allows for that. An empty box is no lines at all.
  */
 function typedLines(file: MergeFile, chunk: ConflictChunk, text: string): string[] {
-  const typed = text.replace(/\r/g, '').replace(/\n+$/, '')
+  const typed = text.replace(/\r/g, '')
+  if (typed === editStartText(chunk)) return [...editStartLines(chunk)]
   if (typed === '') return []
   const ending = endingIn(everyLineOf(chunk)) ?? lineEndingOf(file.chunks.flatMap(everyLineOf))
-  const lines = typed.split('\n').map((line) => line + ending)
+  const lines = withoutFinalNewline(typed).split('\n').map((line) => line + ending)
   const noFinalNewline = [chunk.ours, chunk.theirs].every((side) => side.length > 0 && !side[side.length - 1]!.endsWith('\n'))
   if (noFinalNewline) lines[lines.length - 1] = lineText(lines[lines.length - 1]!)
   return lines
 }
 
-/** What the edit box starts with: the last edit, else what the arrows brought in, else both sides to trim. */
+function withoutFinalNewline(text: string): string {
+  return text.endsWith('\n') ? text.slice(0, -1) : text
+}
+
+/** The lines the edit box starts from: the last edit, else what the arrows brought in, else both sides to trim. */
+function editStartLines(chunk: ConflictChunk): string[] {
+  return chunk.edited ?? (chunk.picks.length > 0 ? resultLinesOf(chunk) : [...chunk.ours, ...chunk.theirs])
+}
+
+/**
+ * What the edit box starts with: its lines, one to a row. Done ignores one newline at the very end
+ * (see `typedLines`), so when the last line is blank the text ends with one more, and the blank
+ * line survives. The box then shows an extra empty row, as an editor does for a file that ends
+ * with a blank line.
+ */
 export function editStartText(chunk: ConflictChunk): string {
-  const lines = chunk.edited ?? (chunk.picks.length > 0 ? resultLinesOf(chunk) : [...chunk.ours, ...chunk.theirs])
-  return lines.map(lineText).join('\n')
+  const shown = editStartLines(chunk).map(lineText)
+  const text = shown.join('\n')
+  return shown[shown.length - 1] === '' ? `${text}\n` : text
 }
 
 // ---- when a branch moves on ----
