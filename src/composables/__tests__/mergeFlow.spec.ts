@@ -466,6 +466,34 @@ describe('a merge left unfinished', () => {
     expect(storage.has(KEY)).toBe(false)
   })
 
+  it('is left alone by a refresh that finishes after another repository was opened', async () => {
+    const { repositories, source } = sameRepositories()
+    const inventory = repositories.find((repo) => repo.id === 'inventory')!
+    // A merge of a branch pricing-api doesn't have, left waiting by a checkout made outside the app.
+    inventory.mergeConflicts = { ...inventory.mergeConflicts, 'bugfix/sku-null-check': inventory.mergeConflicts!['main']! }
+    const before = await loaded(source())
+    await picked(before, 'bugfix/sku-null-check')
+    await before.startMerge()
+    inventory.currentBranch = 'main'
+
+    const held = heldSource(source())
+    const gm = await loaded(held.source)
+    expect(storage.has(KEY)).toBe(true)
+    held.hold('getHistory')
+    const refreshing = gm.refresh()
+    await settle()
+    const opening = gm.selectRepository('pricing')
+    await settle()
+    // pricing-api's history arrives first, then the one the refresh asked inventory-service for.
+    for (const call of [...held.callsTo('getHistory')].reverse()) await call.release()
+    held.letThrough('getHistory')
+    await Promise.all([refreshing, opening])
+
+    expect(gm.repository.value?.id).toBe('pricing')
+    expect(storage.has(KEY)).toBe(true)
+    expect(gm.status.value).toBe('Opened pricing-api')
+  })
+
   it('doesn’t appear in another repository opened while it was being worked out again', async () => {
     const { repositories, source } = sameRepositories()
     await resolving(source())

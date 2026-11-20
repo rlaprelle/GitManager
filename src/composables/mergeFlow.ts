@@ -194,6 +194,9 @@ export function useMergeFlow(host: MergeFlowHost) {
    * refresh looking for it, which says nothing if it can't continue yet.
    */
   async function resumeSavedMerge(repo: Repository, { quietly = false } = {}): Promise<void> {
+    // A refresh can finish after another repository was opened: the branches on screen are then
+    // that one's, and say nothing about this repository's saved merge.
+    if (!stillOpen(repo)) return
     if (mergeSession.value || mergeDialog.value) return
     const draft = drafts.load(repo.id)
     if (!draft) return
