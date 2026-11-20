@@ -218,6 +218,20 @@ describe('App merging', () => {
     expect(wrapper.find('[data-testid="unfinished-operation"]').exists()).toBe(false)
   })
 
+  it('says in the dialog which branch is merged while the picked name is a local branch’s and a remote one’s', async () => {
+    const repositories = structuredClone(sampleRepositories)
+    repositories[0]!.localBranches.push({ name: 'origin/main', ahead: 0, behind: 0, tipHash: '2d6e914' })
+    await mountApp(new MockGitDataSource(repositories))
+    await chooseBranch('origin/main')
+    expect(wrapper.get('[data-testid="merge-shared-name"]').text()).toBe(
+      'origin/main is the name of a local branch and of a remote one. This merges the local branch. To merge the remote one, rename or delete the local branch first.',
+    )
+
+    await wrapper.get('dialog select').setValue('main')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="merge-shared-name"]').exists()).toBe(false)
+  })
+
   it('offers the merge when Pull finds both sides have moved on', async () => {
     const repositories = structuredClone(sampleRepositories)
     repositories[0]!.localBranches[0]!.behind = 1

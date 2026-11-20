@@ -1,7 +1,7 @@
 import { type ComputedRef, computed, ref, shallowRef } from 'vue'
 import { errorMessage } from '@/lib/errorMessage'
 import { pluralize } from '@/lib/format'
-import { MERGE_NOT_SAVED, MOVED_SINCE, mergeRefusal } from '@/lib/merge'
+import { MERGE_NOT_SAVED, MOVED_SINCE, mergeRefusal, sharedNameNote } from '@/lib/merge'
 import {
   type MergeFile,
   type MergeSide,
@@ -147,6 +147,19 @@ export function useMergeFlow(host: MergeFlowHost) {
     const localNames = local.map((branch) => branch.name)
     const remoteOnly = remote.map((branch) => branch.name).filter((name) => !localNames.includes(name))
     return [...localNames.filter((name) => name !== host.currentBranch.value), ...remoteOnly]
+  })
+
+  /**
+   * Said in the dialog when the picked name is one of those shared names: which branch is merged,
+   * and how to merge the other. Null for a name only one branch has, and while nothing is picked.
+   */
+  const mergeSharedNameNote = computed(() => {
+    const picked = mergeDialog.value?.branch
+    if (!picked) return null
+    const { local, remote } = host.branches.value
+    const isLocal = local.some((branch) => branch.name === picked)
+    const isRemote = remote.some((branch) => branch.name === picked)
+    return isLocal && isRemote ? sharedNameNote(picked) : null
   })
 
   const mergePreview = previewLoad.value
@@ -480,6 +493,7 @@ export function useMergeFlow(host: MergeFlowHost) {
   return {
     mergeDialog,
     mergeableBranches,
+    mergeSharedNameNote,
     mergePreview,
     mergeChecking,
     mergeBlocked,

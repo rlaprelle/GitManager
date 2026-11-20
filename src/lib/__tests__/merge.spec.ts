@@ -9,6 +9,7 @@ import {
   mergeSummary,
   mergedMessage,
   movedForwardMessage,
+  sharedNameNote,
   unfinishedMessage,
 } from '../merge'
 
@@ -50,6 +51,14 @@ describe('status messages', () => {
   it('name the files in the way, in the right number', () => {
     expect(blockedMessage(['a.txt'])).toBe('1 file has uncommitted changes this merge would overwrite (a.txt). Commit or stash it first')
     expect(blockedMessage(['a.txt', 'b.txt'])).toBe('2 files have uncommitted changes this merge would overwrite (a.txt, b.txt). Commit or stash them first')
+  })
+})
+
+describe('sharedNameNote', () => {
+  it('says which of the two branches is merged, and how to merge the other', () => {
+    expect(sharedNameNote('origin/main')).toBe(
+      'origin/main is the name of a local branch and of a remote one. This merges the local branch. To merge the remote one, rename or delete the local branch first.',
+    )
   })
 })
 

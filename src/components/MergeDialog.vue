@@ -11,6 +11,8 @@ const props = defineProps<{
   /** The checked-out branch, which is always what gets merged into. */
   into: string
   branches: string[]
+  /** The picked name is a local branch's and a remote one's at once: which is merged, and how to merge the other. */
+  sharedNameNote: string | null
   preview: MergePreview | null
   checking: boolean
   /** Why the previewed merge can't go ahead. */
@@ -100,6 +102,16 @@ function onChoose(event: Event): void {
             <option v-for="branch in branches" :key="branch" :value="branch">{{ branch }}</option>
           </select>
         </label>
+
+        <!-- Not a refusal (the merge can go ahead), but easy to get wrong, so it looks like a warning. -->
+        <p
+          v-if="sharedNameNote"
+          class="m-0 rounded-lg bg-gm-warn-bg px-3 py-2 leading-[1.5] text-gm-warn [overflow-wrap:anywhere]"
+          role="status"
+          data-testid="merge-shared-name"
+        >
+          {{ sharedNameNote }}
+        </p>
 
         <div v-if="!state.fromPull" class="flex flex-col gap-1.5 text-[12px] text-gm-muted">
           <span>Into</span>

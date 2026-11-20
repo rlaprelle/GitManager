@@ -115,6 +115,7 @@ const {
   unfinishedOperation,
   mergeDialog,
   mergeableBranches,
+  mergeSharedNameNote,
   mergePreview,
   mergeChecking,
   mergeBlocked,
@@ -377,6 +378,7 @@ onUnmounted(() => {
         :state="mergeDialog"
         :into="currentBranch"
         :branches="mergeableBranches"
+        :shared-name-note="mergeSharedNameNote"
         :preview="mergePreview"
         :checking="mergeChecking"
         :blocked="mergeBlocked"

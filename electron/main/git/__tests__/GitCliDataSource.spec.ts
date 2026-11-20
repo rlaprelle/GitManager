@@ -684,7 +684,7 @@ describe('GitCliDataSource talking to a remote', () => {
     const before = await tipOf(folder, 'main')
 
     await expect(source.pull('repo', 'main')).rejects.toThrow(
-      'can’t fast-forward: main and origin/main both have new commits, and a local branch is also named origin/main, so it can’t be merged here. Merge or rebase them in a terminal.',
+      'can’t fast-forward: main and origin/main both have new commits, and a local branch is also named origin/main, so it can’t be merged here. Rename or delete that local branch and pull again, or merge or rebase them in a terminal.',
     )
     expect(await tipOf(folder, 'main')).toBe(before)
   })
