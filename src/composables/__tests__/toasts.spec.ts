@@ -39,6 +39,15 @@ describe('useToasts', () => {
     expect(toasts.value[0]!.id).not.toBe(first)
   })
 
+  it('takes back a toast by what it says, leaving the others', () => {
+    const { toasts, showToast, retractToast } = useToasts()
+    showToast('No longer true', 'warning')
+    showToast('Still true')
+    retractToast('No longer true')
+    retractToast('Never said')
+    expect(toasts.value.map((toast) => toast.message)).toEqual(['Still true'])
+  })
+
   it('drops the oldest when more than fit are showing', () => {
     const { toasts, showToast } = useToasts()
     for (let number = 1; number <= MAX_TOASTS + 1; number++) showToast(`Toast ${number}`)

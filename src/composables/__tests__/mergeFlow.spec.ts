@@ -702,9 +702,25 @@ describe('a merge that can’t be saved', () => {
     expect(warnings(await resolvingOn(null))).toEqual([MERGE_NOT_SAVED])
   })
 
+  it.each<[string, (gm: Manager) => unknown]>([
+    ['discarded', (gm) => gm.discardMerge()],
+    [
+      'completed',
+      (gm) => {
+        resolveAll(gm)
+        return gm.completeMerge()
+      },
+    ],
+  ])('takes the warning back once the merge is %s, since it no longer holds', async (_name, finish) => {
+    const gm = await resolvingOn(fillingStorage(0))
+    expect(warnings(gm)).toEqual([MERGE_NOT_SAVED])
+    await finish(gm)
+    expect(gm.mergeSession.value).toBeNull()
+    expect(gm.toasts.value).toEqual([])
+  })
+
   it('warns again for the next merge', async () => {
     const gm = await resolvingOn(fillingStorage(0))
-    gm.dismissToast(gm.toasts.value[0]!.id)
     gm.discardMerge()
     expect(gm.mergeSession.value).toBeNull()
 

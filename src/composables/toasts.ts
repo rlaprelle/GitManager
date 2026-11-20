@@ -15,7 +15,10 @@ export const MAX_TOASTS = 4
 export interface Toasts {
   toasts: Ref<Toast[]>
   showToast(message: string, kind?: ToastKind): void
+  /** The user dismisses a toast. */
   dismissToast(id: number): void
+  /** The app takes back what it said, because it no longer holds. */
+  retractToast(message: string): void
 }
 
 /**
@@ -37,5 +40,9 @@ export function useToasts(): Toasts {
     toasts.value = toasts.value.filter((toast) => toast.id !== id)
   }
 
-  return { toasts, showToast, dismissToast }
+  function retractToast(message: string): void {
+    toasts.value = toasts.value.filter((toast) => toast.message !== message)
+  }
+
+  return { toasts, showToast, dismissToast, retractToast }
 }

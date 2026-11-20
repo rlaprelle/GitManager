@@ -248,7 +248,7 @@ A fast-forward skips to step 4. Whether one happens follows `merge.ff`. `getUnfi
 | `diffMode` | `'simple'` whenever compare is open, otherwise the mode the user chose. |
 | `activeHunks` | The compare result while comparing, otherwise the selected file's diff. |
 
-**Toasts** (`src/composables/toasts.ts`, created by `useGitManager` and returned as part of it) are for what the user must not miss: the status bar is easy to overlook. `showToast(message, kind)` adds one (`notice` or `warning`), `ToastStack` shows them over the bottom right corner, and each stays until dismissed. A message already on screen isn't repeated, and at most `MAX_TOASTS` show at once. `mergeFlow` reaches them through its host's `notify`.
+**Toasts** (`src/composables/toasts.ts`, created by `useGitManager` and returned as part of it) are for what the user must not miss: the status bar is easy to overlook. `showToast(message, kind)` adds one (`notice` or `warning`), `ToastStack` shows them over the bottom right corner, and each stays until dismissed. A message already on screen isn't repeated, and at most `MAX_TOASTS` show at once. `retractToast(message)` takes one back when what it said no longer holds (the merge it warned about has ended). `mergeFlow` reaches them through its host's `notify`.
 
 Behavioural rules the composable enforces. Tests cover each of them, so change them deliberately:
 

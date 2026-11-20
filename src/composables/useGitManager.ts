@@ -834,6 +834,7 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
     refreshFinished: () => refreshInFlight,
     reload,
     notify: toasting.showToast,
+    retract: toasting.retractToast,
     drafts: options.mergeDrafts ?? mergeDrafts(),
   })
 

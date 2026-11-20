@@ -67,6 +67,8 @@ export interface MergeFlowHost {
   reload(): Promise<void>
   /** Says something the user must not miss, as a toast. */
   notify(message: string, kind?: ToastKind): void
+  /** Takes such a toast back, once what it said no longer holds. */
+  retract(message: string): void
   /** Where a merge being resolved is kept, so closing the app doesn't lose it. */
   drafts: MergeDrafts
 }
@@ -103,9 +105,10 @@ export function useMergeFlow(host: MergeFlowHost) {
     drafts.clear(repoId)
   }
 
-  /** Takes the merge off the screen, leaving whatever is saved of it. */
+  /** Takes the merge off the screen, leaving whatever is saved of it. A warning about it goes with it. */
   function closeSession(): void {
     mergeSession.value = null
+    if (toldNotSaved) host.retract(MERGE_NOT_SAVED)
     toldNotSaved = false
   }
 
