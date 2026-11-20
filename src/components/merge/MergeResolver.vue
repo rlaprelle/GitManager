@@ -242,7 +242,7 @@ const sideOnly = 'max-[860px]:hidden'
           <li v-for="candidate in session.files" :key="candidate.path">
             <button
               type="button"
-              class="gm-row-hover flex w-full cursor-pointer items-center gap-2 rounded-md border-0 px-2 py-[7px] text-left text-gm-text disabled:cursor-default"
+              class="gm-row-hover flex w-full cursor-pointer items-center gap-2 rounded-md border-0 px-2 py-[7px] text-left text-gm-text disabled:cursor-default disabled:opacity-60"
               :class="candidate.path === file.path ? 'bg-gm-selected' : 'bg-transparent'"
               :aria-current="candidate.path === file.path ? 'true' : undefined"
               :title="editing ? FINISH_EDIT_FIRST : candidate.path"
@@ -272,7 +272,7 @@ const sideOnly = 'max-[860px]:hidden'
           <span class="min-w-0 truncate font-mono text-[12px] text-gm-soft max-[860px]:hidden" data-testid="merge-file">{{ file.path }}</span>
           <select
             aria-label="Conflicted file"
-            class="box-border h-8 min-w-0 flex-[1_1_160px] rounded-md border border-gm-line-input bg-gm-code px-2 font-mono text-[12px] text-gm-text min-[861px]:hidden"
+            class="box-border h-8 min-w-0 flex-[1_1_160px] rounded-md border border-gm-line-input bg-gm-code px-2 font-mono text-[12px] text-gm-text disabled:opacity-60 min-[861px]:hidden"
             :value="file.path"
             :disabled="editing"
             :title="editing ? FINISH_EDIT_FIRST : undefined"
