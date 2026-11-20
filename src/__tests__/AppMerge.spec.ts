@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { type VueWrapper, flushPromises, mount } from '@vue/test-utils'
 import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositories'
-import { ALL_OPERATIONS, type RepositoryOperation } from '@/services/GitDataSource'
+import { heldSource } from '@/composables/__tests__/heldSource'
+import { ALL_OPERATIONS, type GitDataSource, type RepositoryOperation } from '@/services/GitDataSource'
 import { MockGitDataSource } from '@/services/MockGitDataSource'
 import App from '../App.vue'
 
@@ -24,7 +25,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-async function mountApp(source = new MockGitDataSource(), operations: readonly RepositoryOperation[] = ALL_OPERATIONS) {
+async function mountApp(source: GitDataSource = new MockGitDataSource(), operations: readonly RepositoryOperation[] = ALL_OPERATIONS) {
   wrapper = mount(App, { props: { source, comparePaths: SAMPLE_COMPARE_PATHS, operations }, attachTo: document.body })
   await flushPromises()
   return wrapper
@@ -158,5 +159,24 @@ describe('App merging', () => {
     expect(wrapper.get('#merge-title').text()).toBe(
       'Merge origin/feature/stock-reservations into feature/stock-reservations?',
     )
+  })
+
+  it('tells of a Pull that finished after another repository was opened in a toast, until it is dismissed', async () => {
+    const repositories = structuredClone(sampleRepositories)
+    repositories[0]!.localBranches[0]!.behind = 1
+    const held = heldSource(new MockGitDataSource(repositories))
+    await mountApp(held.source)
+    held.hold('pull')
+    await click('Pull')
+    await wrapper.findAll('button').find((candidate) => /^pricing-api/.test(candidate.text()))!.trigger('click')
+    await flushPromises()
+    await held.callsTo('pull')[0]!.release()
+    await flushPromises()
+
+    const toasts = () => wrapper.get('[data-testid="toasts"]')
+    expect(toasts().get('[role="status"]').text()).toContain('Pull in inventory-service: feature/stock-reservations and origin/feature/stock-reservations both have new commits')
+    expect(wrapper.find('#merge-title').exists()).toBe(false)
+    await toasts().get('button[aria-label="Dismiss"]').trigger('click')
+    expect(toasts().findAll('[data-kind]')).toHaveLength(0)
   })
 })

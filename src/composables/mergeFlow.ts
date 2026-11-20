@@ -101,14 +101,20 @@ export function useMergeFlow(host: MergeFlowHost) {
 
   // ---- the dialog ----
 
+  /** There is a branch to merge into, nothing else is running, and no merge is already being resolved. */
+  function dialogMayOpen(): boolean {
+    return Boolean(host.repository.value && host.currentBranch.value && !host.operationRunning.value && !mergeSession.value)
+  }
+
   function openMergeDialog(): void {
-    if (!host.repository.value || !host.currentBranch.value || host.operationRunning.value || mergeSession.value) return
+    if (!dialogMayOpen()) return
     previewLoad.clear()
     mergeDialog.value = { fromPull: false, branch: null, problem: null }
   }
 
   /** Pull found both sides have new commits: offers to merge the upstream, already picked. */
   async function offerMerge(upstream: string): Promise<void> {
+    if (!dialogMayOpen()) return
     mergeDialog.value = { fromPull: true, branch: null, problem: null }
     await chooseMergeBranch(upstream)
   }

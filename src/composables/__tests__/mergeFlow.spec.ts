@@ -578,6 +578,50 @@ describe('a Pull that can’t fast-forward', () => {
     )
     expect(gm.mergeDialog.value).toMatchObject({ fromPull: true, branch: 'origin/feature/stock-reservations' })
     expect(gm.mergePreview.value?.branch).toBe('origin/feature/stock-reservations')
+    expect(gm.toasts.value).toEqual([])
+  })
+
+  it('says so in a toast, and opens no dialog, when another repository was opened while it ran', async () => {
+    const held = heldSource(new MockGitDataSource(divergedRepositories()))
+    const gm = await loaded(held.source)
+    held.hold('pull')
+    const pulling = gm.pull()
+    await settle()
+    await gm.selectRepository('pricing')
+    await held.callsTo('pull')[0]!.release()
+    await pulling
+
+    expect(gm.repository.value?.id).toBe('pricing')
+    expect(gm.mergeDialog.value).toBeNull()
+    expect(gm.toasts.value.map(({ kind, message }) => ({ kind, message }))).toEqual([
+      {
+        kind: 'notice',
+        message:
+          'Pull in inventory-service: feature/stock-reservations and origin/feature/stock-reservations both have new commits, so Pull can’t just move feature/stock-reservations forward. Open inventory-service and press Pull again to merge them.',
+      },
+    ])
+  })
+
+  it('doesn’t open the dialog over a merge that came back while it ran', async () => {
+    const repositories = divergedRepositories()
+    const source = () => new MockGitDataSource(repositories)
+    await resolving(source())
+
+    // The app starts again while the saved merge can't be read back yet; the pull's own re-read then brings it back.
+    const flaky = source()
+    const preview = flaky.previewMerge.bind(flaky)
+    let failing = true
+    flaky.previewMerge = async (...args) => {
+      if (failing) throw new Error('not yet')
+      return preview(...args)
+    }
+    const gm = await loaded(flaky)
+    expect(gm.mergeSession.value).toBeNull()
+    failing = false
+    await gm.pull()
+
+    expect(gm.mergeSession.value?.request.branch).toBe('main')
+    expect(gm.mergeDialog.value).toBeNull()
   })
 
   it('offers nothing when the host can’t merge (git too old)', async () => {

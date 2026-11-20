@@ -17,6 +17,7 @@ import type {
 import { destinationOf, remotesToCheckOut } from '@/lib/checkout'
 import { CLONE_CANCELLED, cloneProgressLabel } from '@/lib/clone'
 import { errorMessage } from '@/lib/errorMessage'
+import { divergedElsewhereMessage } from '@/lib/merge'
 import { headLabel as describeHead, pluralize, shortHash, splitPath, syncLabel } from '@/lib/format'
 import { latestLoad } from './latestLoad'
 import { type MergeDrafts, mergeDrafts } from './mergeDrafts'
@@ -37,6 +38,13 @@ export interface GitManagerOptions {
   mergeDrafts?: MergeDrafts
   /** False when the host doesn't offer merging (git too old): a diverged Pull then offers nothing. */
   canMerge?: boolean
+}
+
+/** A Pull that couldn't fast-forward: where it ran, the upstream that could be merged, and what the source said. */
+interface DivergedPull {
+  repo: Repository
+  upstream: string
+  message: string
 }
 
 /** A checkout waiting for the user to agree to leave a detached HEAD's commits behind. */
@@ -514,13 +522,22 @@ export function useGitManager(source: GitDataSource, options: GitManagerOptions)
    * commits the source says which upstream could be merged instead, and the Merge dialog offers it.
    */
   async function pull(): Promise<void> {
-    let mergeable: string | undefined
+    const found: { diverged?: DivergedPull } = {}
     await runRemoteOperation('pull', 'Pulling…', async (repo) => {
       const result = await source.pull(repo.id, checkedOutBranch(repo))
-      mergeable = result.mergeable
+      if (result.mergeable) found.diverged = { repo, upstream: result.mergeable, message: result.message }
       return result
     })
-    if (mergeable && options.canMerge !== false) await merging.offerMerge(mergeable)
+    if (found.diverged && options.canMerge !== false) await offerMergeAfterPull(found.diverged)
+  }
+
+  /**
+   * The pull may have taken a while, and the user may be looking at another repository by now. The
+   * dialog would then be about the wrong one, so a toast says what happened where.
+   */
+  async function offerMergeAfterPull({ repo, upstream, message }: DivergedPull): Promise<void> {
+    if (repository.value?.id === repo.id) await merging.offerMerge(upstream)
+    else toasting.showToast(divergedElsewhereMessage(repo.name, message))
   }
 
   async function push(): Promise<void> {

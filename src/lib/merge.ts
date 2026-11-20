@@ -23,6 +23,14 @@ export function divergedMessage(branch: string, upstream: string): string {
   return `${branch} and ${upstream} both have new commits, so Pull can’t just move ${branch} forward`
 }
 
+/**
+ * The same, for a Pull that finished after the user had opened another repository. It is said in a
+ * toast, so it names the repository: the merge dialog would be about the wrong one.
+ */
+export function divergedElsewhereMessage(repoName: string, diverged: string): string {
+  return `Pull in ${repoName}: ${diverged}. Open ${repoName} and press Pull again to merge them.`
+}
+
 export function upToDateMessage(into: string, branch: string): string {
   return `${into} already has every commit on ${branch}`
 }
