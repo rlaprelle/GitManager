@@ -42,6 +42,9 @@ const FULL_HASH = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
 /** A regular file (plain or executable); anything else (a link, a submodule) can't be resolved as text. */
 const REGULAR_FILE_MODES = new Set(['100644', '100755'])
 
+/** The mode git gives a submodule's entry in a tree: a commit of another repository, not a file. */
+const SUBMODULE_MODE = '160000'
+
 /** git calls a file binary when its first 8000 bytes hold a NUL; the app does the same. */
 const BINARY_SNIFF_BYTES = 8000
 
@@ -262,19 +265,45 @@ async function conflictFile(folder: string, stages: Stage[], path: string): Prom
  * What moving from `from` to `to` would overwrite: files the move changes that have uncommitted
  * changes, and files it adds that already exist on disk. That second check is what catches ignored
  * files, which `git status` doesn't list.
+ *
+ * A submodule is never in the way. Git moves its pointer and leaves its checkout as it is, whatever
+ * state that is in (as on a switch), so nothing of the user's is overwritten; `git status` calls it
+ * modified all the same whenever that checkout is out of step.
  */
 async function filesInTheWay(folder: string, from: string, to: string): Promise<string[]> {
   const [changes, status] = await Promise.all([
-    git(folder, ['diff-tree', '-r', '-z', '--name-status', '--no-renames', from, to]),
+    git(folder, ['diff-tree', '-r', '-z', '--no-renames', from, to]),
     git(folder, ['status', '--porcelain=v1', '-z', '--no-renames', '--untracked-files=all']),
   ])
-  const fields = changes.split('\0').filter(Boolean)
-  const changed = fields.filter((_, index) => index % 2 === 1)
-  const added = changed.filter((_, index) => fields[index * 2] === 'A')
+  const files = parseTreeChanges(changes).filter((change) => !change.submodule)
+  const changed = files.map((change) => change.path)
+  const added = files.filter((change) => change.added).map((change) => change.path)
   const dirty = new Set(status.split('\0').filter(Boolean).map((entry) => entry.slice(3)))
   const onDisk = await Promise.all(added.map((path) => exists(resolve(folder, path))))
   const inTheWay = new Set([...changed.filter((path) => dirty.has(path)), ...added.filter((_, index) => onDisk[index])])
   return [...inTheWay]
+}
+
+/** One path that differs between two trees. */
+interface TreeChange {
+  path: string
+  /** The path is new: nothing was there before. */
+  added: boolean
+  /** A submodule's pointer, before or after, rather than a file. */
+  submodule: boolean
+}
+
+/** `git diff-tree -r -z`: `:<mode before> <mode after> <oid> <oid> <status>`, then the path, each NUL-terminated. */
+export function parseTreeChanges(output: string): TreeChange[] {
+  const fields = output.split('\0').filter(Boolean)
+  const changes: TreeChange[] = []
+  for (let index = 0; index < fields.length; index += 2) {
+    const match = /^:(\d+) (\d+) [0-9a-f]+ [0-9a-f]+ ([A-Z])/.exec(fields[index]!)
+    const path = fields[index + 1]
+    if (!match || path === undefined) throw new GitError(`git diff-tree said something unexpected: ${fields[index]}`)
+    changes.push({ path, added: match[3] === 'A', submodule: match[1] === SUBMODULE_MODE || match[2] === SUBMODULE_MODE })
+  }
+  return changes
 }
 
 /** The merged tree with each conflicted file replaced by the user's text. */
