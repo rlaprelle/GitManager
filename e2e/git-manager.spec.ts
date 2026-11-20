@@ -549,6 +549,39 @@ test.describe('merging', () => {
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem('gm.mergeDraft.inventory')!).into)).toBe(INTO)
   })
 
+  test('a merge that can’t be saved says so in a notification, which stays until dismissed and never makes the page scroll', async ({ page }) => {
+    // Storage refuses the merge, as it does when its quota is full.
+    await page.addInitScript(() => {
+      const setItem = Storage.prototype.setItem
+      Storage.prototype.setItem = function (key: string, value: string) {
+        if (key.startsWith('gm.mergeDraft.')) throw new DOMException('The quota has been exceeded.', 'QuotaExceededError')
+        setItem.call(this, key, value)
+      }
+    })
+    await page.reload()
+    await page.setViewportSize({ width: 1024, height: 640 })
+    await openResolver(page)
+
+    const warnings = page.getByTestId('toasts').getByRole('alert')
+    await expect(warnings).toHaveText('This merge couldn’t be saved, so closing the app would lose it. Complete or discard it before you close.')
+    expect(await pageOverflow(page)).toEqual({ x: 0, y: 0 })
+    await arrow(page, 'Bring in ours for conflict 1').click()
+    await expect(warnings).toHaveCount(1)
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    await expect(warnings).toBeVisible()
+    expect((await pageOverflow(page)).x).toBeLessThanOrEqual(0)
+
+    await warnings.getByRole('button', { name: 'Dismiss' }).click()
+    await expect(warnings).toHaveCount(0)
+
+    // Nothing was kept, so nothing half-remembered comes back.
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.reload()
+    await expect(sidebar(page)).toBeVisible()
+    await expect(resolver(page)).toBeHidden()
+  })
+
   test('at the smallest desktop size the page itself doesn’t scroll', async ({ page }) => {
     await page.setViewportSize({ width: 1024, height: 640 })
     await openResolver(page)

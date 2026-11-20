@@ -63,6 +63,9 @@ export function unresolvableMessage(files: string[]): string {
   return `${files.join(', ')} can’t be resolved here (deleted on one side, binary, or not a plain file). Merge in a terminal instead`
 }
 
+/** A merge being resolved couldn't be kept for a restart (storage full or unavailable): said in a toast, once per merge. */
+export const MERGE_NOT_SAVED = 'This merge couldn’t be saved, so closing the app would lose it. Complete or discard it before you close.'
+
 export const MOVED_SINCE = 'a branch has moved since this merge was worked out. Start the merge again'
 
 /** What the Merge dialog says a merge will do: the commits and the result, then any conflicts. */

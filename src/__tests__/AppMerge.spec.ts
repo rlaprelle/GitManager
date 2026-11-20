@@ -174,6 +174,20 @@ describe('App merging', () => {
     expect(resolver().get('h2').text()).toBe('Merging feature/stock-reservations into main')
   })
 
+  it('warns in a toast when the merge can’t be saved, until the toast is dismissed', async () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError')
+    })
+    await mountApp()
+    await openResolver()
+    const warning = () => wrapper.get('[data-testid="toasts"]').find('[role="alert"]')
+    expect(warning().text()).toBe('This merge couldn’t be saved, so closing the app would lose it. Complete or discard it before you close.')
+
+    await warning().get('button[aria-label="Dismiss"]').trigger('click')
+    expect(warning().exists()).toBe(false)
+    expect(resolver().exists()).toBe(true)
+  })
+
   it('shows a notice while something is left unfinished outside the app', async () => {
     const source = new MockGitDataSource()
     source.getUnfinishedOperation = async () => 'merge'

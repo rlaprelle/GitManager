@@ -1,7 +1,7 @@
 import { type ComputedRef, type Ref, computed, ref, shallowRef } from 'vue'
 import { errorMessage } from '@/lib/errorMessage'
 import { pluralize } from '@/lib/format'
-import { MOVED_SINCE, mergeRefusal } from '@/lib/merge'
+import { MERGE_NOT_SAVED, MOVED_SINCE, mergeRefusal } from '@/lib/merge'
 import {
   type MergeFile,
   type MergeSide,
@@ -43,7 +43,7 @@ export interface WaitingMerge {
   into: string
 }
 
-/** A merge being resolved. It exists only here until Complete merge: nothing on disk has changed. */
+/** A merge being resolved. It exists only here (and in `mergeDrafts`, to survive a restart) until Complete merge: nothing on disk has changed. */
 export interface MergeSession {
   request: MergeRequest
   into: string
@@ -84,15 +84,29 @@ export function useMergeFlow(host: MergeFlowHost) {
   /** The user is being asked whether the merge they are starting may replace the one that is waiting. */
   const mergeReplacePending = ref(false)
 
-  /** Every change to the merge goes through here, so what's saved always matches the screen. */
+  /** The user has been told that the merge on screen couldn't be saved; once per merge is enough. */
+  let toldNotSaved = false
+
+  /**
+   * Every change to the merge goes through here, so what's saved always matches the screen. When it
+   * can't be saved the merge carries on, and the user is warned: closing the app would now lose it.
+   */
   function setSession(repoId: string, session: MergeSession): void {
     mergeSession.value = session
-    drafts.save(repoId, session)
+    if (drafts.save(repoId, session) || toldNotSaved) return
+    toldNotSaved = true
+    host.notify(MERGE_NOT_SAVED, 'warning')
   }
 
   function endSession(repoId: string): void {
-    mergeSession.value = null
+    closeSession()
     drafts.clear(repoId)
+  }
+
+  /** Takes the merge off the screen, leaving whatever is saved of it. */
+  function closeSession(): void {
+    mergeSession.value = null
+    toldNotSaved = false
   }
 
   /** What can be merged into the checked-out branch: other local branches, then remote ones. */
@@ -401,14 +415,14 @@ export function useMergeFlow(host: MergeFlowHost) {
     mergeDiscardPending.value = false
     const repo = host.repository.value
     if (repo) endSession(repo.id)
-    else mergeSession.value = null
+    else closeSession()
     status.value = 'Merge discarded; nothing changed'
   }
 
   /** Another repository is being opened: nothing on screen applies to it. A saved merge stays saved. */
   function resetMerge(): void {
     endDialog()
-    mergeSession.value = null
+    closeSession()
     mergeDiscardPending.value = false
   }
 

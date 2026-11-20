@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { SAMPLE_COMPARE_PATHS, sampleRepositories } from '@/data/sampleRepositories'
 import type { SampleRepository } from '@/data/sampleTypes'
+import { MERGE_NOT_SAVED } from '@/lib/merge'
 import { conflictsIn, resultText } from '@/lib/mergeChunks'
 import type { GitDataSource } from '@/services/GitDataSource'
 import { MockGitDataSource } from '@/services/MockGitDataSource'
-import { mergeDraftKey, mergeDrafts } from '../mergeDrafts'
+import { type DraftStorage, mergeDraftKey, mergeDrafts } from '../mergeDrafts'
 import { useGitManager } from '../useGitManager'
 import { heldSource, settle } from './heldSource'
 
@@ -641,6 +642,81 @@ describe('starting a merge while another is saved and waiting', () => {
     gm.closeMergeDialog()
     await settle()
     expect(gm.mergeSession.value?.request.branch).toBe('main')
+  })
+})
+
+describe('a merge that can’t be saved', () => {
+  const KEY = mergeDraftKey('inventory')
+
+  /** The tests' storage, but taking only the first `room` saves: the rest are refused, as when its quota is full. */
+  function fillingStorage(room: number): DraftStorage {
+    let saves = 0
+    return {
+      ...memoryStorage(),
+      setItem: (key, value) => {
+        if (++saves > room) throw new DOMException('The quota has been exceeded.', 'QuotaExceededError')
+        storage.set(key, value)
+      },
+    }
+  }
+
+  /** In the resolver for merging main, saving to `drafts`. */
+  async function resolvingOn(draftStorage: DraftStorage | null, source: GitDataSource = new MockGitDataSource()) {
+    const gm = useGitManager(source, { comparePaths: { ...SAMPLE_COMPARE_PATHS }, mergeDrafts: mergeDrafts(draftStorage) })
+    await gm.load()
+    await picked(gm, 'main')
+    await gm.startMerge()
+    return gm
+  }
+
+  const warnings = (gm: Manager) => gm.toasts.value.filter((toast) => toast.kind === 'warning').map((toast) => toast.message)
+
+  it('warns in a toast, once, and carries on', async () => {
+    const gm = await resolvingOn(fillingStorage(1))
+    expect(warnings(gm)).toEqual([])
+    expect(storage.has(KEY)).toBe(true)
+
+    gm.toggleMergeSide(firstConflict(gm), 'ours')
+    expect(warnings(gm)).toEqual([MERGE_NOT_SAVED])
+    expect(gm.mergeConflictsLeft.value).toBe(2)
+
+    gm.dismissToast(gm.toasts.value[0]!.id)
+    gm.toggleMergeSide(firstConflict(gm), 'theirs')
+    gm.selectMergeFile('pom.xml')
+    expect(warnings(gm)).toEqual([])
+  })
+
+  it('leaves no older copy behind, so a restart doesn’t bring back choices that are out of date', async () => {
+    const repositories = structuredClone(sampleRepositories)
+    const before = await resolvingOn(fillingStorage(1), new MockGitDataSource(repositories))
+    before.toggleMergeSide(firstConflict(before), 'ours')
+    expect(storage.has(KEY)).toBe(false)
+
+    const after = await loaded(new MockGitDataSource(repositories))
+    expect(after.mergeSession.value).toBeNull()
+    expect(after.status.value).not.toContain('Continuing your merge')
+  })
+
+  it('warns from the start when nothing can be saved at all', async () => {
+    expect(warnings(await resolvingOn(fillingStorage(0)))).toEqual([MERGE_NOT_SAVED])
+    expect(warnings(await resolvingOn(null))).toEqual([MERGE_NOT_SAVED])
+  })
+
+  it('warns again for the next merge', async () => {
+    const gm = await resolvingOn(fillingStorage(0))
+    gm.dismissToast(gm.toasts.value[0]!.id)
+    gm.discardMerge()
+    expect(gm.mergeSession.value).toBeNull()
+
+    await picked(gm, 'main')
+    await gm.startMerge()
+    expect(warnings(gm)).toEqual([MERGE_NOT_SAVED])
+  })
+
+  it('says nothing while the merge is being saved', async () => {
+    const gm = await resolving()
+    resolveAll(gm)
+    expect(gm.toasts.value).toEqual([])
   })
 })
 
