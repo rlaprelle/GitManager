@@ -33,6 +33,16 @@ type Manager = Awaited<ReturnType<typeof loaded>>
 const raised = (gm: Manager) => gm.toasts.value.map(({ kind, message, context }) => ({ kind, message, context }))
 const HERE = { context: 'inventory-service' }
 
+/** The commit the stray local branch below is on; the remote origin/main is on another (main's). */
+const STRAY_TIP = '2d6e914'
+
+/** Sample data in which someone has made a local branch called 'origin/main', the remote branch's name too. */
+function sourceWithSharedName(): MockGitDataSource {
+  const repositories = structuredClone(sampleRepositories)
+  repositories.find((repo) => repo.id === 'inventory')!.localBranches.push({ name: 'origin/main', ahead: 0, behind: 0, tipHash: STRAY_TIP })
+  return new MockGitDataSource(repositories)
+}
+
 /** Index of the file's first conflict among its chunks, as the arrows address it. */
 function firstConflict(gm: Manager): number {
   return gm.mergeFile.value!.chunks.findIndex((chunk) => chunk.kind === 'conflict')
@@ -76,9 +86,7 @@ describe('the Merge dialog', () => {
   })
 
   it('offers a name once when a local branch shares it with a remote one, as git reads the name: the local branch', async () => {
-    const repositories = structuredClone(sampleRepositories)
-    repositories.find((repo) => repo.id === 'inventory')!.localBranches.push({ name: 'origin/main', ahead: 0, behind: 0, tipHash: 'c81f5a3' })
-    const gm = await loaded(new MockGitDataSource(repositories))
+    const gm = await loaded(sourceWithSharedName())
     expect(gm.mergeableBranches.value).toEqual([
       'main',
       'bugfix/sku-null-check',
@@ -87,6 +95,30 @@ describe('the Merge dialog', () => {
       'origin/feature/stock-reservations',
       'origin/release/2.4',
     ])
+  })
+
+  it('says which branch a shared name means once it is picked, and previews that one', async () => {
+    const gm = await loaded(sourceWithSharedName())
+    gm.openMergeDialog()
+    expect(gm.mergeSharedNameNote.value).toBeNull()
+
+    await gm.chooseMergeBranch('origin/main')
+    expect(gm.mergeSharedNameNote.value).toBe(
+      'origin/main is the name of a local branch and of a remote one. This merges the local branch. To merge the remote one, rename or delete the local branch first.',
+    )
+    expect(gm.mergePreview.value).toMatchObject({ branch: 'origin/main', theirs: STRAY_TIP, commits: 1 })
+
+    gm.closeMergeDialog()
+    expect(gm.mergeSharedNameNote.value).toBeNull()
+  })
+
+  it('says nothing of the kind for a name only one branch has, a remote branch with a local twin included', async () => {
+    const gm = await loaded(sourceWithSharedName())
+    await picked(gm, 'main')
+    expect(gm.mergeSharedNameNote.value).toBeNull()
+    // Its local twin is called bugfix/sku-null-check: another name, so nothing is unclear.
+    await gm.chooseMergeBranch('origin/bugfix/sku-null-check')
+    expect(gm.mergeSharedNameNote.value).toBeNull()
   })
 
   it('previews the picked branch, and closing forgets it', async () => {

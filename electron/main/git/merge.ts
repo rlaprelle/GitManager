@@ -163,7 +163,8 @@ async function exists(path: string): Promise<boolean> {
 /**
  * The full ref of a branch the repository lists, so a name never reaches git unchecked. A name that
  * is both a local branch and a remote one ('origin/main' made by hand) means the local branch, as it
- * does to git; the dialog offers it once, and Pull doesn't offer an upstream that is shadowed so.
+ * does to git; the dialog offers it once and says which it means (`sharedNameNote`), and Pull
+ * doesn't offer an upstream that is shadowed so.
  */
 function refOf(branches: Branches, branch: string, into: string): string {
   if (branches.local.some((candidate) => candidate.name === branch)) {

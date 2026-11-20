@@ -794,6 +794,33 @@ test.describe('fetching, pulling and pushing', () => {
     expect(await fixtureGit(repo, 'log', '-1', '--format=%P').then((out) => out.trim())).toBe(`${mine} ${await tipOf(colleague, 'main')}`)
   })
 
+  test('with a local branch named like a remote one, the Merge dialog says which is merged, and merges that one', async () => {
+    // Someone made a local branch called origin/main and committed to it; origin's main is elsewhere.
+    await gitInFixture(fixtures, repo, 'switch', '--quiet', '-c', 'origin/main')
+    await commitInFixture(fixtures, repo, 'stray.txt', 'stray\n', 'Work on the stray branch')
+    await gitInFixture(fixtures, repo, 'switch', '--quiet', 'main')
+    await launch([{ id: 'repo', path: repo }])
+
+    await headerButton('Merge…').click()
+    const dialog = window.getByRole('dialog', { name: 'Merge into main' })
+    const sharedNameNote = dialog.getByTestId('merge-shared-name')
+    await dialog.getByLabel('Branch to merge').selectOption('feature/local')
+    await expect(dialog.getByTestId('merge-effect')).toContainText('feature/local has 1 commit that main doesn’t.')
+    await expect(sharedNameNote).toBeHidden()
+
+    await dialog.getByLabel('Branch to merge').selectOption('origin/main')
+    await expect(sharedNameNote).toHaveText(
+      'origin/main is the name of a local branch and of a remote one. This merges the local branch. To merge the remote one, rename or delete the local branch first.',
+    )
+    await expect(dialog.getByTestId('merge-effect')).toHaveText(
+      'origin/main has 1 commit that main doesn’t. main moves forward to origin/main; no merge commit.',
+    )
+    await dialog.getByRole('button', { name: 'Merge', exact: true }).click()
+    await expect(status()).toHaveText('Moved main forward to origin/main (1 commit)')
+    expect(await tipOf(repo, 'main')).toBe(await tipOf(repo, 'refs/heads/origin/main'))
+    expect(await tipOf(repo, 'main')).not.toBe(await tipOf(repo, 'refs/remotes/origin/main'))
+  })
+
   test('Push sends the branch’s commits, and the branch is level with origin again', async () => {
     await commitInFixture(fixtures, repo, 'mine.txt', 'mine\n', 'Mine')
     await launch([{ id: 'repo', path: repo }])

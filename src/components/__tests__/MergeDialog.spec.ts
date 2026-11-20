@@ -39,6 +39,7 @@ function mountDialog(props: Partial<InstanceType<typeof MergeDialog>['$props']> 
       state: open,
       into: 'main',
       branches: ['feature/login', 'origin/main'],
+      sharedNameNote: null,
       preview: preview(),
       checking: false,
       blocked: null,
@@ -135,6 +136,19 @@ describe('MergeDialog', () => {
     const none = mountDialog()
     expect(none.find('[data-testid="merge-waiting"]').exists()).toBe(false)
     none.unmount()
+  })
+
+  it('says which branch is merged when the picked name is shared, without holding the merge back', () => {
+    const note = 'origin/main is the name of a local branch and of a remote one. This merges the local branch.'
+    const shared = mountDialog({ sharedNameNote: note })
+    expect(shared.get('[data-testid="merge-shared-name"]').text()).toBe(note)
+    expect(shared.find('[data-testid="merge-effect"]').exists()).toBe(true)
+    expect(submit(shared).attributes('disabled')).toBeUndefined()
+    shared.unmount()
+
+    const ordinary = mountDialog()
+    expect(ordinary.find('[data-testid="merge-shared-name"]').exists()).toBe(false)
+    ordinary.unmount()
   })
 
   it('locks while merging', () => {

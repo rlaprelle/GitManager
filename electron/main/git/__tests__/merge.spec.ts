@@ -227,6 +227,26 @@ describe('GitCliDataSource merging', () => {
     expect(await git(folder, 'log', '-1', '--format=%s')).toBe("Merge remote-tracking branch 'origin/feature/remote'")
   })
 
+  it('merges the local branch when a remote branch has the same name, as the dialog says it will', async () => {
+    const folder = await createRepositoryWithRemote(fixtures, `merge-shared-name-${++repositories}`)
+    await gitInFixture(fixtures, folder, 'config', 'user.name', 'Grace Hopper')
+    await gitInFixture(fixtures, folder, 'config', 'user.email', 'grace@example.com')
+    // Someone made a local branch called origin/main and committed to it; origin's main is elsewhere.
+    await gitInFixture(fixtures, folder, 'switch', '--quiet', '-c', 'origin/main')
+    await commitInFixture(fixtures, folder, 'stray.txt', 'stray\n', 'Work on the stray branch')
+    await gitInFixture(fixtures, folder, 'switch', '--quiet', 'main')
+    await commitInFixture(fixtures, folder, 'mine.txt', 'mine\n', 'Mine')
+    const localTip = await git(folder, 'rev-parse', 'refs/heads/origin/main')
+    expect(await git(folder, 'rev-parse', 'refs/remotes/origin/main')).not.toBe(localTip)
+
+    const source = sourceOver(folder)
+    const preview = await source.previewMerge('repo', 'origin/main')
+    expect(preview).toMatchObject({ theirs: localTip, commits: 1, outcome: 'merge-commit' })
+    await source.merge('repo', preview, [])
+    expect(await git(folder, 'log', '-1', '--format=%P')).toBe(`${preview.ours} ${localTip}`)
+    expect(await git(folder, 'log', '-1', '--format=%s')).toBe("Merge branch 'origin/main'")
+  })
+
   it('refuses, changing nothing, when a conflict has no resolution or a resolution names another file', async () => {
     const { folder, source } = await mergeRepository()
     const before = await snapshot(folder)

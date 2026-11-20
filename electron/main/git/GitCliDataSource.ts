@@ -374,7 +374,7 @@ export class GitCliDataSource implements GitDataSource {
     const listedAs = upstream.ref.slice(REMOTE_BRANCH_PREFIX.length)
     if (!hasBranchNamed((await this.branchesAt(folder)).local, listedAs)) return
     throw new GitError(
-      `can’t fast-forward: ${branch} and ${listedAs} both have new commits, and a local branch is also named ${listedAs}, so it can’t be merged here. Merge or rebase them in a terminal.`,
+      `can’t fast-forward: ${branch} and ${listedAs} both have new commits, and a local branch is also named ${listedAs}, so it can’t be merged here. Rename or delete that local branch and pull again, or merge or rebase them in a terminal.`,
     )
   }
 

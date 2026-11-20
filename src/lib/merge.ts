@@ -31,6 +31,15 @@ export function divergedElsewhereMessage(repoName: string, diverged: string): st
   return `${diverged}. Open ${repoName} and press Pull again to merge them.`
 }
 
+/**
+ * What the Merge dialog adds when the picked name is a local branch's and a remote one's at once (a
+ * local branch someone called 'origin/main'). The local branch is merged, as in git, which warns
+ * that the name is ambiguous; the dialog says which before anything is merged.
+ */
+export function sharedNameNote(branch: string): string {
+  return `${branch} is the name of a local branch and of a remote one. This merges the local branch. To merge the remote one, rename or delete the local branch first.`
+}
+
 export function upToDateMessage(into: string, branch: string): string {
   return `${into} already has every commit on ${branch}`
 }
